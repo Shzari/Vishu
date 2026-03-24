@@ -1,0 +1,1020 @@
+const DEFAULT_SITE_NAME = 'Vishu.shop';
+const DEFAULT_SITE_TAGLINE = 'Unified fashion storefront, hidden vendor identity';
+
+export const SCHEMA_SQL = `
+IF OBJECT_ID('dbo.site_branding', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.site_branding (
+    id INT NOT NULL PRIMARY KEY CHECK (id = 1),
+    site_name NVARCHAR(120) NOT NULL,
+    tagline NVARCHAR(255) NOT NULL,
+    logo_image VARBINARY(MAX) NULL,
+    logo_mime_type NVARCHAR(80) NULL,
+    logo_svg NVARCHAR(MAX) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.site_branding WHERE id = 1)
+BEGIN
+  INSERT INTO dbo.site_branding (id, site_name, tagline, logo_image, logo_mime_type, logo_svg)
+  VALUES (1, '${DEFAULT_SITE_NAME}', '${DEFAULT_SITE_TAGLINE}', NULL, NULL, NULL);
+END;
+
+IF OBJECT_ID('dbo.platform_settings', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.platform_settings (
+    id INT NOT NULL PRIMARY KEY CHECK (id = 1),
+    smtp_host NVARCHAR(255) NULL,
+    smtp_port INT NULL,
+    smtp_secure BIT NOT NULL DEFAULT 0,
+    smtp_user NVARCHAR(255) NULL,
+    smtp_pass NVARCHAR(255) NULL,
+    mail_from NVARCHAR(255) NULL,
+    app_base_url NVARCHAR(255) NULL,
+    vendor_verification_emails_enabled BIT NOT NULL DEFAULT 1,
+    admin_vendor_approval_emails_enabled BIT NOT NULL DEFAULT 1,
+    password_reset_emails_enabled BIT NOT NULL DEFAULT 1,
+    homepage_hero_interval_seconds INT NOT NULL DEFAULT 6,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF COL_LENGTH('dbo.site_branding', 'logo_image') IS NULL
+BEGIN
+  ALTER TABLE dbo.site_branding ADD logo_image VARBINARY(MAX) NULL;
+END;
+
+IF COL_LENGTH('dbo.site_branding', 'logo_mime_type') IS NULL
+BEGIN
+  ALTER TABLE dbo.site_branding ADD logo_mime_type NVARCHAR(80) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'smtp_host') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD smtp_host NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'smtp_port') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD smtp_port INT NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'smtp_secure') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD smtp_secure BIT NOT NULL CONSTRAINT df_platform_settings_smtp_secure DEFAULT 0;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'smtp_user') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD smtp_user NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'smtp_pass') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD smtp_pass NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'mail_from') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD mail_from NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'app_base_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD app_base_url NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'vendor_verification_emails_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD vendor_verification_emails_enabled BIT NOT NULL CONSTRAINT df_platform_settings_vendor_verification_emails_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'admin_vendor_approval_emails_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD admin_vendor_approval_emails_enabled BIT NOT NULL CONSTRAINT df_platform_settings_admin_vendor_approval_emails_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'password_reset_emails_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD password_reset_emails_enabled BIT NOT NULL CONSTRAINT df_platform_settings_password_reset_emails_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'homepage_hero_interval_seconds') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD homepage_hero_interval_seconds INT NOT NULL CONSTRAINT df_platform_settings_homepage_hero_interval_seconds DEFAULT 6;
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.platform_settings WHERE id = 1)
+BEGIN
+  INSERT INTO dbo.platform_settings (
+    id,
+    smtp_host,
+    smtp_port,
+    smtp_secure,
+    smtp_user,
+    smtp_pass,
+    mail_from,
+    app_base_url,
+    vendor_verification_emails_enabled,
+    password_reset_emails_enabled
+  )
+  VALUES (1, NULL, NULL, 0, NULL, NULL, NULL, NULL, 1, 1);
+END;
+
+IF OBJECT_ID('dbo.users', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.users (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    email NVARCHAR(255) NOT NULL UNIQUE,
+    full_name NVARCHAR(255) NULL,
+    phone_number NVARCHAR(40) NULL,
+    password_hash NVARCHAR(255) NOT NULL,
+    role NVARCHAR(20) NOT NULL CHECK (role IN ('admin', 'vendor', 'customer')),
+    email_verified_at DATETIME2 NULL CONSTRAINT df_users_email_verified_at DEFAULT SYSDATETIME(),
+    is_active BIT NOT NULL DEFAULT 1,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF COL_LENGTH('dbo.users', 'email_verified_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD email_verified_at DATETIME2 NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.default_constraints dc
+  INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
+  INNER JOIN sys.tables t ON t.object_id = c.object_id
+  WHERE t.name = 'users'
+    AND c.name = 'email_verified_at'
+)
+BEGIN
+  EXEC sp_executesql N'
+    ALTER TABLE dbo.users
+    ADD CONSTRAINT df_users_email_verified_at DEFAULT SYSDATETIME() FOR email_verified_at;
+  ';
+END;
+
+EXEC sp_executesql N'
+  UPDATE dbo.users
+  SET email_verified_at = created_at
+  WHERE email_verified_at IS NULL
+    AND role = ''admin'';
+';
+
+EXEC sp_executesql N'
+  UPDATE dbo.users
+  SET email_verified_at = created_at
+  WHERE email_verified_at IS NULL
+    AND role = ''customer'';
+';
+
+IF OBJECT_ID('dbo.vendors', 'U') IS NOT NULL
+BEGIN
+  EXEC sp_executesql N'
+    UPDATE u
+    SET email_verified_at = u.created_at
+    FROM dbo.users u
+    INNER JOIN dbo.vendors v ON v.user_id = u.id
+    WHERE u.email_verified_at IS NULL
+      AND v.is_verified = 1;
+  ';
+END;
+
+IF OBJECT_ID('dbo.vendors', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendors (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL UNIQUE REFERENCES dbo.users(id) ON DELETE CASCADE,
+    shop_name NVARCHAR(255) NOT NULL,
+    support_email NVARCHAR(255) NULL,
+    support_phone NVARCHAR(40) NULL,
+    shop_description NVARCHAR(1000) NULL,
+    logo_url NVARCHAR(500) NULL,
+    banner_url NVARCHAR(500) NULL,
+    business_address NVARCHAR(500) NULL,
+    return_policy NVARCHAR(2000) NULL,
+    business_hours NVARCHAR(500) NULL,
+    shipping_notes NVARCHAR(1000) NULL,
+    low_stock_threshold INT NOT NULL DEFAULT 5,
+    subscription_plan NVARCHAR(20) NULL,
+    subscription_status NVARCHAR(20) NOT NULL DEFAULT 'inactive',
+    subscription_started_at DATETIME2 NULL,
+    subscription_ends_at DATETIME2 NULL,
+    subscription_override_plan NVARCHAR(20) NULL,
+    subscription_override_status NVARCHAR(20) NULL,
+    subscription_override_started_at DATETIME2 NULL,
+    subscription_override_ends_at DATETIME2 NULL,
+    subscription_override_note NVARCHAR(500) NULL,
+    subscription_override_updated_at DATETIME2 NULL,
+    bank_account_name NVARCHAR(255) NULL,
+    bank_name NVARCHAR(255) NULL,
+    bank_iban NVARCHAR(64) NULL,
+    is_active BIT NOT NULL DEFAULT 0,
+    is_verified BIT NOT NULL DEFAULT 0,
+    approved_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_subscriptions', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_subscriptions (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    plan_type NVARCHAR(20) NOT NULL CHECK (plan_type IN ('monthly', 'yearly')),
+    status NVARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired')),
+    amount DECIMAL(10, 2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    admin_user_id UNIQUEIDENTIFIER NULL,
+    admin_note NVARCHAR(500) NULL,
+    starts_at DATETIME2 NOT NULL,
+    ends_at DATETIME2 NOT NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.products', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.products (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    title NVARCHAR(255) NOT NULL,
+    description NVARCHAR(MAX) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL CHECK (price >= 0),
+    stock INT NOT NULL CHECK (stock >= 0),
+    is_listed BIT NOT NULL DEFAULT 1,
+    department NVARCHAR(40) NOT NULL DEFAULT 'unisex',
+    category NVARCHAR(120) NOT NULL,
+    color NVARCHAR(80) NULL,
+    size NVARCHAR(80) NULL,
+    product_code NVARCHAR(80) NULL,
+    low_stock_alert_sent_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF COL_LENGTH('dbo.products', 'is_listed') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD is_listed BIT NOT NULL CONSTRAINT df_products_is_listed DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.products', 'department') IS NULL
+BEGIN
+  EXEC sp_executesql N'
+    ALTER TABLE dbo.products
+    ADD department NVARCHAR(40) NOT NULL CONSTRAINT df_products_department DEFAULT ''unisex'';
+  ';
+END;
+
+IF COL_LENGTH('dbo.products', 'low_stock_alert_sent_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD low_stock_alert_sent_at DATETIME2 NULL;
+END;
+
+EXEC sp_executesql N'
+  UPDATE dbo.products
+  SET department = ''unisex''
+  WHERE department IS NULL OR LTRIM(RTRIM(department)) = '''';
+';
+
+IF OBJECT_ID('dbo.product_images', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.product_images (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    image_url NVARCHAR(500) NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0
+  );
+END;
+
+IF OBJECT_ID('dbo.homepage_hero_slides', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.homepage_hero_slides (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    headline NVARCHAR(255) NULL,
+    subheading NVARCHAR(500) NULL,
+    cta_label NVARCHAR(80) NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.orders', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.orders (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    total_price DECIMAL(10, 2) NOT NULL CHECK (total_price >= 0),
+    special_request NVARCHAR(MAX) NULL,
+    shipping_address_id UNIQUEIDENTIFIER NULL,
+    shipping_label NVARCHAR(120) NULL,
+    shipping_full_name NVARCHAR(255) NULL,
+    shipping_phone_number NVARCHAR(40) NULL,
+    shipping_line1 NVARCHAR(255) NULL,
+    shipping_line2 NVARCHAR(255) NULL,
+    shipping_city NVARCHAR(120) NULL,
+    shipping_state_region NVARCHAR(120) NULL,
+    shipping_postal_code NVARCHAR(40) NULL,
+    shipping_country NVARCHAR(120) NULL,
+    payment_method_id UNIQUEIDENTIFIER NULL,
+    payment_card_nickname NVARCHAR(120) NULL,
+    payment_cardholder_name NVARCHAR(255) NULL,
+    payment_card_brand NVARCHAR(40) NULL,
+    payment_card_last4 NVARCHAR(4) NULL,
+    payment_method NVARCHAR(30) NOT NULL DEFAULT 'cash_on_delivery' CHECK (payment_method IN ('cash_on_delivery', 'card')),
+    payment_status NVARCHAR(30) NOT NULL DEFAULT 'cod_pending' CHECK (payment_status IN ('cod_pending', 'paid', 'cod_collected', 'cod_refused')),
+    confirmed_at DATETIME2 NULL,
+    shipped_at DATETIME2 NULL,
+    delivered_at DATETIME2 NULL,
+    cod_status_note NVARCHAR(500) NULL,
+    cod_updated_at DATETIME2 NULL,
+    cancel_request_status NVARCHAR(20) NOT NULL DEFAULT 'none',
+    cancel_request_note NVARCHAR(500) NULL,
+    cancel_requested_at DATETIME2 NULL,
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered')),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF COL_LENGTH('dbo.orders', 'shipping_address_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD shipping_address_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'shipping_label') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_label NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_full_name') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_full_name NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_phone_number') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_phone_number NVARCHAR(40) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_line1') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_line1 NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_line2') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_line2 NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_city') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_city NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_state_region') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_state_region NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_postal_code') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_postal_code NVARCHAR(40) NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipping_country') IS NULL
+  ALTER TABLE dbo.orders ADD shipping_country NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.orders', 'payment_method_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD payment_method_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'payment_card_nickname') IS NULL
+  ALTER TABLE dbo.orders ADD payment_card_nickname NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.orders', 'payment_cardholder_name') IS NULL
+  ALTER TABLE dbo.orders ADD payment_cardholder_name NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'payment_card_brand') IS NULL
+  ALTER TABLE dbo.orders ADD payment_card_brand NVARCHAR(40) NULL;
+
+IF COL_LENGTH('dbo.orders', 'payment_card_last4') IS NULL
+  ALTER TABLE dbo.orders ADD payment_card_last4 NVARCHAR(4) NULL;
+
+IF COL_LENGTH('dbo.orders', 'confirmed_at') IS NULL
+  ALTER TABLE dbo.orders ADD confirmed_at DATETIME2 NULL;
+
+IF COL_LENGTH('dbo.orders', 'shipped_at') IS NULL
+  ALTER TABLE dbo.orders ADD shipped_at DATETIME2 NULL;
+
+IF COL_LENGTH('dbo.orders', 'delivered_at') IS NULL
+  ALTER TABLE dbo.orders ADD delivered_at DATETIME2 NULL;
+
+IF OBJECT_ID('dbo.order_items', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.order_items (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    order_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.orders(id) ON DELETE CASCADE,
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id),
+    quantity INT NOT NULL CHECK (quantity > 0),
+    unit_price DECIMAL(10, 2) NOT NULL CHECK (unit_price >= 0),
+    commission_amount DECIMAL(10, 2) NOT NULL CHECK (commission_amount >= 0),
+    vendor_earnings DECIMAL(10, 2) NOT NULL CHECK (vendor_earnings >= 0),
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered')),
+    shipping_carrier NVARCHAR(120) NULL,
+    tracking_number NVARCHAR(120) NULL,
+    shipped_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_payouts', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_payouts (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    admin_user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
+    amount DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
+    reference NVARCHAR(120) NULL,
+    note NVARCHAR(500) NULL,
+    paid_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.email_verifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.email_verifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    token NVARCHAR(255) NOT NULL UNIQUE,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.password_resets', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.password_resets (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    token NVARCHAR(255) NOT NULL UNIQUE,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.admin_notifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.admin_notifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    admin_user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    vendor_id UNIQUEIDENTIFIER NULL,
+    notification_type NVARCHAR(40) NOT NULL,
+    title NVARCHAR(255) NOT NULL,
+    body NVARCHAR(1000) NOT NULL,
+    action_url NVARCHAR(500) NULL,
+    read_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.admin_activity_logs', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.admin_activity_logs (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    admin_user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    action_type NVARCHAR(80) NOT NULL,
+    entity_type NVARCHAR(80) NOT NULL,
+    entity_id UNIQUEIDENTIFIER NULL,
+    entity_label NVARCHAR(255) NULL,
+    description NVARCHAR(1000) NOT NULL,
+    metadata_json NVARCHAR(MAX) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.carts', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.carts (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL UNIQUE REFERENCES dbo.users(id) ON DELETE CASCADE,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_addresses', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_addresses (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    label NVARCHAR(120) NOT NULL,
+    full_name NVARCHAR(255) NOT NULL,
+    phone_number NVARCHAR(40) NULL,
+    line1 NVARCHAR(255) NOT NULL,
+    line2 NVARCHAR(255) NULL,
+    city NVARCHAR(120) NOT NULL,
+    state_region NVARCHAR(120) NULL,
+    postal_code NVARCHAR(40) NOT NULL,
+    country NVARCHAR(120) NOT NULL,
+    is_default BIT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_payment_methods', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_payment_methods (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    nickname NVARCHAR(120) NULL,
+    cardholder_name NVARCHAR(255) NOT NULL,
+    brand NVARCHAR(40) NOT NULL,
+    last4 NVARCHAR(4) NOT NULL,
+    exp_month INT NOT NULL,
+    exp_year INT NOT NULL,
+    is_default BIT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_orders_shipping_address'
+    AND parent_object_id = OBJECT_ID('dbo.orders')
+)
+BEGIN
+  ALTER TABLE dbo.orders DROP CONSTRAINT fk_orders_shipping_address;
+END;
+
+IF EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_orders_payment_method'
+    AND parent_object_id = OBJECT_ID('dbo.orders')
+)
+BEGIN
+  ALTER TABLE dbo.orders DROP CONSTRAINT fk_orders_payment_method;
+END;
+
+IF OBJECT_ID('dbo.cart_items', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.cart_items (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    cart_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.carts(id) ON DELETE CASCADE,
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id),
+    quantity INT NOT NULL CHECK (quantity > 0),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    CONSTRAINT uq_cart_items_cart_product UNIQUE (cart_id, product_id)
+  );
+END;
+
+IF COL_LENGTH('dbo.users', 'phone_number') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD phone_number NVARCHAR(40) NULL;
+END;
+
+IF COL_LENGTH('dbo.users', 'full_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD full_name NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'special_request') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD special_request NVARCHAR(MAX) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'payment_method') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD payment_method NVARCHAR(30) NOT NULL CONSTRAINT df_orders_payment_method DEFAULT 'cash_on_delivery';
+END;
+
+IF COL_LENGTH('dbo.orders', 'payment_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD payment_status NVARCHAR(30) NOT NULL CONSTRAINT df_orders_payment_status DEFAULT 'cod_pending';
+END;
+
+IF COL_LENGTH('dbo.orders', 'cod_status_note') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD cod_status_note NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'cod_updated_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD cod_updated_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'cancel_request_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD cancel_request_status NVARCHAR(20) NOT NULL CONSTRAINT df_orders_cancel_request_status DEFAULT 'none';
+END;
+
+IF COL_LENGTH('dbo.orders', 'cancel_request_note') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD cancel_request_note NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'cancel_requested_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD cancel_requested_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'bank_account_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD bank_account_name NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_plan') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_plan NVARCHAR(20) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_status NVARCHAR(20) NOT NULL CONSTRAINT df_vendors_subscription_status DEFAULT 'inactive';
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_started_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_started_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_ends_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_ends_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_plan') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_plan NVARCHAR(20) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_status NVARCHAR(20) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_started_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_started_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_ends_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_ends_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_note') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_note NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'subscription_override_updated_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD subscription_override_updated_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'support_email') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD support_email NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'support_phone') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD support_phone NVARCHAR(40) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'shop_description') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD shop_description NVARCHAR(1000) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'logo_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD logo_url NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'banner_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD banner_url NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'business_address') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD business_address NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'return_policy') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD return_policy NVARCHAR(2000) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'business_hours') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD business_hours NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'shipping_notes') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD shipping_notes NVARCHAR(1000) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendor_subscriptions', 'admin_user_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendor_subscriptions ADD admin_user_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.vendor_subscriptions', 'admin_note') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendor_subscriptions ADD admin_note NVARCHAR(500) NULL;
+END;
+
+EXEC sp_executesql N'
+UPDATE dbo.vendors
+SET
+  subscription_plan = COALESCE(subscription_plan, ''yearly''),
+  subscription_status = ''active'',
+  subscription_started_at = COALESCE(subscription_started_at, approved_at, created_at, SYSDATETIME()),
+  subscription_ends_at = COALESCE(subscription_ends_at, DATEADD(YEAR, 1, SYSDATETIME()))
+WHERE is_active = 1 AND is_verified = 1 AND (
+  subscription_status <> ''active''
+  OR subscription_ends_at IS NULL
+  OR subscription_plan IS NULL
+);
+
+UPDATE dbo.vendors
+SET subscription_status = ''expired''
+WHERE subscription_status = ''active''
+  AND subscription_ends_at IS NOT NULL
+  AND subscription_ends_at < SYSDATETIME();
+
+INSERT INTO dbo.vendor_subscriptions (vendor_id, plan_type, status, amount, starts_at, ends_at)
+SELECT
+  v.id,
+  COALESCE(v.subscription_plan, ''yearly''),
+  CASE
+    WHEN v.subscription_status = ''active''
+      AND v.subscription_ends_at IS NOT NULL
+      AND v.subscription_ends_at >= SYSDATETIME()
+      THEN ''active''
+    ELSE ''expired''
+  END,
+  CASE COALESCE(v.subscription_plan, ''yearly'')
+    WHEN ''monthly'' THEN 29.00
+    ELSE 290.00
+  END,
+  COALESCE(v.subscription_started_at, v.approved_at, v.created_at, SYSDATETIME()),
+  COALESCE(v.subscription_ends_at, DATEADD(YEAR, 1, SYSDATETIME()))
+FROM dbo.vendors v
+WHERE v.is_active = 1
+  AND v.is_verified = 1
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.vendor_subscriptions s
+    WHERE s.vendor_id = v.id
+  );
+';
+
+IF COL_LENGTH('dbo.vendors', 'low_stock_threshold') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD low_stock_threshold INT NOT NULL CONSTRAINT df_vendors_low_stock_threshold DEFAULT 5;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'bank_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD bank_name NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'bank_iban') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD bank_iban NVARCHAR(64) NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'color') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD color NVARCHAR(80) NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'size') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD size NVARCHAR(80) NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'product_code') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD product_code NVARCHAR(80) NULL;
+END;
+
+EXEC sp_executesql N'
+UPDATE p
+SET product_code = CONCAT(
+  CASE LOWER(LTRIM(RTRIM(ISNULL(p.category, ''''))))
+    WHEN ''top'' THEN ''TOP''
+    WHEN ''tops'' THEN ''TOP''
+    WHEN ''tshirt'' THEN ''TEE''
+    WHEN ''t shirt'' THEN ''TEE''
+    WHEN ''t-shirt'' THEN ''TEE''
+    WHEN ''tee'' THEN ''TEE''
+    WHEN ''tees'' THEN ''TEE''
+    WHEN ''shirt'' THEN ''SHT''
+    WHEN ''shirts'' THEN ''SHT''
+    WHEN ''blouse'' THEN ''BLS''
+    WHEN ''blouses'' THEN ''BLS''
+    WHEN ''pants'' THEN ''PNT''
+    WHEN ''trouser'' THEN ''PNT''
+    WHEN ''trousers'' THEN ''PNT''
+    WHEN ''jeans'' THEN ''JNS''
+    WHEN ''outerwear'' THEN ''OUT''
+    WHEN ''jacket'' THEN ''JKT''
+    WHEN ''jackets'' THEN ''JKT''
+    WHEN ''coat'' THEN ''COT''
+    WHEN ''coats'' THEN ''COT''
+    WHEN ''hoodie'' THEN ''HOD''
+    WHEN ''hoodies'' THEN ''HOD''
+    WHEN ''sweater'' THEN ''SWT''
+    WHEN ''sweaters'' THEN ''SWT''
+    WHEN ''dress'' THEN ''DRS''
+    WHEN ''dresses'' THEN ''DRS''
+    WHEN ''skirt'' THEN ''SKT''
+    WHEN ''skirts'' THEN ''SKT''
+    WHEN ''suit'' THEN ''SUT''
+    WHEN ''suits'' THEN ''SUT''
+    ELSE
+      CASE
+        WHEN LEN(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.category, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', '''')) = 0 THEN ''GEN''
+        ELSE UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.category, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3))
+      END
+  END,
+  ''-'',
+  CASE LOWER(LTRIM(RTRIM(ISNULL(p.color, ''''))))
+    WHEN ''black'' THEN ''BLK''
+    WHEN ''white'' THEN ''WHT''
+    WHEN ''ivory'' THEN ''IVR''
+    WHEN ''cream'' THEN ''CRM''
+    WHEN ''beige'' THEN ''BEI''
+    WHEN ''brown'' THEN ''BRN''
+    WHEN ''tan'' THEN ''TAN''
+    WHEN ''gray'' THEN ''GRY''
+    WHEN ''grey'' THEN ''GRY''
+    WHEN ''blue'' THEN ''BLU''
+    WHEN ''navy'' THEN ''NVY''
+    WHEN ''red'' THEN ''RED''
+    WHEN ''orange'' THEN ''ORG''
+    WHEN ''yellow'' THEN ''YLW''
+    WHEN ''green'' THEN ''GRN''
+    WHEN ''pink'' THEN ''PNK''
+    WHEN ''purple'' THEN ''PRP''
+    WHEN ''gold'' THEN ''GLD''
+    WHEN ''silver'' THEN ''SLV''
+    ELSE
+      CASE
+        WHEN LEN(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.color, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', '''')) = 0 THEN ''NA''
+        ELSE UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.color, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3))
+      END
+  END,
+  ''-'',
+  CASE LOWER(LTRIM(RTRIM(ISNULL(p.size, ''''))))
+    WHEN ''xs'' THEN ''XSM''
+    WHEN ''s'' THEN ''SML''
+    WHEN ''m'' THEN ''MED''
+    WHEN ''l'' THEN ''LRG''
+    WHEN ''xl'' THEN ''XLG''
+    WHEN ''xxl'' THEN ''XXL''
+    WHEN ''xxxl'' THEN ''3XL''
+    WHEN ''one size'' THEN ''ONE''
+    WHEN ''onesize'' THEN ''ONE''
+    WHEN ''os'' THEN ''ONE''
+    ELSE
+      CASE
+        WHEN LEN(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.size, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', '''')) = 0 THEN ''NA''
+        ELSE UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.size, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3))
+      END
+  END,
+  ''-'',
+  CASE
+    WHEN LEN(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(v.shop_name, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', '''')) = 0 THEN ''VEN''
+    ELSE UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(v.shop_name, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3))
+  END,
+  ''-'',
+  UPPER(RIGHT(REPLACE(CONVERT(NVARCHAR(36), p.id), ''-'', ''''), 6))
+)
+FROM dbo.products p
+INNER JOIN dbo.vendors v ON v.id = p.vendor_id
+WHERE p.product_code IS NULL
+   OR p.product_code = CONCAT(
+    UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.category, ''''), ''GEN''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3)),
+    ''-'',
+    UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.color, ''''), ''NA''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3)),
+    ''-'',
+    UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.size, ''''), ''NA''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3)),
+    ''-'',
+    UPPER(LEFT(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(v.shop_name, ''''), ''VEN''), '' '', ''''), ''-'', ''''), ''_'', ''''), 3)),
+    ''-'',
+    UPPER(RIGHT(REPLACE(CONVERT(NVARCHAR(36), p.id), ''-'', ''''), 6))
+  );
+';
+
+IF COL_LENGTH('dbo.order_items', 'shipping_carrier') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD shipping_carrier NVARCHAR(120) NULL;
+END;
+
+IF COL_LENGTH('dbo.order_items', 'tracking_number') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD tracking_number NVARCHAR(120) NULL;
+END;
+
+IF COL_LENGTH('dbo.order_items', 'shipped_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD shipped_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.order_items', 'updated_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD updated_at DATETIME2 NOT NULL CONSTRAINT df_order_items_updated_at DEFAULT SYSDATETIME();
+END;
+
+DECLARE @ordersStatusConstraint NVARCHAR(128);
+DECLARE @ordersStatusSql NVARCHAR(MAX);
+SELECT TOP 1 @ordersStatusConstraint = cc.name
+FROM sys.check_constraints cc
+INNER JOIN sys.columns c ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+WHERE cc.parent_object_id = OBJECT_ID('dbo.orders') AND c.name = 'status';
+IF @ordersStatusConstraint IS NOT NULL
+BEGIN
+  SET @ordersStatusSql = N'ALTER TABLE dbo.orders DROP CONSTRAINT ' + QUOTENAME(@ordersStatusConstraint) + N';';
+  EXEC sp_executesql @ordersStatusSql;
+END;
+ALTER TABLE dbo.orders
+ADD CONSTRAINT ck_orders_status
+CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered'));
+
+DECLARE @orderItemsStatusConstraint NVARCHAR(128);
+DECLARE @orderItemsStatusSql NVARCHAR(MAX);
+SELECT TOP 1 @orderItemsStatusConstraint = cc.name
+FROM sys.check_constraints cc
+INNER JOIN sys.columns c ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+WHERE cc.parent_object_id = OBJECT_ID('dbo.order_items') AND c.name = 'status';
+IF @orderItemsStatusConstraint IS NOT NULL
+BEGIN
+  SET @orderItemsStatusSql = N'ALTER TABLE dbo.order_items DROP CONSTRAINT ' + QUOTENAME(@orderItemsStatusConstraint) + N';';
+  EXEC sp_executesql @orderItemsStatusSql;
+END;
+ALTER TABLE dbo.order_items
+ADD CONSTRAINT ck_order_items_status
+CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered'));
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_products_vendor_id' AND object_id = OBJECT_ID('dbo.products'))
+BEGIN
+  CREATE INDEX idx_products_vendor_id ON dbo.products(vendor_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'uq_products_product_code' AND object_id = OBJECT_ID('dbo.products'))
+BEGIN
+  EXEC sp_executesql N'CREATE UNIQUE INDEX uq_products_product_code ON dbo.products(product_code) WHERE product_code IS NOT NULL;';
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_orders_customer_id' AND object_id = OBJECT_ID('dbo.orders'))
+BEGIN
+  CREATE INDEX idx_orders_customer_id ON dbo.orders(customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_order_items_order_id' AND object_id = OBJECT_ID('dbo.order_items'))
+BEGIN
+  CREATE INDEX idx_order_items_order_id ON dbo.order_items(order_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_order_items_vendor_id' AND object_id = OBJECT_ID('dbo.order_items'))
+BEGIN
+  CREATE INDEX idx_order_items_vendor_id ON dbo.order_items(vendor_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_vendor_payouts_vendor_id' AND object_id = OBJECT_ID('dbo.vendor_payouts'))
+BEGIN
+  CREATE INDEX idx_vendor_payouts_vendor_id ON dbo.vendor_payouts(vendor_id, paid_at DESC);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_carts_customer_id' AND object_id = OBJECT_ID('dbo.carts'))
+BEGIN
+  CREATE INDEX idx_carts_customer_id ON dbo.carts(customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_cart_items_cart_id' AND object_id = OBJECT_ID('dbo.cart_items'))
+BEGIN
+  CREATE INDEX idx_cart_items_cart_id ON dbo.cart_items(cart_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_customer_addresses_customer_id' AND object_id = OBJECT_ID('dbo.customer_addresses'))
+BEGIN
+  CREATE INDEX idx_customer_addresses_customer_id ON dbo.customer_addresses(customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_customer_payment_methods_customer_id' AND object_id = OBJECT_ID('dbo.customer_payment_methods'))
+BEGIN
+  CREATE INDEX idx_customer_payment_methods_customer_id ON dbo.customer_payment_methods(customer_id);
+END;
+`;

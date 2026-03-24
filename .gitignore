@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+apps/*/node_modules/
+
+# build output
+apps/web/.next/
+apps/web/out/
+apps/api/dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+apps/*/.env
+apps/*/.env.*
+!apps/*/.env.example
+
+# local workspace state
+.codex/
+
+# uploads and generated media
+apps/api/uploads/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+
+# stray local files
+cd
+dir
+npm

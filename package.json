@@ -1,0 +1,30 @@
+{
+  "name": "vishu",
+  "version": "1.0.0",
+  "description": "Multi-vendor clothing marketplace MVP",
+  "private": true,
+  "scripts": {
+    "dev:api": "npm --workspace apps/api run start:dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "local:start": "powershell -ExecutionPolicy Bypass -File scripts/local-start.ps1",
+    "local:start-fast": "powershell -ExecutionPolicy Bypass -File scripts/local-start.ps1 -SkipBuild",
+    "local:stop": "powershell -ExecutionPolicy Bypass -File scripts/local-stop.ps1",
+    "local:status": "powershell -ExecutionPolicy Bypass -File scripts/local-status.ps1",
+    "ssl:setup": "powershell -ExecutionPolicy Bypass -File scripts/setup-ssl.ps1",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces --if-present && npm --workspace apps/api run test:e2e"
+  },
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "keywords": [
+    "marketplace",
+    "nestjs",
+    "nextjs",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "MIT"
+}

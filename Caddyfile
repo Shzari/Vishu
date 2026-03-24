@@ -1,0 +1,39 @@
+www.vishu.shop {
+  redir https://vishu.shop{uri} permanent
+}
+
+http://localhost, http://127.0.0.1 {
+  encode gzip zstd
+
+  redir /api /api/ 308
+
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle /uploads* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:3001
+  }
+}
+
+vishu.shop {
+  encode gzip zstd
+
+  redir /api /api/ 308
+
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle /uploads* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:3001
+  }
+}
