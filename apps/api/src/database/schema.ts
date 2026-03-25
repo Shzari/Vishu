@@ -1,6 +1,5 @@
 const DEFAULT_SITE_NAME = 'Vishu.shop';
-const DEFAULT_SITE_TAGLINE =
-  'Unified fashion storefront, hidden vendor identity';
+const DEFAULT_SITE_TAGLINE = 'Unified fashion store';
 
 export const SCHEMA_SQL = `
 IF OBJECT_ID('dbo.site_branding', 'U') IS NULL
@@ -22,6 +21,11 @@ BEGIN
   INSERT INTO dbo.site_branding (id, site_name, tagline, logo_image, logo_mime_type, logo_svg)
   VALUES (1, '${DEFAULT_SITE_NAME}', '${DEFAULT_SITE_TAGLINE}', NULL, NULL, NULL);
 END;
+
+UPDATE dbo.site_branding
+SET tagline = '${DEFAULT_SITE_TAGLINE}'
+WHERE id = 1
+  AND tagline = 'Unified fashion storefront, hidden vendor identity';
 
 IF OBJECT_ID('dbo.platform_settings', 'U') IS NULL
 BEGIN

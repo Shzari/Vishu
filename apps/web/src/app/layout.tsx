@@ -17,10 +17,29 @@ const bodyFont = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "Vishu.shop",
-  description: "Unified fashion storefront, hidden vendor identity",
+  description: "Unified fashion store",
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://vishu.shop",
   ),
+  openGraph: {
+    title: "Vishu.shop",
+    description: "Unified fashion store",
+    siteName: "Vishu.shop",
+    url: "/",
+    type: "website",
+    images: [
+      {
+        url: "/vishu-tab-logo.png",
+        alt: "Vishu.shop",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Vishu.shop",
+    description: "Unified fashion store",
+    images: ["/vishu-tab-logo.png"],
+  },
   icons: {
     icon: "/vishu-tab-logo.png",
     shortcut: "/vishu-tab-logo.png",

@@ -31,8 +31,7 @@ export class BrandingService {
 
     return {
       siteName: row?.site_name ?? 'Vishu.shop',
-      tagline:
-        row?.tagline ?? 'Unified fashion storefront, hidden vendor identity',
+      tagline: row?.tagline ?? 'Unified fashion store',
       logoSvg,
       logoDataUrl,
     };

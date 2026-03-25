@@ -55,7 +55,7 @@ const BrandingContext = createContext<BrandingContextValue | undefined>(undefine
 
 const defaultBranding: BrandingSettings = {
   siteName: "Vishu.shop",
-  tagline: "Unified fashion storefront, hidden vendor identity",
+  tagline: "Unified fashion store",
   logoSvg: null,
   logoDataUrl: null,
 };
