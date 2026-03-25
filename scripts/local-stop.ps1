@@ -4,7 +4,6 @@ $root = Split-Path -Parent $PSScriptRoot
 $runStateDir = Join-Path $root '.codex\run-state'
 $apiPidFile = Join-Path $runStateDir 'api.pid'
 $webPidFile = Join-Path $runStateDir 'web.pid'
-$proxyPidFile = Join-Path $runStateDir 'proxy.pid'
 
 function Stop-TrackedProcess {
   param([string]$PidFile)
@@ -34,7 +33,6 @@ function Stop-PortListeners {
 
 Stop-TrackedProcess -PidFile $apiPidFile
 Stop-TrackedProcess -PidFile $webPidFile
-Stop-TrackedProcess -PidFile $proxyPidFile
-Stop-PortListeners -Ports @(80, 443, 3000, 3001)
+Stop-PortListeners -Ports @(3000, 3001)
 
 Write-Host 'Stopped local Vishu services.'

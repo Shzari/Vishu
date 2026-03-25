@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import sql from 'mssql/msnodesqlv8';
 import { SCHEMA_SQL } from './schema';
@@ -6,11 +11,16 @@ import { SCHEMA_SQL } from './schema';
 type QueryParams = unknown[];
 
 export interface QueryRunner {
-  query<T = Record<string, unknown>>(text: string, params?: QueryParams): Promise<{ rows: T[] }>;
+  query<T = Record<string, unknown>>(
+    text: string,
+    params?: QueryParams,
+  ): Promise<{ rows: T[] }>;
 }
 
 @Injectable()
-export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunner {
+export class DatabaseService
+  implements OnModuleInit, OnModuleDestroy, QueryRunner
+{
   private readonly logger = new Logger(DatabaseService.name);
   private masterPool?: sql.ConnectionPool;
   private appPool?: sql.ConnectionPool;
@@ -33,7 +43,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunn
     await this.masterPool?.close();
   }
 
-  async query<T = Record<string, unknown>>(text: string, params: QueryParams = []) {
+  async query<T = Record<string, unknown>>(
+    text: string,
+    params: QueryParams = [],
+  ) {
     if (!this.appPool) {
       throw new Error('Database pool is not initialized');
     }
@@ -41,7 +54,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunn
     return this.executeQuery<T>(this.appPool.request(), text, params);
   }
 
-  async withTransaction<T>(callback: (client: QueryRunner) => Promise<T>): Promise<T> {
+  async withTransaction<T>(
+    callback: (client: QueryRunner) => Promise<T>,
+  ): Promise<T> {
     if (!this.appPool) {
       throw new Error('Database pool is not initialized');
     }
@@ -50,8 +65,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunn
     await transaction.begin();
 
     const runner: QueryRunner = {
-      query: <TResult = Record<string, unknown>>(text: string, params: QueryParams = []) =>
-        this.executeQuery<TResult>(transaction.request(), text, params),
+      query: <TResult = Record<string, unknown>>(
+        text: string,
+        params: QueryParams = [],
+      ) => this.executeQuery<TResult>(transaction.request(), text, params),
     };
 
     try {
@@ -66,13 +83,17 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunn
 
   private async createPool(database: string) {
     const server = this.configService.get<string>('DB_SERVER', 'localhost');
-    const instanceName = this.configService.get<string>('DB_INSTANCE', '').trim();
-    const trusted = this.configService.get<string>('DB_TRUSTED_CONNECTION', 'true') === 'true';
-    const serverTarget = instanceName ? `${server}\\${instanceName}` : server;
+    const instanceName = this.configService.get<string>(
+      'DB_INSTANCE',
+      'MARKET',
+    );
+    const trusted =
+      this.configService.get<string>('DB_TRUSTED_CONNECTION', 'true') ===
+      'true';
 
     const connectionString = trusted
-      ? `Driver={ODBC Driver 17 for SQL Server};Server=${serverTarget};Database=${database};Trusted_Connection=Yes;TrustServerCertificate=Yes;`
-      : `Driver={ODBC Driver 17 for SQL Server};Server=${serverTarget};Database=${database};Uid=${this.configService.get<string>('DB_USER', '')};Pwd=${this.configService.get<string>('DB_PASSWORD', '')};TrustServerCertificate=Yes;`;
+      ? `Driver={ODBC Driver 18 for SQL Server};Server=${server}\\${instanceName};Database=${database};Trusted_Connection=Yes;TrustServerCertificate=Yes;`
+      : `Driver={ODBC Driver 18 for SQL Server};Server=${server}\\${instanceName};Database=${database};Uid=${this.configService.get<string>('DB_USER', '')};Pwd=${this.configService.get<string>('DB_PASSWORD', '')};TrustServerCertificate=Yes;`;
 
     return new sql.ConnectionPool({
       connectionString,
@@ -91,7 +112,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy, QueryRunn
     text: string,
     params: QueryParams = [],
   ): Promise<{ rows: T[] }> {
-    const normalizedText = text.replace(/\$(\d+)/g, (_match, index) => `@param${index}`);
+    const normalizedText = text.replace(
+      /\$(\d+)/g,
+      (_match, index) => `@param${index}`,
+    );
 
     params.forEach((value, index) => {
       request.input(`param${index + 1}`, value as never);

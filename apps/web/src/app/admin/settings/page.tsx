@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/providers";
 import { AccountSettingsPanel } from "@/components/account-settings-panel";
 import { RequireRole } from "@/components/require-role";
 import { apiRequest } from "@/lib/api";
-import type { AdminPlatformSettings, AdminProductOption } from "@/lib/types";
-
-type HeroSlideDraft = AdminPlatformSettings["homepageHero"]["slides"][number];
+import type { AdminPlatformSettings } from "@/lib/types";
 
 export default function AdminSettingsPage() {
-  const { token, user } = useAuth();
+  const { token, currentRole } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -20,15 +19,10 @@ export default function AdminSettingsPage() {
   const [adminError, setAdminError] = useState<string | null>(null);
   const [loadingPlatform, setLoadingPlatform] = useState(true);
   const [savingPlatform, setSavingPlatform] = useState(false);
-  const [savingHero, setSavingHero] = useState(false);
   const [platformMessage, setPlatformMessage] = useState<string | null>(null);
   const [platformError, setPlatformError] = useState<string | null>(null);
   const [testEmailRecipient, setTestEmailRecipient] = useState("");
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
-  const [loadingHeroProducts, setLoadingHeroProducts] = useState(true);
-  const [heroProducts, setHeroProducts] = useState<AdminProductOption[]>([]);
-  const [heroIntervalSeconds, setHeroIntervalSeconds] = useState("6");
-  const [heroSlides, setHeroSlides] = useState<HeroSlideDraft[]>([]);
   const [activityLog, setActivityLog] = useState<AdminPlatformSettings["activityLog"]>([]);
   const [smtpHost, setSmtpHost] = useState("");
   const [smtpPort, setSmtpPort] = useState("2525");
@@ -44,7 +38,7 @@ export default function AdminSettingsPage() {
   const [smtpPasswordConfigured, setSmtpPasswordConfigured] = useState(false);
 
   useEffect(() => {
-    if (!token || user?.role !== "admin") {
+    if (!token || currentRole !== "admin") {
       return;
     }
 
@@ -67,8 +61,6 @@ export default function AdminSettingsPage() {
         setAdminVendorApprovalEmailsEnabled(response.email.adminVendorApprovalEmailsEnabled);
         setPasswordResetEmailsEnabled(response.email.passwordResetEmailsEnabled);
         setSmtpPasswordConfigured(response.email.smtpPasswordConfigured);
-        setHeroIntervalSeconds(String(response.homepageHero.intervalSeconds));
-        setHeroSlides(response.homepageHero.slides);
         setActivityLog(response.activityLog);
       } catch (loadError) {
         if (!active) return;
@@ -85,37 +77,7 @@ export default function AdminSettingsPage() {
     return () => {
       active = false;
     };
-  }, [token, user?.role]);
-
-  useEffect(() => {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-
-    let active = true;
-
-    async function loadHeroProducts() {
-      try {
-        setLoadingHeroProducts(true);
-        const response = await apiRequest<AdminProductOption[]>("/admin/products", {}, token);
-        if (!active) return;
-        setHeroProducts(response);
-      } catch (loadError) {
-        if (!active) return;
-        setPlatformError(loadError instanceof Error ? loadError.message : "Failed to load admin products.");
-      } finally {
-        if (active) {
-          setLoadingHeroProducts(false);
-        }
-      }
-    }
-
-    void loadHeroProducts();
-
-    return () => {
-      active = false;
-    };
-  }, [token, user?.role]);
+  }, [currentRole, token]);
 
   async function createAdmin() {
     if (!token) return;
@@ -190,115 +152,6 @@ export default function AdminSettingsPage() {
     }
   }
 
-  async function saveHeroSettings() {
-    if (!token) return;
-
-    try {
-      setSavingHero(true);
-      setPlatformMessage(null);
-      setPlatformError(null);
-      const response = await apiRequest<AdminPlatformSettings>(
-        "/admin/platform-settings",
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            homepageHeroIntervalSeconds: Number(heroIntervalSeconds),
-            homepageHeroSlides: heroSlides.map((slide, index) => ({
-              productId: slide.productId,
-              headline: slide.headline || undefined,
-              subheading: slide.subheading || undefined,
-              ctaLabel: slide.ctaLabel || undefined,
-              isActive: slide.isActive,
-              sortOrder: index,
-            })),
-          }),
-        },
-        token,
-      );
-
-      setHeroIntervalSeconds(String(response.homepageHero.intervalSeconds));
-      setHeroSlides(response.homepageHero.slides);
-      setActivityLog(response.activityLog);
-      setPlatformMessage("Homepage carousel saved.");
-    } catch (saveError) {
-      setPlatformError(saveError instanceof Error ? saveError.message : "Failed to save homepage carousel.");
-    } finally {
-      setSavingHero(false);
-    }
-  }
-
-  function addHeroSlide() {
-    const firstProduct = heroProducts[0];
-    if (!firstProduct) {
-      return;
-    }
-
-    setHeroSlides((current) => [
-      ...current,
-      {
-        id: `draft-${Date.now()}`,
-        productId: firstProduct.id,
-        productTitle: firstProduct.title,
-        productCode: firstProduct.product_code ?? null,
-        shopName: firstProduct.shop_name,
-        imageUrl: null,
-        headline: firstProduct.title,
-        subheading: `Discover ${firstProduct.category} from ${firstProduct.shop_name}.`,
-        ctaLabel: "View product",
-        isActive: true,
-        sortOrder: current.length,
-      },
-    ]);
-  }
-
-  function updateHeroSlide(index: number, updates: Partial<HeroSlideDraft>) {
-    setHeroSlides((current) =>
-      current.map((slide, slideIndex) => {
-        if (slideIndex !== index) {
-          return slide;
-        }
-
-        if (updates.productId) {
-          const product = heroProducts.find((entry) => entry.id === updates.productId);
-          if (product) {
-            return {
-              ...slide,
-              ...updates,
-              productId: product.id,
-              productTitle: product.title,
-              productCode: product.product_code ?? null,
-              shopName: product.shop_name,
-            };
-          }
-        }
-
-        return { ...slide, ...updates };
-      }),
-    );
-  }
-
-  function moveHeroSlide(index: number, direction: -1 | 1) {
-    setHeroSlides((current) => {
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= current.length) {
-        return current;
-      }
-
-      const next = [...current];
-      const [slide] = next.splice(index, 1);
-      next.splice(nextIndex, 0, slide);
-      return next.map((entry, order) => ({ ...entry, sortOrder: order }));
-    });
-  }
-
-  function removeHeroSlide(index: number) {
-    setHeroSlides((current) =>
-      current
-        .filter((_, slideIndex) => slideIndex !== index)
-        .map((entry, order) => ({ ...entry, sortOrder: order })),
-    );
-  }
-
   async function sendTestEmail() {
     if (!token || !testEmailRecipient.trim()) return;
 
@@ -323,153 +176,22 @@ export default function AdminSettingsPage() {
   }
 
   const extraContent =
-    user?.role === "admin" ? (
+    currentRole === "admin" ? (
       <>
         <section className="form-card stack">
           <div>
-            <h2 className="section-title">Homepage Hero Carousel</h2>
+            <h2 className="section-title">Homepage Promotions</h2>
             <p className="muted">
-              Pick the products that should rotate automatically on the main storefront board. Customers will also get left and right arrows to navigate it manually.
+              Hero banner management now lives in the dedicated Promotions
+              section so uploads, schedules, ordering, and activation stay in
+              one place.
             </p>
           </div>
-
-          <div className="form-grid two">
-            <div className="field">
-              <label>Auto-change timer in seconds</label>
-              <input
-                inputMode="numeric"
-                value={heroIntervalSeconds}
-                onChange={(event) => setHeroIntervalSeconds(event.target.value)}
-                placeholder="6"
-              />
-            </div>
+          <div className="inline-actions">
+            <Link className="button" href="/admin/promotions">
+              Open promotions
+            </Link>
           </div>
-
-          {loadingHeroProducts ? (
-            <div className="message">Loading products for homepage carousel...</div>
-          ) : (
-            <>
-              <div className="inline-actions">
-                <button
-                  className="button"
-                  type="button"
-                  disabled={!heroProducts.length}
-                  onClick={addHeroSlide}
-                >
-                  Add slide
-                </button>
-                <button
-                  className="button-secondary"
-                  type="button"
-                  disabled={savingHero}
-                  onClick={() => void saveHeroSettings()}
-                >
-                  {savingHero ? "Saving..." : "Save homepage carousel"}
-                </button>
-              </div>
-
-              {heroSlides.length === 0 ? (
-                <div className="message">No homepage slides yet. Add a product to start the rotating board.</div>
-              ) : (
-                <div className="stack">
-                  {heroSlides.map((slide, index) => (
-                    <div key={slide.id} className="card stack">
-                      <div className="inline-actions hero-slide-card-head">
-                        <strong>Slide {index + 1}</strong>
-                        <span className="chip">{slide.productTitle}</span>
-                        {slide.productCode && <span className="chip">{slide.productCode}</span>}
-                        <span className="chip">{slide.shopName}</span>
-                      </div>
-
-                      <div className="form-grid two">
-                        <div className="field">
-                          <label>Product</label>
-                          <select
-                            value={slide.productId}
-                            onChange={(event) =>
-                              updateHeroSlide(index, { productId: event.target.value })
-                            }
-                          >
-                            {heroProducts.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.title} - {product.shop_name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="field">
-                          <label>Button label</label>
-                          <input
-                            value={slide.ctaLabel ?? ""}
-                            onChange={(event) =>
-                              updateHeroSlide(index, { ctaLabel: event.target.value })
-                            }
-                            placeholder="View product"
-                          />
-                        </div>
-                        <div className="field">
-                          <label>Headline</label>
-                          <input
-                            value={slide.headline ?? ""}
-                            onChange={(event) =>
-                              updateHeroSlide(index, { headline: event.target.value })
-                            }
-                            placeholder="Main hero title"
-                          />
-                        </div>
-                        <div className="field">
-                          <label>Subheading</label>
-                          <input
-                            value={slide.subheading ?? ""}
-                            onChange={(event) =>
-                              updateHeroSlide(index, { subheading: event.target.value })
-                            }
-                            placeholder="Short support line"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="inline-actions">
-                        <label className="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={slide.isActive}
-                            onChange={(event) =>
-                              updateHeroSlide(index, { isActive: event.target.checked })
-                            }
-                          />
-                          <span>Slide active</span>
-                        </label>
-                        <button
-                          className="button-secondary"
-                          type="button"
-                          disabled={index === 0}
-                          onClick={() => moveHeroSlide(index, -1)}
-                        >
-                          Move up
-                        </button>
-                        <button
-                          className="button-secondary"
-                          type="button"
-                          disabled={index === heroSlides.length - 1}
-                          onClick={() => moveHeroSlide(index, 1)}
-                        >
-                          Move down
-                        </button>
-                        <button
-                          className="danger-button"
-                          type="button"
-                          onClick={() => removeHeroSlide(index)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </section>
 
         <section className="form-card stack">

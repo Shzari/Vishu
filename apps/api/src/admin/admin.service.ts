@@ -1,5 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
+import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import { AuthService } from '../auth/auth.service';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
@@ -7,17 +14,12 @@ import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import {
   CreateAdminUserDto,
-  HomepageHeroSlideInputDto,
   UpdatePlatformSettingsDto,
   UpdateVendorSubscriptionDto,
 } from './dto';
 
-const VENDOR_SUBSCRIPTION_PRICES = {
-  monthly: 29,
-  yearly: 290,
-} as const;
-
 const DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS = 6;
+type UploadedFile = Express.Multer.File;
 
 @Injectable()
 export class AdminService {
@@ -62,7 +64,7 @@ export class AdminService {
            (SELECT COUNT(*) FROM vendors WHERE is_active = 1) AS active_vendors,
            (SELECT COUNT(*) FROM vendors v WHERE ${this.activeSubscriptionClause('v')}) AS subscribed_vendors,
            (SELECT COUNT(*) FROM vendors v WHERE ${this.activeSubscriptionClause('v')} AND ${this.effectiveEndsAtExpression('v')} < DATEADD(DAY, 14, SYSDATETIME())) AS subscriptions_expiring_soon,
-           (SELECT COUNT(*) FROM vendors WHERE is_active = 0) AS pending_vendor_approvals,
+           (SELECT COUNT(*) FROM vendors WHERE is_verified = 1 AND is_active = 0) AS pending_vendor_approvals,
            (SELECT COUNT(*) FROM admin_notifications WHERE read_at IS NULL) AS unread_notifications
          FROM users`,
       ),
@@ -183,15 +185,14 @@ export class AdminService {
       this.databaseService.query<{
         id: string;
         shop_name: string;
-        is_verified: boolean;
         approved_at: Date | null;
         created_at: Date;
         user_email: string;
       }>(
-        `SELECT TOP 6 v.id, v.shop_name, v.is_verified, v.approved_at, v.created_at, u.email AS user_email
+        `SELECT TOP 6 v.id, v.shop_name, v.approved_at, v.created_at, u.email AS user_email
          FROM vendors v
          INNER JOIN users u ON u.id = v.user_id
-         WHERE v.is_active = 0
+         WHERE v.is_verified = 1 AND v.is_active = 0
          ORDER BY v.created_at DESC`,
       ),
       this.databaseService.query<{
@@ -304,7 +305,6 @@ export class AdminService {
         id: row.id,
         shopName: row.shop_name,
         email: row.user_email,
-        isVerified: row.is_verified,
         approvedAt: row.approved_at,
         createdAt: row.created_at,
       })),
@@ -421,36 +421,38 @@ export class AdminService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const result = await this.databaseService.withTransaction(async (client) => {
-      const createdAdmin = await client.query<{
-        id: string;
-        email: string;
-        role: string;
-        full_name: string | null;
-        phone_number: string | null;
-        is_active: boolean;
-        created_at: Date;
-      }>(
-        `INSERT INTO users (email, full_name, phone_number, password_hash, role, is_active)
+    const result = await this.databaseService.withTransaction(
+      async (client) => {
+        const createdAdmin = await client.query<{
+          id: string;
+          email: string;
+          role: string;
+          full_name: string | null;
+          phone_number: string | null;
+          is_active: boolean;
+          created_at: Date;
+        }>(
+          `INSERT INTO users (email, full_name, phone_number, password_hash, role, is_active, email_verified_at)
          OUTPUT INSERTED.id, INSERTED.email, INSERTED.role, INSERTED.full_name, INSERTED.phone_number, INSERTED.is_active, INSERTED.created_at
-         VALUES ($1, $2, $3, $4, 'admin', 1)`,
-        [email, fullName, phoneNumber, passwordHash],
-      );
+         VALUES ($1, $2, $3, $4, 'admin', 1, SYSDATETIME())`,
+          [email, fullName, phoneNumber, passwordHash],
+        );
 
-      await this.recordAdminActivity(
-        adminUserId,
-        {
-          actionType: 'admin_created',
-          entityType: 'admin_user',
-          entityId: createdAdmin.rows[0].id,
-          entityLabel: createdAdmin.rows[0].email,
-          description: `Created admin account for ${createdAdmin.rows[0].email}.`,
-        },
-        client,
-      );
+        await this.recordAdminActivity(
+          adminUserId,
+          {
+            actionType: 'admin_created',
+            entityType: 'admin_user',
+            entityId: createdAdmin.rows[0].id,
+            entityLabel: createdAdmin.rows[0].email,
+            description: `Created admin account for ${createdAdmin.rows[0].email}.`,
+          },
+          client,
+        );
 
-      return createdAdmin;
-    });
+        return createdAdmin;
+      },
+    );
 
     return {
       message: 'Admin account created',
@@ -478,6 +480,7 @@ export class AdminService {
       vendor_verification_emails_enabled: boolean;
       admin_vendor_approval_emails_enabled: boolean;
       password_reset_emails_enabled: boolean;
+      homepage_hero_autoplay_enabled: boolean;
       homepage_hero_interval_seconds: number | null;
     }>(
       `SELECT TOP 1
@@ -491,6 +494,7 @@ export class AdminService {
          vendor_verification_emails_enabled,
          admin_vendor_approval_emails_enabled,
          password_reset_emails_enabled,
+         homepage_hero_autoplay_enabled,
          homepage_hero_interval_seconds
        FROM platform_settings
        WHERE id = 1`,
@@ -508,20 +512,31 @@ export class AdminService {
         smtpPasswordConfigured: Boolean(row?.smtp_pass),
         mailFrom: row?.mail_from ?? null,
         appBaseUrl: row?.app_base_url ?? null,
-        vendorVerificationEmailsEnabled: row ? Boolean(row.vendor_verification_emails_enabled) : true,
-        adminVendorApprovalEmailsEnabled: row ? Boolean(row.admin_vendor_approval_emails_enabled) : true,
-        passwordResetEmailsEnabled: row ? Boolean(row.password_reset_emails_enabled) : true,
+        vendorVerificationEmailsEnabled: row
+          ? Boolean(row.vendor_verification_emails_enabled)
+          : true,
+        adminVendorApprovalEmailsEnabled: row
+          ? Boolean(row.admin_vendor_approval_emails_enabled)
+          : true,
+        passwordResetEmailsEnabled: row
+          ? Boolean(row.password_reset_emails_enabled)
+          : true,
       },
       homepageHero: {
+        autoRotate: row ? Boolean(row.homepage_hero_autoplay_enabled) : true,
         intervalSeconds:
-          row?.homepage_hero_interval_seconds ?? DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS,
+          row?.homepage_hero_interval_seconds ??
+          DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS,
         slides: heroSlides,
       },
       activityLog,
     };
   }
 
-  async updatePlatformSettings(adminUserId: string, dto: UpdatePlatformSettingsDto) {
+  async updatePlatformSettings(
+    adminUserId: string,
+    dto: UpdatePlatformSettingsDto,
+  ) {
     const updates: string[] = [];
     const values: unknown[] = [];
     const changedAreas: string[] = [];
@@ -589,42 +604,26 @@ export class AdminService {
     }
 
     if (dto.passwordResetEmailsEnabled !== undefined) {
-      pushUpdate('password_reset_emails_enabled', dto.passwordResetEmailsEnabled);
+      pushUpdate(
+        'password_reset_emails_enabled',
+        dto.passwordResetEmailsEnabled,
+      );
       changedAreas.push('password reset email switch');
     }
 
-    if (dto.homepageHeroIntervalSeconds !== undefined) {
-      pushUpdate(
-        'homepage_hero_interval_seconds',
-        dto.homepageHeroIntervalSeconds,
-      );
-      changedAreas.push('homepage carousel timer');
-    }
-
-    const shouldUpdateSlides = dto.homepageHeroSlides !== undefined;
-    if (shouldUpdateSlides) {
-      changedAreas.push('homepage carousel slides');
-    }
-
-    if (!updates.length && !shouldUpdateSlides) {
+    if (!updates.length) {
       return this.getPlatformSettings();
     }
 
     await this.databaseService.withTransaction(async (client) => {
-      if (updates.length) {
-        const statementValues = [...values, 1];
-        await client.query(
-          `UPDATE platform_settings
-           SET ${updates.join(', ')},
-               updated_at = SYSDATETIME()
-           WHERE id = $${statementValues.length}`,
-          statementValues,
-        );
-      }
-
-      if (shouldUpdateSlides) {
-        await this.replaceHomepageHeroSlides(client, dto.homepageHeroSlides ?? []);
-      }
+      const statementValues = [...values, 1];
+      await client.query(
+        `UPDATE platform_settings
+         SET ${updates.join(', ')},
+             updated_at = SYSDATETIME()
+         WHERE id = $${statementValues.length}`,
+        statementValues,
+      );
 
       await this.recordAdminActivity(
         adminUserId,
@@ -633,16 +632,359 @@ export class AdminService {
           entityType: 'platform_settings',
           entityLabel: 'Platform settings',
           description: `Updated platform settings: ${changedAreas.join(', ')}.`,
-          metadata: {
-            changedAreas,
-            updatedSlides: shouldUpdateSlides ? (dto.homepageHeroSlides ?? []).length : undefined,
-          },
+          metadata: { changedAreas },
         },
         client,
       );
     });
 
     return this.getPlatformSettings();
+  }
+
+  async getPromotionSettings() {
+    const settings = await this.databaseService.query<{
+      homepage_hero_autoplay_enabled: boolean;
+      homepage_hero_interval_seconds: number | null;
+    }>(
+      `SELECT TOP 1
+         homepage_hero_autoplay_enabled,
+         homepage_hero_interval_seconds
+       FROM platform_settings
+       WHERE id = 1`,
+    );
+
+    return {
+      autoRotate: settings.rows[0]
+        ? Boolean(settings.rows[0].homepage_hero_autoplay_enabled)
+        : true,
+      intervalSeconds:
+        settings.rows[0]?.homepage_hero_interval_seconds ??
+        DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS,
+      promotions: await this.getHomepageHeroSlidesForAdmin(),
+    };
+  }
+
+  async updatePromotionSettings(
+    adminUserId: string,
+    dto: { autoRotate?: boolean; intervalSeconds?: number },
+  ) {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    const changedAreas: string[] = [];
+
+    const pushUpdate = (column: string, value: unknown) => {
+      values.push(value);
+      updates.push(`${column} = $${values.length}`);
+    };
+
+    if (dto.autoRotate !== undefined) {
+      pushUpdate('homepage_hero_autoplay_enabled', dto.autoRotate);
+      changedAreas.push('homepage autoplay');
+    }
+
+    if (dto.intervalSeconds !== undefined) {
+      pushUpdate('homepage_hero_interval_seconds', dto.intervalSeconds);
+      changedAreas.push('homepage rotation interval');
+    }
+
+    if (!updates.length) {
+      return this.getPromotionSettings();
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const statementValues = [...values, 1];
+      await client.query(
+        `UPDATE platform_settings
+         SET ${updates.join(', ')},
+             updated_at = SYSDATETIME()
+         WHERE id = $${statementValues.length}`,
+        statementValues,
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'platform_settings_updated',
+          entityType: 'promotion_settings',
+          entityLabel: 'Homepage promotions',
+          description: `Updated promotion settings: ${changedAreas.join(', ')}.`,
+          metadata: {
+            changedAreas,
+          },
+        },
+        client,
+      );
+    });
+
+    return this.getPromotionSettings();
+  }
+
+  async createPromotion(
+    adminUserId: string,
+    dto: {
+      internalName: string;
+      customUrl: string;
+      isActive: boolean;
+      displayOrder: number;
+      startDate?: string;
+      endDate?: string;
+    },
+    desktopImage?: UploadedFile,
+    mobileImage?: UploadedFile,
+  ) {
+    if (!desktopImage) {
+      this.cleanupTemporaryFile(mobileImage);
+      throw new BadRequestException('Desktop banner image is required');
+    }
+
+    const normalized = this.normalizePromotionPayload(dto);
+    let storedDesktopImageUrl: string | null = null;
+    let storedMobileImageUrl: string | null = null;
+
+    try {
+      storedDesktopImageUrl = this.storeHomepagePromotionImage(
+        desktopImage,
+        'desktop',
+      );
+      storedMobileImageUrl = mobileImage
+        ? this.storeHomepagePromotionImage(mobileImage, 'mobile')
+        : null;
+    } catch (error) {
+      this.cleanupTemporaryFile(desktopImage);
+      this.cleanupTemporaryFile(mobileImage);
+      throw error;
+    }
+
+    try {
+      await this.databaseService.withTransaction(async (client) => {
+        const created = await client.query<{ id: string }>(
+          `INSERT INTO homepage_hero_slides (
+             internal_name,
+             desktop_image_url,
+             mobile_image_url,
+             target_url,
+             is_active,
+             sort_order,
+             starts_at,
+             ends_at,
+             updated_at
+           )
+           OUTPUT INSERTED.id
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, SYSDATETIME())`,
+          [
+            normalized.internalName,
+            storedDesktopImageUrl,
+            storedMobileImageUrl,
+            normalized.customUrl,
+            normalized.isActive,
+            normalized.displayOrder,
+            normalized.startsAt,
+            normalized.endsAt,
+          ],
+        );
+
+        await this.reorderPromotionSortOrders(
+          client,
+          created.rows[0].id,
+          normalized.displayOrder,
+        );
+
+        await this.recordAdminActivity(
+          adminUserId,
+          {
+            actionType: 'platform_settings_updated',
+            entityType: 'promotion',
+            entityId: created.rows[0]?.id ?? null,
+            entityLabel: normalized.internalName,
+            description: `Created promotion banner ${normalized.internalName}.`,
+            metadata: {
+              customUrl: normalized.customUrl,
+              isActive: normalized.isActive,
+              displayOrder: normalized.displayOrder,
+            },
+          },
+          client,
+        );
+      });
+    } catch (error) {
+      this.deleteStoredMedia(storedDesktopImageUrl);
+      this.deleteStoredMedia(storedMobileImageUrl);
+      throw error;
+    }
+
+    return this.getPromotionSettings();
+  }
+
+  async updatePromotion(
+    adminUserId: string,
+    promotionId: string,
+    dto: {
+      internalName?: string;
+      customUrl?: string;
+      isActive?: boolean;
+      displayOrder?: number;
+      startDate?: string;
+      endDate?: string;
+      clearMobileImage?: boolean;
+    },
+    desktopImage?: UploadedFile,
+    mobileImage?: UploadedFile,
+  ) {
+    const current = await this.getPromotionRow(promotionId);
+
+    const normalized = this.normalizePromotionPayload({
+      internalName: dto.internalName ?? current.internal_name,
+      customUrl: dto.customUrl ?? current.target_url ?? '',
+      isActive: dto.isActive ?? current.is_active,
+      displayOrder: dto.displayOrder ?? current.sort_order,
+      startDate:
+        dto.startDate !== undefined
+          ? dto.startDate
+          : current.starts_at
+            ? current.starts_at.toISOString()
+            : undefined,
+      endDate:
+        dto.endDate !== undefined
+          ? dto.endDate
+          : current.ends_at
+            ? current.ends_at.toISOString()
+            : undefined,
+    });
+
+    let storedDesktopImageUrl: string | null = null;
+    let storedMobileImageUrl: string | null = null;
+
+    try {
+      storedDesktopImageUrl = desktopImage
+        ? this.storeHomepagePromotionImage(desktopImage, 'desktop')
+        : null;
+      storedMobileImageUrl = mobileImage
+        ? this.storeHomepagePromotionImage(mobileImage, 'mobile')
+        : null;
+    } catch (error) {
+      this.cleanupTemporaryFile(desktopImage);
+      this.cleanupTemporaryFile(mobileImage);
+      throw error;
+    }
+
+    const nextDesktopImageUrl =
+      storedDesktopImageUrl ?? current.desktop_image_url ?? null;
+    const nextMobileImageUrl = storedMobileImageUrl
+      ? storedMobileImageUrl
+      : dto.clearMobileImage
+        ? null
+        : current.mobile_image_url;
+
+    if (!nextDesktopImageUrl) {
+      throw new BadRequestException('Desktop banner image is required');
+    }
+
+    try {
+      await this.databaseService.withTransaction(async (client) => {
+        await client.query(
+          `UPDATE homepage_hero_slides
+           SET internal_name = $1,
+               desktop_image_url = $2,
+               mobile_image_url = $3,
+               target_url = $4,
+               is_active = $5,
+               sort_order = $6,
+               starts_at = $7,
+               ends_at = $8,
+               updated_at = SYSDATETIME()
+           WHERE id = $9`,
+          [
+            normalized.internalName,
+            nextDesktopImageUrl,
+            nextMobileImageUrl,
+            normalized.customUrl,
+            normalized.isActive,
+            normalized.displayOrder,
+            normalized.startsAt,
+            normalized.endsAt,
+            promotionId,
+          ],
+        );
+
+        await this.reorderPromotionSortOrders(
+          client,
+          promotionId,
+          normalized.displayOrder,
+        );
+
+        await this.recordAdminActivity(
+          adminUserId,
+          {
+            actionType: 'platform_settings_updated',
+            entityType: 'promotion',
+            entityId: promotionId,
+            entityLabel: normalized.internalName,
+            description: `Updated promotion banner ${normalized.internalName}.`,
+            metadata: {
+              customUrl: normalized.customUrl,
+              isActive: normalized.isActive,
+              displayOrder: normalized.displayOrder,
+            },
+          },
+          client,
+        );
+      });
+    } catch (error) {
+      this.deleteStoredMedia(storedDesktopImageUrl);
+      this.deleteStoredMedia(storedMobileImageUrl);
+      throw error;
+    }
+
+    if (
+      storedDesktopImageUrl &&
+      current.desktop_image_url &&
+      current.desktop_image_url !== storedDesktopImageUrl
+    ) {
+      this.deleteStoredMedia(current.desktop_image_url);
+    }
+
+    if (
+      storedMobileImageUrl &&
+      current.mobile_image_url &&
+      current.mobile_image_url !== storedMobileImageUrl
+    ) {
+      this.deleteStoredMedia(current.mobile_image_url);
+    }
+
+    if (dto.clearMobileImage && current.mobile_image_url && !storedMobileImageUrl) {
+      this.deleteStoredMedia(current.mobile_image_url);
+    }
+
+    return this.getPromotionSettings();
+  }
+
+  async deletePromotion(adminUserId: string, promotionId: string) {
+    const current = await this.getPromotionRow(promotionId);
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query('DELETE FROM homepage_hero_slides WHERE id = $1', [
+        promotionId,
+      ]);
+
+      await this.normalizePromotionSortOrders(client);
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'platform_settings_updated',
+          entityType: 'promotion',
+          entityId: promotionId,
+          entityLabel: current.internal_name,
+          description: `Deleted promotion banner ${current.internal_name}.`,
+        },
+        client,
+      );
+    });
+
+    this.deleteStoredMedia(current.desktop_image_url);
+    this.deleteStoredMedia(current.mobile_image_url);
+
+    return this.getPromotionSettings();
   }
 
   async sendPlatformTestEmail(adminUserId: string, email: string) {
@@ -663,98 +1005,44 @@ export class AdminService {
   private async getHomepageHeroSlidesForAdmin() {
     const result = await this.databaseService.query<{
       id: string;
-      product_id: string;
-      headline: string | null;
-      subheading: string | null;
-      cta_label: string | null;
+      internal_name: string | null;
+      desktop_image_url: string | null;
+      mobile_image_url: string | null;
+      target_url: string | null;
       is_active: boolean;
       sort_order: number;
-      product_title: string;
-      product_code: string | null;
-      shop_name: string;
-      image_url: string | null;
+      starts_at: Date | null;
+      ends_at: Date | null;
+      updated_at: Date;
     }>(
       `SELECT
          hs.id,
-         hs.product_id,
-         hs.headline,
-         hs.subheading,
-         hs.cta_label,
+         hs.internal_name,
+         hs.desktop_image_url,
+         hs.mobile_image_url,
+         hs.target_url,
          hs.is_active,
          hs.sort_order,
-         p.title AS product_title,
-         p.product_code,
-         v.shop_name,
-         image_preview.image_url
+         hs.starts_at,
+         hs.ends_at,
+         hs.updated_at
        FROM homepage_hero_slides hs
-       INNER JOIN products p ON p.id = hs.product_id
-       INNER JOIN vendors v ON v.id = p.vendor_id
-       OUTER APPLY (
-         SELECT TOP 1 pi.image_url
-         FROM product_images pi
-         WHERE pi.product_id = p.id
-         ORDER BY pi.sort_order ASC
-       ) image_preview
        ORDER BY hs.sort_order ASC, hs.created_at ASC`,
     );
 
     return result.rows.map((row) => ({
       id: row.id,
-      productId: row.product_id,
-      productTitle: row.product_title,
-      productCode: row.product_code,
-      shopName: row.shop_name,
-      imageUrl: row.image_url,
-      headline: row.headline,
-      subheading: row.subheading,
-      ctaLabel: row.cta_label,
+      internalName: row.internal_name,
+      desktopImageUrl: row.desktop_image_url,
+      mobileImageUrl: row.mobile_image_url,
+      customUrl: row.target_url,
       isActive: row.is_active,
-      sortOrder: row.sort_order,
+      displayOrder: row.sort_order,
+      startDate: row.starts_at,
+      endDate: row.ends_at,
+      updatedAt: row.updated_at,
+      isScheduledNow: this.isPromotionInSchedule(row.starts_at, row.ends_at),
     }));
-  }
-
-  private async replaceHomepageHeroSlides(
-    client: QueryRunner,
-    slides: HomepageHeroSlideInputDto[],
-  ) {
-    const uniqueProductIds = [...new Set(slides.map((slide) => slide.productId))];
-
-    if (uniqueProductIds.length) {
-      const literalClause = this.buildGuidLiteralClause(uniqueProductIds);
-      const products = await client.query<{ id: string }>(
-        `SELECT id
-         FROM products
-         WHERE id IN (${literalClause})`,
-      );
-
-      if (products.rows.length !== uniqueProductIds.length) {
-        throw new BadRequestException('One or more selected homepage products do not exist');
-      }
-    }
-
-    await client.query('DELETE FROM homepage_hero_slides');
-
-    for (const slide of slides) {
-      await client.query(
-        `INSERT INTO homepage_hero_slides (
-           product_id,
-           headline,
-           subheading,
-           cta_label,
-           is_active,
-           sort_order
-         )
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          slide.productId,
-          slide.headline?.trim() || null,
-          slide.subheading?.trim() || null,
-          slide.ctaLabel?.trim() || null,
-          slide.isActive ?? true,
-          slide.sortOrder,
-        ],
-      );
-    }
   }
 
   async updateVendorSubscription(
@@ -824,7 +1112,8 @@ export class AdminService {
             entityType: 'vendor',
             entityId: vendorId,
             entityLabel: current.shop_name,
-            description: 'Returned vendor subscription control to automatic mode.',
+            description:
+              'Returned vendor subscription control to automatic mode.',
             metadata: {
               status: dto.status,
               note,
@@ -837,7 +1126,9 @@ export class AdminService {
 
       if (dto.status === 'active') {
         if (!dto.planType) {
-          throw new BadRequestException('Plan type is required when enabling a subscription');
+          throw new BadRequestException(
+            'Plan type is required when enabling a subscription',
+          );
         }
 
         const currentEffective = this.resolveEffectiveSubscription(current);
@@ -857,7 +1148,7 @@ export class AdminService {
         }
 
         const normalizedStartedAt = this.formatSqlDateTime(
-          activeUntil ? currentEffective.startedAt ?? now : now,
+          activeUntil ? (currentEffective.startedAt ?? now) : now,
         );
         const normalizedChargeStartsAt = this.formatSqlDateTime(chargeStartsAt);
         const normalizedEndsAt = this.formatSqlDateTime(nextEndsAt);
@@ -949,7 +1240,9 @@ export class AdminService {
          VALUES ($1, $2, 'expired', 0, $3, $4, $5, $5)`,
         [
           vendorId,
-          current.subscription_override_plan ?? current.subscription_plan ?? 'monthly',
+          current.subscription_override_plan ??
+            current.subscription_plan ??
+            'monthly',
           adminUserId,
           note,
           nowSql,
@@ -1044,20 +1337,25 @@ export class AdminService {
       totalVendorEarnings: Number(row.total_vendor_earnings),
       shippedBalance: Number(row.shipped_balance),
       paidOut: Number(row.paid_out),
-      outstandingShippedBalance: Math.max(0, Number(row.outstanding_shipped_balance)),
+      outstandingShippedBalance: Math.max(
+        0,
+        Number(row.outstanding_shipped_balance),
+      ),
       orderCount: row.order_count,
-      bankReady: Boolean(row.bank_account_name && row.bank_name && row.bank_iban),
+      bankReady: Boolean(
+        row.bank_account_name && row.bank_name && row.bank_iban,
+      ),
     }));
   }
 
   async recordVendorPayout(
     adminUserId: string,
     payload: {
-    vendorId: string;
-    amount: number;
-    reference?: string | null;
-    note?: string | null;
-  },
+      vendorId: string;
+      amount: number;
+      reference?: string | null;
+      note?: string | null;
+    },
   ) {
     const vendor = await this.databaseService.query<{ id: string }>(
       'SELECT TOP 1 id FROM vendors WHERE id = $1',
@@ -1078,7 +1376,9 @@ export class AdminService {
     const outstanding = row?.outstandingShippedBalance ?? 0;
 
     if (amount > outstanding) {
-      throw new BadRequestException('Payout amount exceeds delivered unpaid balance');
+      throw new BadRequestException(
+        'Payout amount exceeds delivered unpaid balance',
+      );
     }
 
     await this.databaseService.query(
@@ -1168,35 +1468,39 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
-    const [customerOrders, recentOrders, cartItems, vendorStats] = await Promise.all([
-      this.databaseService.query<{ order_count: number; total_spend: number | string }>(
-        `SELECT COUNT(*) AS order_count, ISNULL(SUM(total_price), 0) AS total_spend
+    const [customerOrders, recentOrders, cartItems, vendorStats] =
+      await Promise.all([
+        this.databaseService.query<{
+          order_count: number;
+          total_spend: number | string;
+        }>(
+          `SELECT COUNT(*) AS order_count, ISNULL(SUM(total_price), 0) AS total_spend
          FROM orders
          WHERE customer_id = $1`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        total_price: number | string;
-        status: string;
-        special_request: string | null;
-        created_at: Date;
-      }>(
-        `SELECT TOP 8 id, total_price, status, special_request, created_at
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          total_price: number | string;
+          status: string;
+          special_request: string | null;
+          created_at: Date;
+        }>(
+          `SELECT TOP 8 id, total_price, status, special_request, created_at
          FROM orders
          WHERE customer_id = $1
          ORDER BY created_at DESC`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        product_id: string;
-        quantity: number;
-        title: string;
-        price: number | string;
-        category: string;
-        updated_at: Date;
-      }>(
-        `SELECT
+          [userId],
+        ),
+        this.databaseService.query<{
+          product_id: string;
+          quantity: number;
+          title: string;
+          price: number | string;
+          category: string;
+          updated_at: Date;
+        }>(
+          `SELECT
            ci.product_id,
            ci.quantity,
            p.title,
@@ -1208,34 +1512,34 @@ export class AdminService {
          INNER JOIN products p ON p.id = ci.product_id
          WHERE c.customer_id = $1
          ORDER BY ci.updated_at DESC`,
-        [userId],
-      ),
-      record.vendor_id
-        ? this.databaseService.query<{
-            product_count: number;
-            item_count: number;
-            vendor_order_count: number;
-            total_earnings: number | string;
-            total_commission: number | string;
-          }>(
-            `SELECT
-               (SELECT COUNT(*) FROM products WHERE vendor_id = $1) AS product_count,
-               (SELECT ISNULL(SUM(stock), 0) FROM products WHERE vendor_id = $1) AS item_count,
-               (SELECT COUNT(DISTINCT order_id) FROM order_items WHERE vendor_id = $1) AS vendor_order_count,
-               (SELECT ISNULL(SUM(vendor_earnings), 0) FROM order_items WHERE vendor_id = $1) AS total_earnings,
-               (SELECT ISNULL(SUM(commission_amount), 0) FROM order_items WHERE vendor_id = $1) AS total_commission`,
-            [record.vendor_id],
-          )
-        : Promise.resolve({
-            rows: [] as {
+          [userId],
+        ),
+        record.vendor_id
+          ? this.databaseService.query<{
               product_count: number;
               item_count: number;
               vendor_order_count: number;
               total_earnings: number | string;
               total_commission: number | string;
-            }[],
-          }),
-    ]);
+            }>(
+              `SELECT
+               (SELECT COUNT(*) FROM products WHERE vendor_id = $1) AS product_count,
+               (SELECT ISNULL(SUM(stock), 0) FROM products WHERE vendor_id = $1) AS item_count,
+               (SELECT COUNT(DISTINCT order_id) FROM order_items WHERE vendor_id = $1) AS vendor_order_count,
+               (SELECT ISNULL(SUM(vendor_earnings), 0) FROM order_items WHERE vendor_id = $1) AS total_earnings,
+               (SELECT ISNULL(SUM(commission_amount), 0) FROM order_items WHERE vendor_id = $1) AS total_commission`,
+              [record.vendor_id],
+            )
+          : Promise.resolve({
+              rows: [] as {
+                product_count: number;
+                item_count: number;
+                vendor_order_count: number;
+                total_earnings: number | string;
+                total_commission: number | string;
+              }[],
+            }),
+      ]);
 
     return {
       id: record.id,
@@ -1282,53 +1586,6 @@ export class AdminService {
           }
         : null,
     };
-  }
-
-  async deleteUser(adminUserId: string, userId: string) {
-    const user = await this.databaseService.query<{
-      id: string;
-      email: string;
-      role: string;
-      vendor_id: string | null;
-    }>(
-      `SELECT TOP 1
-         u.id,
-         u.email,
-         u.role,
-         v.id AS vendor_id
-       FROM users u
-       LEFT JOIN vendors v ON v.user_id = u.id
-       WHERE u.id = $1`,
-      [userId],
-    );
-
-    const record = user.rows[0];
-    if (!record) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (record.role !== 'customer') {
-      throw new BadRequestException('Only customer accounts can be deleted from this action');
-    }
-
-    if (record.vendor_id) {
-      throw new BadRequestException('Vendor-linked users must be deleted from the vendor record');
-    }
-
-    await this.databaseService.query('DELETE FROM users WHERE id = $1', [userId]);
-
-    await this.recordAdminActivity(adminUserId, {
-      actionType: 'customer_deleted',
-      entityType: 'user',
-      entityId: userId,
-      entityLabel: record.email,
-      description: `Deleted customer account ${record.email}.`,
-      metadata: {
-        role: record.role,
-      },
-    });
-
-    return { message: 'Customer deleted' };
   }
 
   async getVendorById(vendorId: string) {
@@ -1386,7 +1643,13 @@ export class AdminService {
       throw new NotFoundException('Vendor not found');
     }
 
-    const [metrics, categoryRows, recentOrders, payoutHistory, subscriptionHistory] = await Promise.all([
+    const [
+      metrics,
+      categoryRows,
+      recentOrders,
+      payoutHistory,
+      subscriptionHistory,
+    ] = await Promise.all([
       this.databaseService.query<{
         product_count: number;
         inventory_units: number;
@@ -1523,7 +1786,10 @@ export class AdminService {
         pendingItems: metrics.rows[0].pending_items,
         shippedItems: metrics.rows[0].shipped_items,
         paidOut: Number(metrics.rows[0].paid_out),
-        outstandingShippedBalance: Math.max(0, Number(metrics.rows[0].outstanding_shipped_balance)),
+        outstandingShippedBalance: Math.max(
+          0,
+          Number(metrics.rows[0].outstanding_shipped_balance),
+        ),
       },
       categories: categoryRows.rows.map((row) => ({
         category: row.category,
@@ -1553,7 +1819,10 @@ export class AdminService {
       subscriptionHistory: subscriptionHistory.rows.map((row) => ({
         id: row.id,
         planType: row.plan_type,
-        status: row.status === 'active' && row.ends_at < new Date() ? 'expired' : row.status,
+        status:
+          row.status === 'active' && row.ends_at < new Date()
+            ? 'expired'
+            : row.status,
         amount: Number(row.amount),
         adminNote: row.admin_note,
         adminEmail: row.admin_email,
@@ -1562,53 +1831,6 @@ export class AdminService {
         createdAt: row.created_at,
       })),
     };
-  }
-
-  async deleteVendor(adminUserId: string, vendorId: string) {
-    const vendor = await this.databaseService.query<{
-      id: string;
-      shop_name: string;
-      user_id: string;
-      user_email: string;
-      order_item_count: number;
-    }>(
-      `SELECT TOP 1
-         v.id,
-         v.shop_name,
-         v.user_id,
-         u.email AS user_email,
-         (SELECT COUNT(*) FROM order_items oi WHERE oi.vendor_id = v.id) AS order_item_count
-       FROM vendors v
-       INNER JOIN users u ON u.id = v.user_id
-       WHERE v.id = $1`,
-      [vendorId],
-    );
-
-    const record = vendor.rows[0];
-    if (!record) {
-      throw new NotFoundException('Vendor not found');
-    }
-
-    if (record.order_item_count > 0) {
-      throw new BadRequestException(
-        'This vendor cannot be deleted because they already have order history. Deactivate the vendor instead.',
-      );
-    }
-
-    await this.databaseService.query('DELETE FROM users WHERE id = $1', [record.user_id]);
-
-    await this.recordAdminActivity(adminUserId, {
-      actionType: 'vendor_deleted',
-      entityType: 'vendor',
-      entityId: vendorId,
-      entityLabel: record.shop_name,
-      description: `Deleted vendor ${record.shop_name}.`,
-      metadata: {
-        vendorEmail: record.user_email,
-      },
-    });
-
-    return { message: 'Vendor deleted' };
   }
 
   async getOrderById(orderId: string) {
@@ -1645,21 +1867,27 @@ export class AdminService {
     }
 
     if (existing.rows[0].payment_method !== 'cash_on_delivery') {
-      throw new BadRequestException('Only cash on delivery orders can use COD status updates');
+      throw new BadRequestException(
+        'Only cash on delivery orders can use COD status updates',
+      );
     }
 
     if (
       payload.paymentStatus === 'cod_collected' &&
       existing.rows[0].status !== 'delivered'
     ) {
-      throw new BadRequestException('COD cash can only be collected after the order is delivered');
+      throw new BadRequestException(
+        'COD cash can only be collected after the order is delivered',
+      );
     }
 
     if (
       payload.paymentStatus === 'cod_refused' &&
       existing.rows[0].payment_status === 'cod_collected'
     ) {
-      throw new BadRequestException('Collected COD orders cannot be marked as refused');
+      throw new BadRequestException(
+        'Collected COD orders cannot be marked as refused',
+      );
     }
 
     await this.databaseService.query(
@@ -1760,10 +1988,7 @@ export class AdminService {
     const product = await this.databaseService.query<{
       id: string;
       title: string;
-    }>(
-      'SELECT TOP 1 id, title FROM products WHERE id = $1',
-      [productId],
-    );
+    }>('SELECT TOP 1 id, title FROM products WHERE id = $1', [productId]);
 
     const deleted = await this.productsService.adminDeleteProduct(productId);
 
@@ -1844,14 +2069,20 @@ export class AdminService {
     return { message: 'Vendor status updated' };
   }
 
-  async resendVendorVerificationEmail(adminUserId: string, vendorId: string) {
+  async resendVendorVerification(adminUserId: string, vendorId: string) {
     const vendorLookup = await this.databaseService.query<{
       id: string;
       shop_name: string;
-      user_email: string;
       is_verified: boolean;
+      user_id: string;
+      user_email: string;
     }>(
-      `SELECT TOP 1 v.id, v.shop_name, u.email AS user_email, v.is_verified
+      `SELECT TOP 1
+         v.id,
+         v.shop_name,
+         v.is_verified,
+         u.id AS user_id,
+         u.email AS user_email
        FROM vendors v
        INNER JOIN users u ON u.id = v.user_id
        WHERE v.id = $1`,
@@ -1867,22 +2098,47 @@ export class AdminService {
       throw new BadRequestException('Vendor is already verified');
     }
 
-    const result = await this.authService.resendVerificationEmail({
-      email: vendor.user_email,
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE email_verifications
+         SET used_at = COALESCE(used_at, SYSDATETIME())
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [vendor.user_id],
+      );
+
+      await client.query(
+        `INSERT INTO email_verifications (user_id, token, expires_at)
+         VALUES ($1, $2, $3)`,
+        [vendor.user_id, token, expiresAt],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'vendor_verification_resent',
+          entityType: 'vendor',
+          entityId: vendor.id,
+          entityLabel: vendor.shop_name,
+          description: `Resent vendor verification email to ${vendor.shop_name}.`,
+          metadata: {
+            vendorEmail: vendor.user_email,
+          },
+        },
+        client,
+      );
     });
 
-    await this.recordAdminActivity(adminUserId, {
-      actionType: 'vendor_verification_resent',
-      entityType: 'vendor',
-      entityId: vendorId,
-      entityLabel: vendor.shop_name,
-      description: `Resent vendor verification email to ${vendor.shop_name}.`,
-      metadata: {
-        vendorEmail: vendor.user_email,
-      },
-    });
+    await this.mailService.sendVerificationEmail(
+      vendor.user_email,
+      token,
+      'vendor',
+    );
 
-    return result;
+    return { message: 'Verification email sent.' };
   }
 
   async setUserActive(adminUserId: string, userId: string, isActive: boolean) {
@@ -2022,7 +2278,14 @@ export class AdminService {
       );
 
       const csv = this.toCsv([
-        ['Shop name', 'Vendor email', 'Vendor active', 'Vendor verified', 'Login active', 'Created at'],
+        [
+          'Shop name',
+          'Vendor email',
+          'Vendor active',
+          'Vendor verified',
+          'Login active',
+          'Created at',
+        ],
         ...result.rows.map((row) => [
           row.shop_name,
           row.vendor_email,
@@ -2108,7 +2371,15 @@ export class AdminService {
     );
 
     const csv = this.toCsv([
-      ['Order ID', 'Customer email', 'Status', 'Payment method', 'Payment status', 'Total price', 'Created at'],
+      [
+        'Order ID',
+        'Customer email',
+        'Status',
+        'Payment method',
+        'Payment status',
+        'Total price',
+        'Created at',
+      ],
       ...result.rows.map((row) => [
         row.id,
         row.customer_email,
@@ -2189,7 +2460,9 @@ export class AdminService {
     return 30;
   }
 
-  private toCsv(rows: Array<Array<string | number | boolean | null | undefined>>) {
+  private toCsv(
+    rows: Array<Array<string | number | boolean | null | undefined>>,
+  ) {
     return rows
       .map((row) =>
         row
@@ -2203,6 +2476,190 @@ export class AdminService {
           .join(','),
       )
       .join('\n');
+  }
+
+  private storeHomepagePromotionImage(
+    file: UploadedFile,
+    variant: 'desktop' | 'mobile',
+  ) {
+    const targetDir = join(process.cwd(), 'uploads', 'homepage-promotions');
+
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true });
+    }
+
+    const extension = file.originalname.includes('.')
+      ? file.originalname.slice(file.originalname.lastIndexOf('.'))
+      : '.jpg';
+    const fileName = `promotion-${variant}-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
+    const targetPath = join(targetDir, fileName);
+
+    if (!existsSync(file.path)) {
+      throw new BadRequestException('Uploaded promotion image could not be processed');
+    }
+
+    renameSync(file.path, targetPath);
+    return `/media/homepage-promotions/${fileName}`;
+  }
+
+  private deleteStoredMedia(mediaUrl?: string | null) {
+    if (!mediaUrl || !mediaUrl.startsWith('/media/')) {
+      return;
+    }
+
+    const relative = mediaUrl.replace(/^\/media\//, '');
+    const fullPath = join(process.cwd(), 'uploads', relative);
+
+    if (existsSync(fullPath)) {
+      unlinkSync(fullPath);
+    }
+  }
+
+  private normalizePromotionPayload(input: {
+    internalName: string;
+    customUrl: string;
+    isActive: boolean;
+    displayOrder: number;
+    startDate?: string;
+    endDate?: string;
+  }) {
+    const internalName = input.internalName.trim();
+    const customUrl = input.customUrl.trim();
+
+    if (!internalName) {
+      throw new BadRequestException('Internal name is required');
+    }
+
+    if (!customUrl) {
+      throw new BadRequestException('Custom URL is required');
+    }
+
+    const startsAt = input.startDate ? new Date(input.startDate) : null;
+    const endsAt = input.endDate ? new Date(input.endDate) : null;
+
+    if (startsAt && Number.isNaN(startsAt.getTime())) {
+      throw new BadRequestException('Start date is invalid');
+    }
+
+    if (endsAt && Number.isNaN(endsAt.getTime())) {
+      throw new BadRequestException('End date is invalid');
+    }
+
+    if (startsAt && endsAt && endsAt < startsAt) {
+      throw new BadRequestException('End date cannot be before start date');
+    }
+
+    return {
+      internalName,
+      customUrl,
+      isActive: input.isActive,
+      displayOrder: input.displayOrder,
+      startsAt: startsAt ? this.formatSqlDateTime(startsAt) : null,
+      endsAt: endsAt ? this.formatSqlDateTime(endsAt) : null,
+    };
+  }
+
+  private async getPromotionRow(promotionId: string) {
+    const result = await this.databaseService.query<{
+      id: string;
+      internal_name: string;
+      desktop_image_url: string | null;
+      mobile_image_url: string | null;
+      target_url: string | null;
+      is_active: boolean;
+      sort_order: number;
+      starts_at: Date | null;
+      ends_at: Date | null;
+    }>(
+      `SELECT TOP 1
+         id,
+         internal_name,
+         desktop_image_url,
+         mobile_image_url,
+         target_url,
+         is_active,
+         sort_order,
+         starts_at,
+         ends_at
+       FROM homepage_hero_slides
+       WHERE id = $1`,
+      [promotionId],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new NotFoundException('Promotion not found');
+    }
+
+    return row;
+  }
+
+  private async reorderPromotionSortOrders(
+    client: QueryRunner,
+    promotionId: string,
+    nextIndex: number,
+  ) {
+    const existing = await client.query<{ id: string }>(
+      `SELECT id
+       FROM homepage_hero_slides
+       WHERE id <> $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [promotionId],
+    );
+
+    const orderedIds = existing.rows.map((row) => row.id);
+    const boundedIndex = Math.max(0, Math.min(nextIndex, orderedIds.length));
+    orderedIds.splice(boundedIndex, 0, promotionId);
+
+    for (const [index, id] of orderedIds.entries()) {
+      await client.query(
+        `UPDATE homepage_hero_slides
+         SET sort_order = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = $2`,
+        [index, id],
+      );
+    }
+  }
+
+  private async normalizePromotionSortOrders(client: QueryRunner) {
+    const result = await client.query<{ id: string }>(
+      `SELECT id
+       FROM homepage_hero_slides
+       ORDER BY sort_order ASC, created_at ASC`,
+    );
+
+    for (const [index, row] of result.rows.entries()) {
+      await client.query(
+        `UPDATE homepage_hero_slides
+         SET sort_order = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = $2`,
+        [index, row.id],
+      );
+    }
+  }
+
+  private isPromotionInSchedule(
+    startsAt: Date | null,
+    endsAt: Date | null,
+    now = new Date(),
+  ) {
+    if (startsAt && startsAt > now) {
+      return false;
+    }
+
+    if (endsAt && endsAt < now) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private cleanupTemporaryFile(file?: UploadedFile) {
+    if (file?.path && existsSync(file.path)) {
+      unlinkSync(file.path);
+    }
   }
 
   private formatSqlDateTime(value: Date) {
@@ -2297,7 +2754,8 @@ export class AdminService {
     const manualOverride = this.resolveManualOverride(vendor);
     if (
       manualOverride &&
-      (vendor.subscription_override_status === 'expired' || manualOverride.status === 'active')
+      (vendor.subscription_override_status === 'expired' ||
+        manualOverride.status === 'active')
     ) {
       return {
         planType: manualOverride.planType ?? vendor.subscription_plan,

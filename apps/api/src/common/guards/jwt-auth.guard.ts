@@ -39,19 +39,21 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync<AuthenticatedUser>(token, {
-        secret: process.env.JWT_SECRET || 'change-me',
-      });
+      const payload = await this.jwtService.verifyAsync<AuthenticatedUser>(
+        token,
+        {
+          secret: process.env.JWT_SECRET || 'change-me',
+        },
+      );
 
       const result = await this.databaseService.query<{
         id: string;
         email: string;
         role: string;
         is_active: boolean;
-      }>(
-        'SELECT TOP 1 id, email, role, is_active FROM users WHERE id = $1',
-        [payload.sub],
-      );
+      }>('SELECT TOP 1 id, email, role, is_active FROM users WHERE id = $1', [
+        payload.sub,
+      ]);
 
       const user = result.rows[0];
       if (!user || !user.is_active) {

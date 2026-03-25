@@ -7,7 +7,7 @@ import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import type { AccountSettingsProfile } from "@/lib/types";
 
 export default function VendorSettingsPage() {
-  const { token, user, refreshProfile } = useAuth();
+  const { token, currentRole, refreshProfile } = useAuth();
   const [settings, setSettings] = useState<AccountSettingsProfile | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -69,10 +69,10 @@ export default function VendorSettingsPage() {
   }
 
   useEffect(() => {
-    if (token && user?.role === "vendor") {
+    if (token && currentRole === "vendor") {
       void loadSettings();
     }
-  }, [token, user]);
+  }, [currentRole, token]);
 
   const logoPreviewUrl = useMemo(() => {
     if (!logoFile) {

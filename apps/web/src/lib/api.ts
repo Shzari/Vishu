@@ -1,33 +1,23 @@
 const EXPLICIT_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
 
-function readErrorMessage(payload: unknown, fallback: string) {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "message" in payload &&
-    typeof payload.message === "string" &&
-    payload.message.trim()
-  ) {
-    return payload.message;
-  }
-
-  return fallback;
-}
-
 export function getApiBaseUrl() {
   if (EXPLICIT_API_BASE_URL) {
-    return EXPLICIT_API_BASE_URL.replace(/\/$/, "");
+    return EXPLICIT_API_BASE_URL;
   }
 
   if (typeof window !== "undefined") {
     const host = window.location.hostname.toLowerCase();
 
     if (host === "vishu.shop" || host === "www.vishu.shop") {
-      return "/api";
+      return "https://api.vishu.shop";
+    }
+
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:3000";
     }
   }
 
-  return "/api";
+  return "http://localhost:3000";
 }
 
 export function assetUrl(path?: string) {
@@ -39,9 +29,7 @@ export function assetUrl(path?: string) {
     return path;
   }
 
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const baseUrl = getApiBaseUrl().replace(/\/$/, "");
-  return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
+  return `${getApiBaseUrl().replace(/\/$/, "")}${path}`;
 }
 
 export async function apiRequest<T>(
@@ -65,27 +53,10 @@ export async function apiRequest<T>(
   });
 
   const text = await response.text();
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  let payload: unknown = null;
-
-  if (text) {
-    const shouldTryJson = contentType.includes("application/json") || /^[\[{]/.test(text.trim());
-
-    if (shouldTryJson) {
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = null;
-      }
-    }
-  }
+  const payload = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    const fallbackMessage =
-      text && !payload
-        ? `Request failed (${response.status}). The server returned an unexpected response.`
-        : `Request failed (${response.status}).`;
-    throw new Error(readErrorMessage(payload, fallbackMessage));
+    throw new Error(payload?.message || "Request failed");
   }
 
   return payload as T;

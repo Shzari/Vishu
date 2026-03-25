@@ -1,23 +1,20 @@
 import {
-  ArrayMaxSize,
-  IsArray,
   IsBoolean,
+  IsDateString,
   IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateAdminUserDto {
   @IsEmail()
@@ -103,19 +100,6 @@ export class UpdatePlatformSettingsDto {
   @IsBoolean()
   passwordResetEmailsEnabled?: boolean;
 
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(3)
-  @Max(30)
-  homepageHeroIntervalSeconds?: number;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(12)
-  @ValidateNested({ each: true })
-  @Type(() => HomepageHeroSlideInputDto)
-  homepageHeroSlides?: HomepageHeroSlideInputDto[];
 }
 
 export class SendPlatformTestEmailDto {
@@ -123,32 +107,97 @@ export class SendPlatformTestEmailDto {
   email!: string;
 }
 
-export class HomepageHeroSlideInputDto {
-  @IsUUID()
-  productId!: string;
-
+export class UpdatePromotionSettingsDto {
   @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  headline?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  subheading?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(80)
-  ctaLabel?: string;
-
-  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
-  isActive?: boolean;
+  autoRotate?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(3)
+  @Max(30)
+  intervalSeconds?: number;
+}
+
+export class PromotionMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  internalName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  customUrl!: string;
+
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive!: boolean;
 
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(99)
-  sortOrder!: number;
+  @Max(999)
+  displayOrder!: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsDateString()
+  endDate?: string;
+}
+
+export class PromotionUpdateDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  internalName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  customUrl?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  displayOrder?: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  clearMobileImage?: boolean;
 }

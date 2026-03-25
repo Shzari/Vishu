@@ -52,7 +52,12 @@ function vendorLogoUploadInterceptor() {
       },
     }),
     fileFilter: (_req, file, callback) => {
-      const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      const allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+      ];
       if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
         callback(new Error('Only image uploads are allowed'), false);
         return;
@@ -116,7 +121,11 @@ export class AccountController {
     @Body() dto: UpdateVendorProfileDto,
     @UploadedFile() logoImage?: Express.Multer.File,
   ) {
-    return this.accountService.updateVendorProfile(req.user.sub, dto, logoImage);
+    return this.accountService.updateVendorProfile(
+      req.user.sub,
+      dto,
+      logoImage,
+    );
   }
 
   @Post('vendor-subscription')
@@ -149,7 +158,10 @@ export class AccountController {
 
   @Delete('addresses/:id')
   @Roles('customer')
-  deleteAddress(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
+  deleteAddress(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
     return this.accountService.deleteAddress(req.user.sub, id);
   }
 
@@ -174,7 +186,10 @@ export class AccountController {
 
   @Delete('payment-methods/:id')
   @Roles('customer')
-  deletePaymentMethod(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
+  deletePaymentMethod(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
     return this.accountService.deletePaymentMethod(req.user.sub, id);
   }
 }

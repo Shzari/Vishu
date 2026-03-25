@@ -1,16 +1,25 @@
 # Vishu Project Status
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 This file is the handoff reference for any account or agent continuing work on this repo.
 
 ## Current Position
 
-- Current active phase: `Phase 10`
+- Current active phase: `Phase 9`
 - App state: `working local MVP-plus`
 - Main local URLs:
   - web: `http://localhost:3001`
   - api: `http://localhost:3000`
+- Local runtime note:
+  - local web is pointed back to `localhost` for API calls
+  - old Tailscale local API target should no longer be used for daily local development
+  - if the design suddenly disappears on localhost, check whether the running web process is stale and serving an old CSS chunk
+  - if the CSS chunk referenced in page HTML does not match the files under `apps/web/.next/static/chunks`, restart the local web server cleanly
+  - `local:status` PID reporting can be imperfect after manual restarts; trust the health checks first
+- Demo data:
+  - repeatable seed command is now `npm run seed:demo`
+  - seed creates multiple verified/active vendors with active visibility, demo products, images, and homepage promo banners
 
 ## Phase Overview
 
@@ -20,6 +29,7 @@ This file is the handoff reference for any account or agent continuing work on t
 - Completed:
   - protected page role guards cleaned up
   - stale session handling improved
+  - shared auth/session state now revalidates more cleanly after reopening tabs, switching roles, and logging out
   - local start/stop/status scripts added
   - daily local workflow is more reliable
 
@@ -87,10 +97,11 @@ This file is the handoff reference for any account or agent continuing work on t
 
 #### Done so far in Phase 5
 
-- rotating homepage hero board
+- rotating homepage promo banner system
 - left-side customer category rail
 - public shops strip/page
 - quick-view popup
+- quick-view popup now locks background page scroll while open
 - customer storefront cleaned further toward a minimal white design
 - homepage browsing continuity improved
   - header search lives in the top bar
@@ -120,6 +131,21 @@ This file is the handoff reference for any account or agent continuing work on t
   - quick view stays for fast browsing
   - quick view links directly to the full product page
   - full product page remains the canonical detailed product view
+- storefront hero is no longer product-based
+  - homepage hero now renders uploaded promo banners only
+  - hero is managed from admin promotions, not from product content
+  - banner clicks open configured URLs
+- storefront product cards were redesigned away from a boxed card look
+  - image-first listing
+  - cleaner text underneath the image
+  - premium/open layout direction instead of dashboard-like tiles
+- storefront search now supports structured layered results
+  - exact combined matches first
+  - then broader category matches
+  - then broader color matches
+  - then fallback products only when no strong results exist
+  - API can use Algolia when configured, with SQL/database fallback if Algolia is unavailable or not configured
+- desktop product grid still targets 5 products per row in the main listing
 - customer order-entry pages improved
   - cart now links back into product detail and the main catalog
   - checkout now has clearer return paths to cart and shopping
@@ -147,6 +173,38 @@ This file is the handoff reference for any account or agent continuing work on t
   - e2e coverage now proves order snapshot storage for:
     - shipping address
     - saved payment card
+  - hidden products are no longer orderable through stale cart/order requests
+
+## Demo Data
+
+- Repeatable demo seed command:
+  - `npm run seed:demo`
+- Seed currently creates:
+  - multiple verified/active demo vendors
+  - active visible demo products
+  - product images
+  - homepage promo banners
+
+## Recent Local Work
+
+- local API/web were brought back to localhost-first development
+- demo seeding was expanded with multiple vendors, products, logos, and hero slides
+- hidden products are no longer orderable through stale order/cart requests
+- vendor quick-view and storefront quick-view now block background scrolling
+- product cards and header layout were iterated heavily on 2026-03-24
+- homepage hero was converted into a DB-backed admin promotions banner system
+- admin now has a dedicated `Promotions` section for banner upload, ordering, activation, scheduling, and autoplay settings
+- layered product search was added on 2026-03-25
+  - new public API endpoint: `/products/search`
+  - search order is intentional, not random
+  - Algolia is optional and uses environment config
+  - without Algolia credentials, the app falls back safely to database-driven layered search
+- API now has a search reindex helper:
+  - `npm --workspace apps/api run sync:search-index`
+- repeated localhost design breakages were caused by stale Next.js web processes serving old CSS chunk references
+- when localhost looks unstyled:
+  - compare the CSS chunk referenced in page HTML with files in `apps/web/.next/static/chunks`
+  - if they differ, restart the web server cleanly
 
 ### Phase 7: Fulfillment Workflow
 
@@ -178,7 +236,7 @@ This file is the handoff reference for any account or agent continuing work on t
 
 ### Phase 9: Admin Operations
 
-- Status: `Done`
+- Status: `Partly built, not phase-closed`
 - Already present:
   - admin login
   - vendor approval
@@ -195,7 +253,6 @@ This file is the handoff reference for any account or agent continuing work on t
       - order attention queue
       - shipping watch
       - account watch
-      - verification resend actions for still-unverified vendors
     - vendor list now has queue filters:
       - pending approval
       - active
@@ -207,20 +264,12 @@ This file is the handoff reference for any account or agent continuing work on t
   - stronger admin detail-page actions
     - vendor detail now supports:
       - activate/deactivate vendor
-      - resend vendor verification email when the vendor is still unverified
       - enable/disable linked login
       - send password reset email
-      - delete vendor when the vendor has no order history
-      - record vendor payouts against delivered unpaid balance
-      - review payout history and payout totals
     - user detail now supports:
       - enable/disable login
       - send password reset email
       - activate/deactivate linked vendor directly
-      - delete customer accounts directly
-    - order detail now supports:
-      - COD status updates
-      - COD admin notes for delivery/payment follow-up
   - reporting snapshot added to admin dashboard
     - average order value
     - revenue last 7 days
@@ -236,28 +285,22 @@ This file is the handoff reference for any account or agent continuing work on t
     - vendors CSV export
     - customers CSV export
     - orders CSV export
-  - dedicated admin payout queue
-    - dashboard now includes a payouts view
-    - admins can review bank readiness, delivered unpaid balance, and payout totals in one place
-    - payouts can be recorded directly from the admin payout queue
-  - admin queue routing polish
-    - admin dashboard views and filters now persist in the URL
-    - detail pages can send admins back into the correct queue context
-    - reporting and activity text polish cleaned visible admin copy issues
+  - vendor verification resend flow in admin vendor queue
+    - vendor list now shows a `Verify` action only for vendors who are still unverified
+    - admin can resend a fresh vendor verification email/link without leaving the vendor queue
+    - verified vendors do not show the `Verify` button
+  - homepage promotions management
+    - admin can create, edit, delete, activate, deactivate, reorder, and schedule homepage banners
+    - admin can upload desktop and optional mobile banner images
+    - admin can configure custom URLs and autoplay timing
 
 ### Phase 10: Production And Launch Readiness
 
 - Status: `Not done`
-- Current deployment direction:
-  - live via AWS
-  - public domain deployment is the active path
-  - ignore the older Tailscale Funnel demo path
-- Already present / decided:
-  - public domain split planning for storefront and API
-  - deploy/domain notes in `DEPLOY-DEMO.md`
-- Remaining focus:
-  - domain and production configuration cleanup as needed
-  - production validation, monitoring, and launch hardening as needed
+- Already explored:
+  - Tailscale Funnel demo path
+  - domain planning
+  - deploy/demo notes in `DEPLOY-DEMO.md`
 
 ## Important Product Decisions
 
@@ -288,15 +331,67 @@ This file is the handoff reference for any account or agent continuing work on t
   - prefer database-first storage for business data and workflow state
   - keep moving important state out of browser/local app storage when practical
   - browser storage should be minimal and temporary, not the source of truth
-- Deployment direction:
-  - AWS and the public domain are now the real deployment path
-  - ignore any older Tailscale Funnel planning unless explicitly revisited
+- AWS deployment rule:
+  - after pulling code on AWS, database/schema changes must be checked first
+  - if a change touches tables, columns, SQL bootstrap, or DB-backed workflow state, treat DB verification as the first deployment task
+  - do not treat AWS deploy/update as complete until API startup and SQL compatibility are confirmed
+
+## Release Readiness Notes
+
+- GitHub remote provided by user:
+  - `https://github.com/Shzari/Vishu`
+- Important local repo note:
+  - current folder on Desktop is **not** a Git working tree right now
+  - before pushing, either clone the GitHub repo cleanly into the deployable folder or connect this workspace to a real `.git` repo first
+- Remote branches currently visible:
+  - `main`
+  - `vishu`
+
+## Database Change Check For AWS
+
+- Search work on 2026-03-25 did **not** add new SQL tables or columns.
+- Search deployment requires only environment configuration if Algolia is desired:
+  - `ALGOLIA_APP_ID`
+  - `ALGOLIA_ADMIN_API_KEY`
+  - `ALGOLIA_INDEX_NAME`
+- The earlier promotions work **did** change DB-backed hero storage and settings:
+  - `platform_settings.homepage_hero_autoplay_enabled`
+  - `homepage_hero_slides.internal_name`
+  - `homepage_hero_slides.desktop_image_url`
+  - `homepage_hero_slides.mobile_image_url`
+  - `homepage_hero_slides.target_url`
+  - `homepage_hero_slides.starts_at`
+  - `homepage_hero_slides.ends_at`
+- On AWS, API startup against SQL Server must be confirmed after pull because schema bootstrap is still responsible for applying any missing columns.
+
+## Pre-Push / Pre-AWS Checklist
+
+- Confirm the local folder is attached to the real GitHub repo before committing.
+- Run:
+  - `npm --workspace apps/api run build`
+  - `npm --workspace apps/web run build`
+  - `npm --workspace apps/web run lint`
+- If using Algolia in production, add API env values and run:
+  - `npm --workspace apps/api run sync:search-index`
+- After pulling on AWS:
+  - verify API boots without SQL errors
+  - verify homepage promotions load
+  - verify `/products/search` responds
+  - verify homepage search returns structured results
 
 ## Next Recommended Work
 
-1. Start Phase 10 production and launch readiness work.
+1. Start Phase 9 admin operations polish.
 2. Later revisit Phase 8 only after the fee-per-purchase guide is defined.
 3. Keep pushing more business data and workflow state into SQL Server instead of local app storage.
+4. Continue storefront product-card design only after confirming the running local web server is using the newest `.next` bundle.
+
+## Current Handoff Notes
+
+- The app is working locally right now.
+- The user is still actively iterating on storefront product-card appearance.
+- Recent work changed visuals more than business logic.
+- If another account resumes and the user says “design is gone,” suspect a stale local web process before suspecting broken CSS syntax.
 
 ## Update Rule
 
@@ -305,3 +400,4 @@ Whenever meaningful work is completed:
 - update the relevant phase status here
 - move finished items from `Left to finish` into `Done`
 - add any new business decision that changes how the app should behave
+- if the change affects SQL tables or DB-backed logic, mention it clearly so AWS pull/deploy work can check DB changes first

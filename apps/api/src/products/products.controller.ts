@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseGuards,
@@ -42,11 +43,19 @@ function productUploadInterceptor() {
         const extension = file.originalname.includes('.')
           ? file.originalname.slice(file.originalname.lastIndexOf('.'))
           : '.jpg';
-        callback(null, `${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`);
+        callback(
+          null,
+          `${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`,
+        );
       },
     }),
     fileFilter: (_req, file, callback) => {
-      const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      const allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+      ];
       if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
         callback(new Error('Only image uploads are allowed'), false);
         return;
@@ -78,6 +87,22 @@ export class ProductsController {
   @Get('vendors/:id')
   getPublicVendor(@Param('id') id: string) {
     return this.productsService.getPublicVendorById(id);
+  }
+
+  @Public()
+  @Get('search')
+  searchProducts(
+    @Query('query') query?: string,
+    @Query('category') category?: string,
+    @Query('department') department?: string,
+    @Query('limit') limit?: string,
+  ): Promise<unknown> {
+    return this.productsService.searchPublicProducts({
+      query: query ?? '',
+      category,
+      department,
+      limit: limit ? Number(limit) : undefined,
+    });
   }
 
   @Roles('vendor')
@@ -126,7 +151,10 @@ export class ProductsController {
 
   @Roles('vendor')
   @Post(':id/duplicate')
-  duplicateProduct(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
+  duplicateProduct(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
     return this.productsService.duplicateProduct(req.user, id);
   }
 
@@ -142,7 +170,10 @@ export class ProductsController {
 
   @Roles('vendor')
   @Delete(':id')
-  deleteProduct(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
+  deleteProduct(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
     return this.productsService.deleteProduct(req.user, id);
   }
 }

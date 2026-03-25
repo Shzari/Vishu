@@ -11,7 +11,7 @@ import type { AdminVendorDetail } from "@/lib/types";
 
 export default function AdminVendorDetailPage() {
   const params = useParams<{ id: string }>();
-  const { token, user } = useAuth();
+  const { token, currentRole } = useAuth();
   const [detail, setDetail] = useState<AdminVendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,34 +21,28 @@ export default function AdminVendorDetailPage() {
   const [subscriptionSaving, setSubscriptionSaving] = useState<"monthly" | "yearly" | "cut" | "auto" | null>(null);
   const [accountMessage, setAccountMessage] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
-  const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | "verify" | "delete" | null>(null);
-  const [payoutAmount, setPayoutAmount] = useState("");
-  const [payoutReference, setPayoutReference] = useState("");
-  const [payoutNote, setPayoutNote] = useState("");
-  const [payoutMessage, setPayoutMessage] = useState<string | null>(null);
-  const [payoutError, setPayoutError] = useState<string | null>(null);
-  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | null>(null);
 
-  async function loadDetail() {
-    if (!token || user?.role !== "admin") {
+  useEffect(() => {
+    if (!token || currentRole !== "admin") {
       return;
     }
 
-    try {
-      setLoading(true);
-      setError(null);
-      const nextDetail = await apiRequest<AdminVendorDetail>(`/admin/vendors/${params.id}`, undefined, token);
-      setDetail(nextDetail);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load vendor detail.");
-    } finally {
-      setLoading(false);
+    async function loadDetail() {
+      try {
+        setLoading(true);
+        setError(null);
+        const nextDetail = await apiRequest<AdminVendorDetail>(`/admin/vendors/${params.id}`, undefined, token);
+        setDetail(nextDetail);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load vendor detail.");
+      } finally {
+        setLoading(false);
+      }
     }
-  }
 
-  useEffect(() => {
     void loadDetail();
-  }, [params.id, token, user]);
+  }, [currentRole, params.id, token]);
 
   if (loading) {
     return (
@@ -61,7 +55,7 @@ export default function AdminVendorDetailPage() {
   if (error || !detail) {
     return (
       <RequireRole requiredRole="admin">
-        <div className={error ? "message error" : "message"}>{error ?? accountMessage ?? "Vendor not found."}</div>
+        <div className="message error">{error ?? "Vendor not found."}</div>
       </RequireRole>
     );
   }
@@ -142,50 +136,6 @@ export default function AdminVendorDetailPage() {
     }
   }
 
-  async function handleResendVerification() {
-    if (!detail || detail.isVerified) return;
-
-    try {
-      setAccountSaving("verify");
-      setAccountMessage(null);
-      setAccountError(null);
-      const response = await apiRequest<{ message: string }>(
-        `/admin/vendors/${params.id}/verification-resend`,
-        { method: "POST" },
-        token,
-      );
-      setAccountMessage(response.message);
-    } catch (actionError) {
-      setAccountError(actionError instanceof Error ? actionError.message : "Failed to resend verification email.");
-    } finally {
-      setAccountSaving(null);
-    }
-  }
-
-  async function handleDeleteVendor() {
-    const confirmed = window.confirm(
-      "Delete this vendor permanently? This only works when the vendor has no order history.",
-    );
-    if (!confirmed) return;
-
-    try {
-      setAccountSaving("delete");
-      setAccountMessage(null);
-      setAccountError(null);
-      const response = await apiRequest<{ message: string }>(
-        `/admin/vendors/${params.id}`,
-        { method: "DELETE" },
-        token,
-      );
-      setAccountMessage(response.message);
-      setDetail(null);
-    } catch (actionError) {
-      setAccountError(actionError instanceof Error ? actionError.message : "Failed to delete vendor.");
-    } finally {
-      setAccountSaving(null);
-    }
-  }
-
   async function handleSubscriptionAction(action: "monthly" | "yearly" | "cut" | "auto") {
     try {
       setSubscriptionSaving(action);
@@ -220,38 +170,6 @@ export default function AdminVendorDetailPage() {
       );
     } finally {
       setSubscriptionSaving(null);
-    }
-  }
-
-  async function recordPayout() {
-    if (!token || !detail) return;
-
-    try {
-      setPayoutSaving(true);
-      setPayoutMessage(null);
-      setPayoutError(null);
-      await apiRequest(
-        "/admin/payouts",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            vendorId: detail.id,
-            amount: Number(payoutAmount),
-            reference: payoutReference.trim() || undefined,
-            note: payoutNote.trim() || undefined,
-          }),
-        },
-        token,
-      );
-      await loadDetail();
-      setPayoutAmount("");
-      setPayoutReference("");
-      setPayoutNote("");
-      setPayoutMessage("Vendor payout recorded.");
-    } catch (actionError) {
-      setPayoutError(actionError instanceof Error ? actionError.message : "Failed to record payout.");
-    } finally {
-      setPayoutSaving(false);
     }
   }
 
@@ -412,14 +330,6 @@ export default function AdminVendorDetailPage() {
               <strong>{detail.metrics.pendingItems}</strong>
               <span className="muted">Pending items</span>
             </div>
-            <div className="mini-stat">
-              <strong>{formatCurrency(detail.metrics.paidOut)}</strong>
-              <span className="muted">Paid out</span>
-            </div>
-            <div className="mini-stat">
-              <strong>{formatCurrency(detail.metrics.outstandingShippedBalance)}</strong>
-              <span className="muted">Delivered unpaid</span>
-            </div>
           </div>
         </div>
 
@@ -427,17 +337,7 @@ export default function AdminVendorDetailPage() {
           <h2 className="section-title">Account Controls</h2>
           {accountMessage && <div className="message success">{accountMessage}</div>}
           {accountError && <div className="message error">{accountError}</div>}
-          <div className="inline-actions">
-            {!detail.isVerified && (
-              <button
-                className="button-secondary"
-                type="button"
-                disabled={accountSaving !== null}
-                onClick={() => void handleResendVerification()}
-              >
-                {accountSaving === "verify" ? "Sending..." : "Verify"}
-              </button>
-            )}
+          <div className="inline-actions admin-account-controls-actions">
             <button
               className="button"
               type="button"
@@ -469,14 +369,6 @@ export default function AdminVendorDetailPage() {
               onClick={() => void handlePasswordReset()}
             >
               {accountSaving === "reset" ? "Sending..." : "Send reset email"}
-            </button>
-            <button
-              className="danger-button"
-              type="button"
-              disabled={accountSaving !== null}
-              onClick={() => void handleDeleteVendor()}
-            >
-              {accountSaving === "delete" ? "Deleting..." : "Delete vendor"}
             </button>
           </div>
           <div className="mini-stats">
@@ -514,73 +406,6 @@ export default function AdminVendorDetailPage() {
       </section>
 
       <section className="split">
-        <div className="form-card stack">
-          <h2 className="section-title">Payouts</h2>
-          <p className="muted">
-            Record vendor payouts against the delivered unpaid balance when operations settles a completed amount.
-          </p>
-          {payoutMessage && <div className="message success">{payoutMessage}</div>}
-          {payoutError && <div className="message error">{payoutError}</div>}
-          <div className="mini-stats">
-            <div className="mini-stat">
-              <strong>{formatCurrency(detail.metrics.paidOut)}</strong>
-              <span className="muted">Total paid out</span>
-            </div>
-            <div className="mini-stat">
-              <strong>{formatCurrency(detail.metrics.outstandingShippedBalance)}</strong>
-              <span className="muted">Available to pay</span>
-            </div>
-          </div>
-          <div className="field">
-            <label>Payout amount</label>
-            <input
-              inputMode="decimal"
-              value={payoutAmount}
-              onChange={(event) => setPayoutAmount(event.target.value)}
-              placeholder="0.00"
-            />
-          </div>
-          <div className="field">
-            <label>Reference</label>
-            <input
-              value={payoutReference}
-              onChange={(event) => setPayoutReference(event.target.value)}
-              placeholder="Bank transfer reference"
-            />
-          </div>
-          <div className="field">
-            <label>Admin note</label>
-            <textarea
-              className="input"
-              rows={3}
-              value={payoutNote}
-              onChange={(event) => setPayoutNote(event.target.value)}
-              placeholder="Optional payout note"
-            />
-          </div>
-          <div className="inline-actions">
-            <button
-              className="button"
-              type="button"
-              disabled={payoutSaving || detail.metrics.outstandingShippedBalance <= 0}
-              onClick={() => void recordPayout()}
-            >
-              {payoutSaving ? "Saving..." : "Record payout"}
-            </button>
-          </div>
-          {detail.payoutHistory.length === 0 && <div className="empty">No payouts recorded yet.</div>}
-          {detail.payoutHistory.map((entry) => (
-            <div key={entry.id} className="card">
-              <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-                <strong>{formatCurrency(entry.amount)}</strong>
-                <span className="chip">{new Date(entry.paidAt).toLocaleDateString()}</span>
-              </div>
-              {entry.reference ? <p className="muted">Reference: {entry.reference}</p> : null}
-              {entry.note ? <p className="muted">{entry.note}</p> : null}
-            </div>
-          ))}
-        </div>
-
         <div className="form-card stack">
           <h2 className="section-title">Category Mix</h2>
           {detail.categories.length === 0 && <div className="empty">No category data yet.</div>}

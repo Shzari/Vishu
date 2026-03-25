@@ -17,9 +17,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "Failed to start Vishu with '$startCommand'."
 }
 
-$launchUrl = 'https://vishu.shop'
-
-Start-Process $launchUrl
+Start-Process 'http://localhost:3001'
 
 Write-Host ''
-Write-Host "Vishu is ready at $launchUrl" -ForegroundColor Green
+Write-Host 'Vishu is ready at http://localhost:3001' -ForegroundColor Green

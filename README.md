@@ -38,6 +38,22 @@ These commands:
 - start API and web in the background
 - write logs under `.codex/run-logs`
 
+## Optional Algolia search setup
+
+If you want hosted layered search instead of the built-in database fallback:
+
+1. Add these values to `apps/api/.env`
+   - `ALGOLIA_APP_ID`
+   - `ALGOLIA_ADMIN_API_KEY`
+   - `ALGOLIA_INDEX_NAME`
+2. Reindex public products:
+
+```bash
+npm --workspace apps/api run sync:search-index
+```
+
+If Algolia credentials are missing, search still works through the API/database fallback.
+
 ## Admin bootstrap
 
 Create or update an admin account with:

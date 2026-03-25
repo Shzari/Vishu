@@ -22,15 +22,17 @@ export class BrandingService {
     const logoImage = row?.logo_image ?? null;
     const logoMimeType = row?.logo_mime_type ?? null;
     const logoSvg = row?.logo_svg ?? null;
-    const logoDataUrl = logoImage && logoMimeType
-      ? `data:${logoMimeType};base64,${logoImage.toString('base64')}`
-      : logoSvg
-        ? `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(logoSvg)}`
-        : null;
+    const logoDataUrl =
+      logoImage && logoMimeType
+        ? `data:${logoMimeType};base64,${logoImage.toString('base64')}`
+        : logoSvg
+          ? `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(logoSvg)}`
+          : null;
 
     return {
       siteName: row?.site_name ?? 'Vishu.shop',
-      tagline: row?.tagline ?? 'Unified fashion storefront, hidden vendor identity',
+      tagline:
+        row?.tagline ?? 'Unified fashion storefront, hidden vendor identity',
       logoSvg,
       logoDataUrl,
     };

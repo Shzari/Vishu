@@ -13,19 +13,15 @@ export class MailService {
   ) {}
 
   private getDefaultAppBaseUrl() {
-    return this.configService.get<string>(
-      'NODE_ENV',
-      'development',
-    ) === 'production'
+    return this.configService.get<string>('NODE_ENV', 'development') ===
+      'production'
       ? 'https://vishu.shop'
       : 'http://localhost:3001';
   }
 
   private getDefaultMailFrom() {
-    return this.configService.get<string>(
-      'NODE_ENV',
-      'development',
-    ) === 'production'
+    return this.configService.get<string>('NODE_ENV', 'development') ===
+      'production'
       ? 'noreply@vishu.shop'
       : 'noreply@vishu.local';
   }
@@ -61,22 +57,26 @@ export class MailService {
     const row = stored.rows[0];
 
     return {
-      host: row?.smtp_host || this.configService.get<string>('SMTP_HOST') || null,
-      port:
-        row?.smtp_port ??
-        this.configService.get<number>('SMTP_PORT', 587),
+      host:
+        row?.smtp_host || this.configService.get<string>('SMTP_HOST') || null,
+      port: row?.smtp_port ?? this.configService.get<number>('SMTP_PORT', 587),
       secure:
         row?.smtp_host !== null && row?.smtp_host !== undefined
           ? Boolean(row.smtp_secure)
           : this.configService.get<string>('SMTP_SECURE', 'false') === 'true',
-      user: row?.smtp_user || this.configService.get<string>('SMTP_USER') || null,
-      pass: row?.smtp_pass || this.configService.get<string>('SMTP_PASS') || null,
+      user:
+        row?.smtp_user || this.configService.get<string>('SMTP_USER') || null,
+      pass:
+        row?.smtp_pass || this.configService.get<string>('SMTP_PASS') || null,
       mailFrom:
         row?.mail_from ||
         this.configService.get<string>('MAIL_FROM', this.getDefaultMailFrom()),
       appBaseUrl:
         row?.app_base_url ||
-        this.configService.get<string>('APP_BASE_URL', this.getDefaultAppBaseUrl()),
+        this.configService.get<string>(
+          'APP_BASE_URL',
+          this.getDefaultAppBaseUrl(),
+        ),
       vendorVerificationEmailsEnabled:
         row?.vendor_verification_emails_enabled !== undefined
           ? Boolean(row.vendor_verification_emails_enabled)
@@ -92,27 +92,24 @@ export class MailService {
     };
   }
 
-  private async getTransporter(settings: Awaited<ReturnType<MailService['getMailerSettings']>>) {
+  private async getTransporter(
+    settings: Awaited<ReturnType<MailService['getMailerSettings']>>,
+  ) {
     const host = settings.host;
 
     if (!host) {
       return nodemailer.createTransport({ jsonTransport: true });
     }
 
-    const transportOptions: nodemailer.TransportOptions = {
+    return nodemailer.createTransport({
       host,
       port: settings.port,
       secure: settings.secure,
-    };
-
-    if (settings.user && settings.pass) {
-      transportOptions.auth = {
-        user: settings.user,
-        pass: settings.pass,
-      };
-    }
-
-    return nodemailer.createTransport(transportOptions);
+      auth: {
+        user: settings.user ?? undefined,
+        pass: settings.pass ?? undefined,
+      },
+    });
   }
 
   async sendVerificationEmail(
@@ -122,7 +119,9 @@ export class MailService {
   ) {
     const settings = await this.getMailerSettings();
     if (!settings.vendorVerificationEmailsEnabled) {
-      this.logger.warn('Verification email skipped because it is disabled in platform settings');
+      this.logger.warn(
+        'Verification email skipped because it is disabled in platform settings',
+      );
       return;
     }
 
@@ -144,13 +143,17 @@ export class MailService {
           ? `<p>Please verify your vendor account.</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`
           : `<p>Please verify your customer account.</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
     });
-    this.logger.log(`Verification email queued for ${email}: ${info.messageId}`);
+    this.logger.log(
+      `Verification email queued for ${email}: ${info.messageId}`,
+    );
   }
 
   async sendPasswordResetEmail(email: string, token: string) {
     const settings = await this.getMailerSettings();
     if (!settings.passwordResetEmailsEnabled) {
-      this.logger.warn('Password reset email skipped because it is disabled in platform settings');
+      this.logger.warn(
+        'Password reset email skipped because it is disabled in platform settings',
+      );
       return;
     }
 
@@ -163,21 +166,29 @@ export class MailService {
       subject: 'Reset your password',
       html: `<p>Use the link below to reset your password.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
     });
-    this.logger.log(`Password reset email queued for ${email}: ${info.messageId}`);
+    this.logger.log(
+      `Password reset email queued for ${email}: ${info.messageId}`,
+    );
   }
 
   async sendAdminVendorApprovalAlert(
     emails: string[],
     payload: { shopName: string; vendorEmail: string; reviewUrl: string },
   ) {
-    const uniqueEmails = [...new Set(emails.map((entry) => entry.trim().toLowerCase()).filter(Boolean))];
+    const uniqueEmails = [
+      ...new Set(
+        emails.map((entry) => entry.trim().toLowerCase()).filter(Boolean),
+      ),
+    ];
     if (!uniqueEmails.length) {
       return;
     }
 
     const settings = await this.getMailerSettings();
     if (!settings.adminVendorApprovalEmailsEnabled) {
-      this.logger.warn('Admin vendor approval email skipped because it is disabled in platform settings');
+      this.logger.warn(
+        'Admin vendor approval email skipped because it is disabled in platform settings',
+      );
       return;
     }
 
@@ -192,7 +203,9 @@ export class MailService {
         subject,
         html,
       });
-      this.logger.log(`Admin approval notification queued for ${email}: ${info.messageId}`);
+      this.logger.log(
+        `Admin approval notification queued for ${email}: ${info.messageId}`,
+      );
     }
   }
 
@@ -206,7 +219,9 @@ export class MailService {
       subject: `Your shop ${payload.shopName} is now approved`,
       html: `<p>Your vendor account for <strong>${payload.shopName}</strong> has been approved.</p><p>You can now sign in and manage your shop.</p><p><a href="${loginUrl}">${loginUrl}</a></p>`,
     });
-    this.logger.log(`Vendor approval email queued for ${email}: ${info.messageId}`);
+    this.logger.log(
+      `Vendor approval email queued for ${email}: ${info.messageId}`,
+    );
   }
 
   async sendPlatformTestEmail(email: string) {
@@ -218,7 +233,9 @@ export class MailService {
       subject: 'Vishu platform email test',
       html: `<p>This is a test email from Vishu platform settings.</p><p>SMTP host: ${settings.host ?? 'json transport'}</p><p>App URL: ${settings.appBaseUrl}</p>`,
     });
-    this.logger.log(`Platform test email queued for ${email}: ${info.messageId}`);
+    this.logger.log(
+      `Platform test email queued for ${email}: ${info.messageId}`,
+    );
   }
 
   async sendVendorLowStockAlert(payload: {
@@ -243,6 +260,8 @@ export class MailService {
 <p><strong>Alert threshold:</strong> ${payload.threshold}</p>
 <p><a href="${dashboardUrl}">${dashboardUrl}</a></p>`,
     });
-    this.logger.log(`Vendor low stock alert queued for ${payload.email}: ${info.messageId}`);
+    this.logger.log(
+      `Vendor low stock alert queued for ${payload.email}: ${info.messageId}`,
+    );
   }
 }

@@ -8,7 +8,6 @@ import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
   formatProductAttributeLabel,
-  getCatalogGenderLabel,
 } from "@/lib/catalog";
 import { ProductMedia } from "@/components/product-media";
 import type { Product } from "@/lib/types";
@@ -64,6 +63,13 @@ export default function ProductDetailPage() {
   if (!product) {
     return <div className="message">Loading product...</div>;
   }
+
+  const genderLabel =
+    product.department === "men"
+      ? "Male"
+      : product.department === "women"
+        ? "Female"
+        : "Unisex";
 
   return (
     <div className="product-detail-shell stack">
@@ -154,8 +160,8 @@ export default function ProductDetailPage() {
 
           <div className="product-detail-meta">
             <div className="meta-row">
-              <span>{getCatalogGenderLabel()}</span>
-              <strong>{formatCatalogLabel(product.department)}</strong>
+              <span>Gender</span>
+              <strong>{genderLabel}</strong>
             </div>
             <div className="meta-row">
               <span>Category</span>

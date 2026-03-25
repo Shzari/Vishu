@@ -1,25 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth, useBranding, useCart } from "@/components/providers";
 import { PRODUCT_CATEGORIES, formatCatalogLabel } from "@/lib/catalog";
 
 export function SiteShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { branding } = useBranding();
-  const { token, user, profile, loading, clearSession } = useAuth();
+  const { currentRole, isAuthenticated, loading, clearSession } = useAuth();
   const { items } = useCart();
-  const [headerSearch, setHeaderSearch] = useState("");
-  const [headerCategory, setHeaderCategory] = useState("all");
   const cartCount = items.reduce((sum, item) => sum + item.quantity, 0);
+  const initialHeaderSearch = searchParams.get("search") ?? "";
+  const initialHeaderCategory = searchParams.get("category") ?? "all";
   const isAdminRoute = pathname.startsWith("/admin");
-  const isVendor = !loading && profile?.role === "vendor";
-  const isCustomer = !loading && profile?.role === "customer";
-  const isAdmin = !loading && profile?.role === "admin";
-  const brandHref = isAdminRoute ? "/admin/dashboard" : isVendor ? "/vendor/dashboard" : "/";
+  const isAdminLoginRoute = pathname === "/admin/login";
+  const isVendor = !loading && currentRole === "vendor";
+  const isCustomer = !loading && currentRole === "customer";
+  const isAdmin = !loading && currentRole === "admin";
+  const showGuestActions = !loading && !isAuthenticated;
+  const brandHref = isAdminRoute
+    ? "/admin/dashboard"
+    : isVendor
+      ? "/vendor/dashboard"
+      : "/";
   const showMarketplaceSearch =
     !isAdminRoute &&
     !isVendor &&
@@ -29,34 +35,26 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     !pathname.startsWith("/verify") &&
     !pathname.startsWith("/vendor");
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    setHeaderSearch(params.get("search") ?? "");
-    setHeaderCategory(params.get("category") ?? "all");
-  }, [pathname]);
-
   const handleLogout = () => {
-    const nextPath = isAdminRoute || isAdmin ? "/admin/login" : "/";
+    const nextPath = currentRole === "admin" ? "/admin/login" : "/";
     clearSession();
     router.replace(nextPath);
   };
 
   const handleMarketplaceSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const formData = new FormData(event.currentTarget);
 
     const params = new URLSearchParams();
-    const nextSearch = headerSearch.trim();
+    const nextSearch = String(formData.get("search") ?? "").trim();
+    const nextCategory = String(formData.get("category") ?? "all");
 
     if (nextSearch) {
       params.set("search", nextSearch);
     }
 
-    if (headerCategory !== "all") {
-      params.set("category", headerCategory);
+    if (nextCategory !== "all") {
+      params.set("category", nextCategory);
     }
 
     router.push(`/${params.toString() ? `?${params.toString()}` : ""}`);
@@ -70,18 +68,47 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={isAdminRoute ? "shell admin-shell" : "shell"}>
-      <header className={isAdminRoute ? "topbar admin-topbar" : "topbar"}>
-        <div className={isAdminRoute ? "topbar-inner admin-topbar-inner" : "topbar-inner"}>
+      <header
+        className={
+          isAdminRoute
+            ? isAdminLoginRoute
+              ? "topbar admin-topbar admin-login-topbar"
+              : "topbar admin-topbar"
+            : "topbar"
+        }
+      >
+        <div
+          className={
+            isAdminRoute
+              ? isAdminLoginRoute
+                ? "topbar-inner admin-topbar-inner admin-login-topbar-inner"
+                : "topbar-inner admin-topbar-inner"
+              : "topbar-inner"
+          }
+        >
           {isAdminRoute ? (
-            <Link href={brandHref} className="brand">
+            <Link
+              href={brandHref}
+              className={
+                isAdminLoginRoute ? "brand admin-login-header-brand" : "brand"
+              }
+            >
               <strong>{branding.siteName} Admin</strong>
-              <span>Operations, approvals, and order oversight</span>
+              <span>
+                {isAdminLoginRoute
+                  ? "Secure marketplace operations"
+                  : "Operations, approvals, and order oversight"}
+              </span>
             </Link>
           ) : (
             <Link href={brandHref} className="brand compact-brand">
               {branding.logoDataUrl ? (
                 <span className="compact-brand-logo-wrap" aria-hidden="true">
-                  <img className="compact-brand-logo" src={branding.logoDataUrl} alt={`${branding.siteName} logo`} />
+                  <img
+                    className="compact-brand-logo"
+                    src={branding.logoDataUrl}
+                    alt={`${branding.siteName} logo`}
+                  />
                 </span>
               ) : null}
               <strong className="brand-lockup">
@@ -94,30 +121,39 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           )}
 
           {showMarketplaceSearch && (
-            <form className="header-search-shell" onSubmit={handleMarketplaceSearch}>
-              <label className="header-search-field" htmlFor="header-marketplace-search">
-                <span className="header-search-label">Search</span>
-                <input
-                  id="header-marketplace-search"
-                  placeholder="Search products across the marketplace"
-                  value={headerSearch}
-                  onChange={(event) => setHeaderSearch(event.target.value)}
-                />
-              </label>
-              <div className="header-search-category">
-                <label htmlFor="header-marketplace-category">Category</label>
-                <select
-                  id="header-marketplace-category"
-                  value={headerCategory}
-                  onChange={(event) => setHeaderCategory(event.target.value)}
+            <form
+              key={`${pathname}?${searchParams.toString()}`}
+              className="header-search-shell"
+              onSubmit={handleMarketplaceSearch}
+            >
+              <div className="header-search-core">
+                <label
+                  className="header-search-field"
+                  htmlFor="header-marketplace-search"
                 >
-                  <option value="all">All categories</option>
-                  {PRODUCT_CATEGORIES.map((entry) => (
-                    <option key={entry} value={entry}>
-                      {formatCatalogLabel(entry)}
-                    </option>
-                  ))}
-                </select>
+                  <span className="header-search-label">Search</span>
+                  <input
+                    id="header-marketplace-search"
+                    name="search"
+                    placeholder="Search products across the marketplace"
+                    defaultValue={initialHeaderSearch}
+                  />
+                </label>
+                <div className="header-search-category">
+                  <label htmlFor="header-marketplace-category">Category</label>
+                  <select
+                    id="header-marketplace-category"
+                    name="category"
+                    defaultValue={initialHeaderCategory}
+                  >
+                    <option value="all">All categories</option>
+                    {PRODUCT_CATEGORIES.map((entry) => (
+                      <option key={entry} value={entry}>
+                        {formatCatalogLabel(entry)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <button type="submit" className="button header-search-submit">
                 Search
@@ -129,8 +165,11 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
             {isAdminRoute ? (
               <>
                 {isAdmin && <Link href="/admin/dashboard">Dashboard</Link>}
+                {isAdmin && <Link href="/admin/promotions">Promotions</Link>}
                 {isAdmin && <Link href="/admin/settings">Settings</Link>}
-                {!token && pathname !== "/admin/login" && <Link href="/admin/login">Admin Login</Link>}
+                {showGuestActions && pathname !== "/admin/login" && (
+                  <Link href="/admin/login">Admin Login</Link>
+                )}
               </>
             ) : isVendor ? (
               <>
@@ -143,11 +182,15 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 <Link href="/cart">Cart ({cartCount})</Link>
                 {isCustomer && <Link href="/account">My Account</Link>}
                 {isCustomer && <Link href="/orders">My Orders</Link>}
-                {!token && pathname !== "/login" && <Link href="/login">Login</Link>}
-                {!token && pathname !== "/register" && <Link href="/register">Register</Link>}
+                {showGuestActions && pathname !== "/login" && (
+                  <Link href="/login">Login</Link>
+                )}
+                {showGuestActions && pathname !== "/register" && (
+                  <Link href="/register">Register</Link>
+                )}
               </>
             )}
-            {token && (
+            {isAuthenticated && (
               <button type="button" onClick={handleLogout}>
                 {isAdminRoute ? "Sign out" : "Logout"}
               </button>
@@ -155,7 +198,9 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
       </header>
-      <main className={isAdminRoute ? "page admin-page" : "page"}>{children}</main>
+      <main className={isAdminRoute ? "page admin-page" : "page"}>
+        {children}
+      </main>
     </div>
   );
 }

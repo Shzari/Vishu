@@ -19,7 +19,7 @@ export function AccountSettingsPanel({
   description,
   extraContent,
 }: AccountSettingsPanelProps) {
-  const { token, user, refreshProfile } = useAuth();
+  const { token, currentRole, refreshProfile } = useAuth();
   const [settings, setSettings] = useState<AccountSettingsProfile | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -50,10 +50,10 @@ export function AccountSettingsPanel({
   }
 
   useEffect(() => {
-    if (token && user?.role === allowedRole) {
+    if (token && currentRole === allowedRole) {
       void loadSettings();
     }
-  }, [allowedRole, token, user]);
+  }, [allowedRole, currentRole, token]);
 
   async function saveProfile() {
     if (!token) return;
@@ -105,7 +105,7 @@ export function AccountSettingsPanel({
     }
   }
 
-  if (!token || user?.role !== allowedRole) {
+  if (!token || currentRole !== allowedRole) {
     return <div className="message error">Login with the correct account to manage these settings.</div>;
   }
 

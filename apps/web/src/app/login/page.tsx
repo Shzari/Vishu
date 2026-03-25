@@ -63,7 +63,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-page">
+    <div className="auth-page auth-page-compact">
       <section className="auth-intro">
         <h1 className="hero-title">Sign in to your marketplace account.</h1>
         <p className="hero-copy">

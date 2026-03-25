@@ -32,57 +32,58 @@ export class AccountService {
   ) {}
 
   async getSettings(userId: string) {
-    const [result, vendorDetails, vendorSubscriptionHistory] = await Promise.all([
-      this.databaseService.query<{
-        id: string;
-        email: string;
-        full_name: string | null;
-        phone_number: string | null;
-        role: string;
-        email_verified_at: Date | null;
-        created_at: Date;
-        updated_at: Date;
-      }>(
-        `SELECT TOP 1 id, email, full_name, phone_number, role, email_verified_at, created_at, updated_at
+    const [result, vendorDetails, vendorSubscriptionHistory] =
+      await Promise.all([
+        this.databaseService.query<{
+          id: string;
+          email: string;
+          full_name: string | null;
+          phone_number: string | null;
+          role: string;
+          email_verified_at: Date | null;
+          created_at: Date;
+          updated_at: Date;
+        }>(
+          `SELECT TOP 1 id, email, full_name, phone_number, role, email_verified_at, created_at, updated_at
          FROM users
          WHERE id = $1`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        shop_name: string;
-        is_active: boolean;
-        is_verified: boolean;
-        support_email: string | null;
-        support_phone: string | null;
-        shop_description: string | null;
-        logo_url: string | null;
-        banner_url: string | null;
-        business_address: string | null;
-        return_policy: string | null;
-        business_hours: string | null;
-        shipping_notes: string | null;
-        low_stock_threshold: number;
-        subscription_plan: 'monthly' | 'yearly' | null;
-        subscription_status: 'inactive' | 'active' | 'expired';
-        subscription_started_at: Date | null;
-        subscription_ends_at: Date | null;
-        subscription_override_plan: 'monthly' | 'yearly' | null;
-        subscription_override_status: 'active' | 'expired' | null;
-        subscription_override_started_at: Date | null;
-        subscription_override_ends_at: Date | null;
-        subscription_override_note: string | null;
-        subscription_override_updated_at: Date | null;
-        bank_account_name: string | null;
-        bank_name: string | null;
-        bank_iban: string | null;
-        pending_balance: number | string;
-        shipped_balance: number | string;
-        total_earnings: number | string;
-        paid_out: number | string;
-        outstanding_shipped_balance: number | string;
-      }>(
-        `SELECT TOP 1
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          shop_name: string;
+          is_active: boolean;
+          is_verified: boolean;
+          support_email: string | null;
+          support_phone: string | null;
+          shop_description: string | null;
+          logo_url: string | null;
+          banner_url: string | null;
+          business_address: string | null;
+          return_policy: string | null;
+          business_hours: string | null;
+          shipping_notes: string | null;
+          low_stock_threshold: number;
+          subscription_plan: 'monthly' | 'yearly' | null;
+          subscription_status: 'inactive' | 'active' | 'expired';
+          subscription_started_at: Date | null;
+          subscription_ends_at: Date | null;
+          subscription_override_plan: 'monthly' | 'yearly' | null;
+          subscription_override_status: 'active' | 'expired' | null;
+          subscription_override_started_at: Date | null;
+          subscription_override_ends_at: Date | null;
+          subscription_override_note: string | null;
+          subscription_override_updated_at: Date | null;
+          bank_account_name: string | null;
+          bank_name: string | null;
+          bank_iban: string | null;
+          pending_balance: number | string;
+          shipped_balance: number | string;
+          total_earnings: number | string;
+          paid_out: number | string;
+          outstanding_shipped_balance: number | string;
+        }>(
+          `SELECT TOP 1
            v.id,
            v.shop_name,
            v.is_active,
@@ -132,20 +133,20 @@ export class AccountService {
              - ISNULL((SELECT SUM(amount) FROM vendor_payouts WHERE vendor_id = v.id), 0) AS outstanding_shipped_balance
          FROM vendors v
          WHERE v.user_id = $1`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        plan_type: 'monthly' | 'yearly';
-        status: 'active' | 'expired';
-        amount: number | string;
-        admin_note: string | null;
-        admin_email: string | null;
-        starts_at: Date;
-        ends_at: Date;
-        created_at: Date;
-      }>(
-        `SELECT TOP 6
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          plan_type: 'monthly' | 'yearly';
+          status: 'active' | 'expired';
+          amount: number | string;
+          admin_note: string | null;
+          admin_email: string | null;
+          starts_at: Date;
+          ends_at: Date;
+          created_at: Date;
+        }>(
+          `SELECT TOP 6
            s.id,
            s.plan_type,
            s.status,
@@ -160,9 +161,9 @@ export class AccountService {
          LEFT JOIN users u ON u.id = s.admin_user_id
          WHERE v.user_id = $1
          ORDER BY s.created_at DESC`,
-        [userId],
-      ),
-    ]);
+          [userId],
+        ),
+      ]);
 
     const user = result.rows[0];
     if (!user) {
@@ -200,22 +201,26 @@ export class AccountService {
                 monthlyPrice: VENDOR_SUBSCRIPTION_PRICES.monthly,
                 yearlyPrice: VENDOR_SUBSCRIPTION_PRICES.yearly,
               },
-              automaticSubscription: this.resolveAutomaticSubscription(vendorDetails.rows[0]),
+              automaticSubscription: this.resolveAutomaticSubscription(
+                vendorDetails.rows[0],
+              ),
               manualOverride: this.resolveManualOverride(vendorDetails.rows[0]),
-              subscriptionHistory: vendorSubscriptionHistory.rows.map((entry) => ({
-                id: entry.id,
-                planType: entry.plan_type,
-                status:
-                  entry.status === 'active' && entry.ends_at < new Date()
-                    ? 'expired'
-                    : entry.status,
-                amount: Number(entry.amount),
-                adminNote: entry.admin_note,
-                adminEmail: entry.admin_email,
-                startsAt: entry.starts_at,
-                endsAt: entry.ends_at,
-                createdAt: entry.created_at,
-              })),
+              subscriptionHistory: vendorSubscriptionHistory.rows.map(
+                (entry) => ({
+                  id: entry.id,
+                  planType: entry.plan_type,
+                  status:
+                    entry.status === 'active' && entry.ends_at < new Date()
+                      ? 'expired'
+                      : entry.status,
+                  amount: Number(entry.amount),
+                  adminNote: entry.admin_note,
+                  adminEmail: entry.admin_email,
+                  startsAt: entry.starts_at,
+                  endsAt: entry.ends_at,
+                  createdAt: entry.created_at,
+                }),
+              ),
               bankAccountName: vendorDetails.rows[0].bank_account_name,
               bankName: vendorDetails.rows[0].bank_name,
               bankIban: vendorDetails.rows[0].bank_iban,
@@ -237,78 +242,78 @@ export class AccountService {
   async getAccount(userId: string) {
     const [profile, addresses, paymentMethods, recentOrders, cartItems] =
       await Promise.all([
-      this.databaseService.query<{
-        id: string;
-        email: string;
-        full_name: string | null;
-        phone_number: string | null;
-        email_verified_at: Date | null;
-        created_at: Date;
-        updated_at: Date;
-      }>(
-        `SELECT TOP 1 id, email, full_name, phone_number, email_verified_at, created_at, updated_at
+        this.databaseService.query<{
+          id: string;
+          email: string;
+          full_name: string | null;
+          phone_number: string | null;
+          email_verified_at: Date | null;
+          created_at: Date;
+          updated_at: Date;
+        }>(
+          `SELECT TOP 1 id, email, full_name, phone_number, email_verified_at, created_at, updated_at
          FROM users
          WHERE id = $1`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        label: string;
-        full_name: string;
-        phone_number: string | null;
-        line1: string;
-        line2: string | null;
-        city: string;
-        state_region: string | null;
-        postal_code: string;
-        country: string;
-        is_default: boolean;
-      }>(
-        `SELECT id, label, full_name, phone_number, line1, line2, city, state_region, postal_code, country, is_default
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          label: string;
+          full_name: string;
+          phone_number: string | null;
+          line1: string;
+          line2: string | null;
+          city: string;
+          state_region: string | null;
+          postal_code: string;
+          country: string;
+          is_default: boolean;
+        }>(
+          `SELECT id, label, full_name, phone_number, line1, line2, city, state_region, postal_code, country, is_default
          FROM customer_addresses
          WHERE customer_id = $1
          ORDER BY is_default DESC, created_at DESC`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        nickname: string | null;
-        cardholder_name: string;
-        brand: string;
-        last4: string;
-        exp_month: number;
-        exp_year: number;
-        is_default: boolean;
-      }>(
-        `SELECT id, nickname, cardholder_name, brand, last4, exp_month, exp_year, is_default
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          nickname: string | null;
+          cardholder_name: string;
+          brand: string;
+          last4: string;
+          exp_month: number;
+          exp_year: number;
+          is_default: boolean;
+        }>(
+          `SELECT id, nickname, cardholder_name, brand, last4, exp_month, exp_year, is_default
          FROM customer_payment_methods
          WHERE customer_id = $1
          ORDER BY is_default DESC, created_at DESC`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        total_price: number;
-        special_request: string | null;
-        status: string;
-        created_at: Date;
-      }>(
-        `SELECT TOP 5 id, total_price, special_request, status, created_at
+          [userId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          total_price: number;
+          special_request: string | null;
+          status: string;
+          created_at: Date;
+        }>(
+          `SELECT TOP 5 id, total_price, special_request, status, created_at
          FROM orders
          WHERE customer_id = $1
          ORDER BY created_at DESC`,
-        [userId],
-      ),
-      this.databaseService.query<{
-        product_id: string;
-        quantity: number;
-        updated_at: Date;
-        title: string;
-        price: number;
-        category: string;
-        image_url: string | null;
-      }>(
-        `SELECT ci.product_id, ci.quantity, ci.updated_at, p.title, p.price, p.category, pi.image_url
+          [userId],
+        ),
+        this.databaseService.query<{
+          product_id: string;
+          quantity: number;
+          updated_at: Date;
+          title: string;
+          price: number;
+          category: string;
+          image_url: string | null;
+        }>(
+          `SELECT ci.product_id, ci.quantity, ci.updated_at, p.title, p.price, p.category, pi.image_url
          FROM carts c
          INNER JOIN cart_items ci ON ci.cart_id = c.id
          INNER JOIN products p ON p.id = ci.product_id
@@ -320,9 +325,9 @@ export class AccountService {
          ) pi
          WHERE c.customer_id = $1
          ORDER BY ci.updated_at DESC`,
-        [userId],
-      ),
-    ]);
+          [userId],
+        ),
+      ]);
 
     const user = profile.rows[0];
     if (!user) {
@@ -448,13 +453,11 @@ export class AccountService {
       }
     }
 
-    let verificationEmail:
-      | {
-          email: string;
-          token: string;
-          role: 'vendor' | 'customer';
-        }
-      | null = null;
+    let verificationEmail: {
+      email: string;
+      token: string;
+      role: 'vendor' | 'customer';
+    } | null = null;
 
     await this.databaseService.withTransaction(async (client) => {
       const transactionUpdates = [...updates];
@@ -558,11 +561,15 @@ export class AccountService {
     }
 
     if (!current.is_verified) {
-      throw new BadRequestException('Verify the vendor account before starting a subscription');
+      throw new BadRequestException(
+        'Verify the vendor account before starting a subscription',
+      );
     }
 
     if (!current.is_active) {
-      throw new BadRequestException('Admin approval is required before starting a subscription');
+      throw new BadRequestException(
+        'Admin approval is required before starting a subscription',
+      );
     }
 
     const effectiveSubscription = this.resolveEffectiveSubscription(current);
@@ -607,12 +614,7 @@ export class AccountService {
              subscription_ends_at = $3,
              updated_at = SYSDATETIME()
          WHERE id = $4`,
-        [
-          dto.planType,
-          normalizedStartedAt,
-          normalizedEndsAt,
-          current.id,
-        ],
+        [dto.planType, normalizedStartedAt, normalizedEndsAt, current.id],
       );
 
       await client.query(
@@ -659,7 +661,10 @@ export class AccountService {
     return { message: 'Password updated successfully.' };
   }
 
-  async updateVendorBankDetails(userId: string, dto: UpdateVendorBankDetailsDto) {
+  async updateVendorBankDetails(
+    userId: string,
+    dto: UpdateVendorBankDetailsDto,
+  ) {
     const vendor = await this.databaseService.query<{ id: string }>(
       'SELECT TOP 1 id FROM vendors WHERE user_id = $1',
       [userId],
@@ -695,10 +700,7 @@ export class AccountService {
     const vendor = await this.databaseService.query<{
       id: string;
       logo_url: string | null;
-    }>(
-      'SELECT TOP 1 id, logo_url FROM vendors WHERE user_id = $1',
-      [userId],
-    );
+    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE user_id = $1', [userId]);
 
     if (!vendor.rows[0]) {
       this.cleanupTemporaryFile(logoImage);
@@ -713,7 +715,9 @@ export class AccountService {
       );
       if (existing.rows[0]) {
         this.cleanupTemporaryFile(logoImage);
-        throw new BadRequestException('Support email is already in use by another account');
+        throw new BadRequestException(
+          'Support email is already in use by another account',
+        );
       }
     }
 
@@ -805,7 +809,11 @@ export class AccountService {
     return this.getAccount(userId);
   }
 
-  async updateAddress(userId: string, addressId: string, dto: UpsertAddressDto) {
+  async updateAddress(
+    userId: string,
+    addressId: string,
+    dto: UpsertAddressDto,
+  ) {
     await this.databaseService.withTransaction(async (client) => {
       const existing = await client.query<{ id: string }>(
         'SELECT TOP 1 id FROM customer_addresses WHERE id = $1 AND customer_id = $2',
@@ -902,7 +910,11 @@ export class AccountService {
     return this.getAccount(userId);
   }
 
-  async updatePaymentMethod(userId: string, paymentMethodId: string, dto: UpdatePaymentMethodDto) {
+  async updatePaymentMethod(
+    userId: string,
+    paymentMethodId: string,
+    dto: UpdatePaymentMethodDto,
+  ) {
     await this.databaseService.withTransaction(async (client) => {
       const existing = await client.query<{ id: string }>(
         'SELECT TOP 1 id FROM customer_payment_methods WHERE id = $1 AND customer_id = $2',
@@ -1080,7 +1092,8 @@ export class AccountService {
     const manualOverride = this.resolveManualOverride(vendor);
     if (
       manualOverride &&
-      (vendor.subscription_override_status === 'expired' || manualOverride.status === 'active')
+      (vendor.subscription_override_status === 'expired' ||
+        manualOverride.status === 'active')
     ) {
       return {
         planType: manualOverride.planType ?? vendor.subscription_plan,

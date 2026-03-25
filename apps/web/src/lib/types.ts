@@ -15,15 +15,36 @@ export interface BrandingSettings {
 
 export interface HomepageHeroSlide {
   id: string;
-  headline?: string | null;
-  subheading?: string | null;
-  ctaLabel?: string | null;
-  product: Product;
+  internalName?: string | null;
+  imageUrl?: string | null;
+  mobileImageUrl?: string | null;
+  targetUrl?: string | null;
 }
 
 export interface HomepageHeroConfig {
+  autoRotate: boolean;
   intervalSeconds: number;
   slides: HomepageHeroSlide[];
+}
+
+export interface AdminPromotion {
+  id: string;
+  internalName: string | null;
+  desktopImageUrl: string | null;
+  mobileImageUrl: string | null;
+  customUrl: string | null;
+  isActive: boolean;
+  displayOrder: number;
+  startDate: string | null;
+  endDate: string | null;
+  updatedAt: string;
+  isScheduledNow: boolean;
+}
+
+export interface AdminPromotionSettings {
+  autoRotate: boolean;
+  intervalSeconds: number;
+  promotions: AdminPromotion[];
 }
 
 export interface ProfileResponse {
@@ -62,6 +83,22 @@ export interface Product {
   };
   images: string[];
   createdAt: string;
+}
+
+export interface ProductSearchSection {
+  id: "exact" | "category" | "color" | "related";
+  title: string;
+  products: Product[];
+}
+
+export interface ProductSearchResponse {
+  query: string;
+  algorithm: "algolia" | "database";
+  hasResults: boolean;
+  totalResults: number;
+  noResultsMessage: string | null;
+  sections: ProductSearchSection[];
+  fallbackProducts: Product[];
 }
 
 export interface PublicVendorSummary {
@@ -330,7 +367,6 @@ export interface AdminOverview {
     id: string;
     shopName: string;
     email: string;
-    isVerified: boolean;
     approvedAt: string | null;
     createdAt: string;
   }[];
@@ -404,20 +440,9 @@ export interface AdminPlatformSettings {
     passwordResetEmailsEnabled: boolean;
   };
   homepageHero: {
+    autoRotate: boolean;
     intervalSeconds: number;
-    slides: {
-      id: string;
-      productId: string;
-      productTitle: string;
-      productCode: string | null;
-      shopName: string;
-      imageUrl: string | null;
-      headline: string | null;
-      subheading: string | null;
-      ctaLabel: string | null;
-      isActive: boolean;
-      sortOrder: number;
-    }[];
+    slides: AdminPromotion[];
   };
   activityLog: AdminActivityLogEntry[];
 }

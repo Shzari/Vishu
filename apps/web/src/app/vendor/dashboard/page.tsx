@@ -95,7 +95,7 @@ function getNextVendorActions(status: string) {
 }
 
 export default function VendorDashboardPage() {
-  const { token, user, profile, refreshProfile } = useAuth();
+  const { token, user, profile, currentRole, refreshProfile } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<VendorOrdersResponse[]>([]);
   const [vendorWorkspace, setVendorWorkspace] = useState<VendorProductsResponse["vendor"] | null>(null);
@@ -148,10 +148,10 @@ export default function VendorDashboardPage() {
   }
 
   useEffect(() => {
-    if (token && user?.role === "vendor") {
+    if (token && currentRole === "vendor") {
       void loadDashboard();
     }
-  }, [token, user]);
+  }, [currentRole, token]);
 
   async function submitProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

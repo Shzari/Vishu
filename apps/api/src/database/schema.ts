@@ -1,5 +1,6 @@
 const DEFAULT_SITE_NAME = 'Vishu.shop';
-const DEFAULT_SITE_TAGLINE = 'Unified fashion storefront, hidden vendor identity';
+const DEFAULT_SITE_TAGLINE =
+  'Unified fashion storefront, hidden vendor identity';
 
 export const SCHEMA_SQL = `
 IF OBJECT_ID('dbo.site_branding', 'U') IS NULL
@@ -36,6 +37,7 @@ BEGIN
     vendor_verification_emails_enabled BIT NOT NULL DEFAULT 1,
     admin_vendor_approval_emails_enabled BIT NOT NULL DEFAULT 1,
     password_reset_emails_enabled BIT NOT NULL DEFAULT 1,
+    homepage_hero_autoplay_enabled BIT NOT NULL DEFAULT 1,
     homepage_hero_interval_seconds INT NOT NULL DEFAULT 6,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
@@ -102,6 +104,11 @@ BEGIN
   ALTER TABLE dbo.platform_settings ADD password_reset_emails_enabled BIT NOT NULL CONSTRAINT df_platform_settings_password_reset_emails_enabled DEFAULT 1;
 END;
 
+IF COL_LENGTH('dbo.platform_settings', 'homepage_hero_autoplay_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD homepage_hero_autoplay_enabled BIT NOT NULL CONSTRAINT df_platform_settings_homepage_hero_autoplay_enabled DEFAULT 1;
+END;
+
 IF COL_LENGTH('dbo.platform_settings', 'homepage_hero_interval_seconds') IS NULL
 BEGIN
   ALTER TABLE dbo.platform_settings ADD homepage_hero_interval_seconds INT NOT NULL CONSTRAINT df_platform_settings_homepage_hero_interval_seconds DEFAULT 6;
@@ -109,19 +116,8 @@ END;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.platform_settings WHERE id = 1)
 BEGIN
-  INSERT INTO dbo.platform_settings (
-    id,
-    smtp_host,
-    smtp_port,
-    smtp_secure,
-    smtp_user,
-    smtp_pass,
-    mail_from,
-    app_base_url,
-    vendor_verification_emails_enabled,
-    password_reset_emails_enabled
-  )
-  VALUES (1, NULL, NULL, 0, NULL, NULL, NULL, NULL, 1, 1);
+  INSERT INTO dbo.platform_settings (id)
+  VALUES (1);
 END;
 
 IF OBJECT_ID('dbo.users', 'U') IS NULL
@@ -133,7 +129,7 @@ BEGIN
     phone_number NVARCHAR(40) NULL,
     password_hash NVARCHAR(255) NOT NULL,
     role NVARCHAR(20) NOT NULL CHECK (role IN ('admin', 'vendor', 'customer')),
-    email_verified_at DATETIME2 NULL CONSTRAINT df_users_email_verified_at DEFAULT SYSDATETIME(),
+    email_verified_at DATETIME2 NULL,
     is_active BIT NOT NULL DEFAULT 1,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
@@ -145,19 +141,20 @@ BEGIN
   ALTER TABLE dbo.users ADD email_verified_at DATETIME2 NULL;
 END;
 
-IF NOT EXISTS (
-  SELECT 1
-  FROM sys.default_constraints dc
-  INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
-  INNER JOIN sys.tables t ON t.object_id = c.object_id
-  WHERE t.name = 'users'
-    AND c.name = 'email_verified_at'
-)
+DECLARE @usersEmailVerifiedDefaultConstraint NVARCHAR(128);
+SELECT @usersEmailVerifiedDefaultConstraint = dc.name
+FROM sys.default_constraints dc
+INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
+INNER JOIN sys.tables t ON t.object_id = c.object_id
+WHERE t.name = 'users'
+  AND c.name = 'email_verified_at';
+
+IF @usersEmailVerifiedDefaultConstraint IS NOT NULL
 BEGIN
-  EXEC sp_executesql N'
-    ALTER TABLE dbo.users
-    ADD CONSTRAINT df_users_email_verified_at DEFAULT SYSDATETIME() FOR email_verified_at;
-  ';
+  DECLARE @dropUsersEmailVerifiedDefaultSql NVARCHAR(300);
+  SET @dropUsersEmailVerifiedDefaultSql =
+    N'ALTER TABLE dbo.users DROP CONSTRAINT ' + QUOTENAME(@usersEmailVerifiedDefaultConstraint);
+  EXEC sp_executesql @dropUsersEmailVerifiedDefaultSql;
 END;
 
 EXEC sp_executesql N'
@@ -298,15 +295,100 @@ IF OBJECT_ID('dbo.homepage_hero_slides', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.homepage_hero_slides (
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
-    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    product_id UNIQUEIDENTIFIER NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    internal_name NVARCHAR(255) NULL,
     headline NVARCHAR(255) NULL,
     subheading NVARCHAR(500) NULL,
     cta_label NVARCHAR(80) NULL,
+    button_link NVARCHAR(1000) NULL,
+    image_url NVARCHAR(500) NULL,
+    desktop_image_url NVARCHAR(500) NULL,
+    mobile_image_url NVARCHAR(500) NULL,
+    target_url NVARCHAR(1000) NULL,
     is_active BIT NOT NULL DEFAULT 1,
     sort_order INT NOT NULL DEFAULT 0,
+    starts_at DATETIME2 NULL,
+    ends_at DATETIME2 NULL,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'internal_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD internal_name NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'button_link') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD button_link NVARCHAR(1000) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'image_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD image_url NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'desktop_image_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD desktop_image_url NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'mobile_image_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD mobile_image_url NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'target_url') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD target_url NVARCHAR(1000) NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'starts_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD starts_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'ends_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.homepage_hero_slides ADD ends_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.homepage_hero_slides', 'product_id') IS NOT NULL
+BEGIN
+  EXEC sp_executesql N'
+    ALTER TABLE dbo.homepage_hero_slides
+    ALTER COLUMN product_id UNIQUEIDENTIFIER NULL;
+  ';
+END;
+
+IF OBJECT_ID('dbo.homepage_hero_slides', 'U') IS NOT NULL
+BEGIN
+  EXEC sp_executesql N'
+    UPDATE hs
+    SET image_url = COALESCE(hs.image_url, preview.image_url)
+    FROM dbo.homepage_hero_slides hs
+    OUTER APPLY (
+      SELECT TOP 1 pi.image_url
+      FROM dbo.product_images pi
+      WHERE pi.product_id = hs.product_id
+      ORDER BY pi.sort_order ASC, pi.id ASC
+    ) preview
+    WHERE hs.image_url IS NULL;
+  ';
+END;
+
+IF OBJECT_ID('dbo.homepage_hero_slides', 'U') IS NOT NULL
+BEGIN
+  EXEC sp_executesql N'
+    UPDATE dbo.homepage_hero_slides
+    SET internal_name = COALESCE(NULLIF(LTRIM(RTRIM(internal_name)), ''''), NULLIF(LTRIM(RTRIM(headline)), ''''), ''Homepage banner''),
+        desktop_image_url = COALESCE(desktop_image_url, image_url),
+        target_url = COALESCE(target_url, button_link)
+    WHERE internal_name IS NULL
+       OR desktop_image_url IS NULL
+       OR target_url IS NULL;
+  ';
 END;
 
 IF OBJECT_ID('dbo.orders', 'U') IS NULL

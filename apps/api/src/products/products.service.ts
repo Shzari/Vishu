@@ -4,18 +4,40 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { algoliasearch } from 'algoliasearch';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { AuthenticatedUser } from '../common/types';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
-import { ProductBulkStockDto, ProductMutationDto, ProductUpdateDto } from './dto';
+import {
+  ProductBulkStockDto,
+  ProductMutationDto,
+  ProductUpdateDto,
+} from './dto';
 
 type UploadedFile = Express.Multer.File;
 
 const PRODUCT_DEPARTMENTS = ['men', 'women', 'unisex'] as const;
+const DEFAULT_SEARCH_LIMIT = 24;
+const DEFAULT_FALLBACK_LIMIT = 10;
+const SEARCH_STOP_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'for',
+  'in',
+  'of',
+  'the',
+  'to',
+  'with',
+]);
 
-const PRODUCT_CATEGORY_GROUPS: Record<(typeof PRODUCT_DEPARTMENTS)[number], string[]> = {
+const PRODUCT_CATEGORY_GROUPS: Record<
+  (typeof PRODUCT_DEPARTMENTS)[number],
+  string[]
+> = {
   men: [
     'tshirts',
     'tops',
@@ -68,6 +90,26 @@ const PRODUCT_CATEGORY_GROUPS: Record<(typeof PRODUCT_DEPARTMENTS)[number], stri
   ],
 };
 
+const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
+  tshirts: ['tshirt', 'tshirts', 'tee', 'tees', 't-shirt', 't-shirts'],
+  tops: ['top', 'tops'],
+  shirts: ['shirt', 'shirts'],
+  hoodies: ['hoodie', 'hoodies'],
+  sweatshirts: ['sweatshirt', 'sweatshirts'],
+  sweaters: ['sweater', 'sweaters', 'knit', 'knits'],
+  jackets: ['jacket', 'jackets', 'coat', 'coats'],
+  outerwear: ['outerwear', 'outerwears'],
+  pants: ['pant', 'pants', 'trouser', 'trousers'],
+  jeans: ['jean', 'jeans', 'denim'],
+  shorts: ['short', 'shorts'],
+  suits: ['suit', 'suits', 'tailoring'],
+  sportswear: ['sportswear', 'sport', 'sports', 'activewear'],
+  accessories: ['accessory', 'accessories', 'bag', 'bags'],
+  leggings: ['legging', 'leggings'],
+  dresses: ['dress', 'dresses'],
+  skirts: ['skirt', 'skirts'],
+};
+
 interface ProductRow {
   id: string;
   title: string;
@@ -87,12 +129,78 @@ interface ProductRow {
   created_at: Date;
 }
 
-interface HomepageHeroSlideRow extends ProductRow {
-  slide_id: string;
-  headline: string | null;
-  subheading: string | null;
-  cta_label: string | null;
+interface HomepageHeroSlideRow {
+  id: string;
+  internal_name: string | null;
+  desktop_image_url: string | null;
+  mobile_image_url: string | null;
+  target_url: string | null;
   sort_order: number;
+}
+
+interface SearchableProductRow extends ProductRow {
+  total_units_sold: number;
+}
+
+interface SearchIndexRecord {
+  [key: string]: unknown;
+  objectID: string;
+  title: string;
+  category: string;
+  subcategory: string | null;
+  color: string | null;
+  brand: string | null;
+  tags: string[];
+  department: string;
+  inStock: boolean;
+  popularityScore: number;
+  totalUnitsSold: number;
+  createdAtTimestamp: number;
+}
+
+interface PublicCatalogProduct {
+  id: string;
+  title: string;
+  description: string;
+  price: number;
+  stock: number;
+  isListed: boolean;
+  department: string;
+  category: string;
+  color: string | null;
+  size: string | null;
+  productCode?: string | null;
+  vendor?: {
+    id: string;
+    shopName: string;
+    logoUrl?: string | null;
+  };
+  images: string[];
+  createdAt: Date;
+}
+
+interface SearchLayer {
+  id: 'exact' | 'category' | 'color' | 'related';
+  title: string;
+  products: PublicCatalogProduct[];
+}
+
+type SearchableProduct = PublicCatalogProduct & {
+  totalUnitsSold: number;
+  popularityScore: number;
+  brand: string | null;
+  tags: string[];
+};
+
+interface AnnotatedSearchProduct {
+  product: SearchableProduct;
+  algoliaRank: number;
+  textScore: number;
+  titleScore: number;
+  matchesAllTokens: boolean;
+  phraseInTitle: boolean;
+  categoryMatch: boolean;
+  colorMatch: boolean;
 }
 
 interface VendorLowStockAlertPayload {
@@ -106,9 +214,13 @@ interface VendorLowStockAlertPayload {
 
 @Injectable()
 export class ProductsService {
+  private algoliaClient: ReturnType<typeof algoliasearch> | null = null;
+  private algoliaSettingsEnsured = false;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
+    private readonly configService: ConfigService,
   ) {}
 
   async listPublicProducts() {
@@ -122,6 +234,68 @@ export class ProductsService {
     );
 
     return this.attachImages(result.rows);
+  }
+
+  async searchPublicProducts(input: {
+    query: string;
+    category?: string;
+    department?: string;
+    limit?: number;
+  }) {
+    const query = input.query.trim();
+    if (!query) {
+      throw new BadRequestException('Search query is required');
+    }
+
+    const limit = Math.max(
+      1,
+      Math.min(Number(input.limit ?? DEFAULT_SEARCH_LIMIT), 48),
+    );
+    const category = this.normalizeCatalogFilter(input.category);
+    const department = this.normalizeCatalogFilter(input.department);
+    const fullCatalog = await this.getPublicSearchCatalog({
+      category,
+      department,
+    });
+    const queryProfile = this.buildSearchQueryProfile(query, fullCatalog);
+    const candidateProducts = await this.getSearchCandidates({
+      query,
+      category,
+      department,
+      limit,
+      fullCatalog,
+    });
+    const layers = this.buildSearchLayers(
+      candidateProducts.products,
+      queryProfile,
+      limit,
+    );
+    const usedProductIds = new Set(
+      layers.flatMap((layer) => layer.products.map((product) => product.id)),
+    );
+    const fallbackProducts = fullCatalog
+      .filter((product) => !usedProductIds.has(product.id))
+      .sort((left, right) =>
+        this.compareSearchableProducts(left, right) ||
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      )
+      .slice(0, DEFAULT_FALLBACK_LIMIT);
+
+    return {
+      query,
+      algorithm: candidateProducts.algorithm,
+      hasResults: layers.some((layer) => layer.products.length > 0),
+      totalResults: layers.reduce(
+        (sum, layer) => sum + layer.products.length,
+        0,
+      ),
+      noResultsMessage:
+        layers.some((layer) => layer.products.length > 0)
+          ? null
+          : `No results found for "${query}".`,
+      sections: layers.filter((layer) => layer.products.length > 0),
+      fallbackProducts,
+    };
   }
 
   async getPublicProductById(id: string) {
@@ -213,53 +387,42 @@ export class ProductsService {
 
   async listHomepageHeroSlides() {
     const intervalResult = await this.databaseService.query<{
+      homepage_hero_autoplay_enabled: boolean | null;
       homepage_hero_interval_seconds: number | null;
     }>(
-      `SELECT TOP 1 homepage_hero_interval_seconds
+      `SELECT TOP 1 homepage_hero_autoplay_enabled, homepage_hero_interval_seconds
        FROM platform_settings
        WHERE id = 1`,
     );
 
     const slideRows = await this.databaseService.query<HomepageHeroSlideRow>(
       `SELECT
-         hs.id AS slide_id,
-         hs.headline,
-         hs.subheading,
-         hs.cta_label,
-         hs.sort_order,
-         p.id,
-         p.title,
-         p.description,
-         p.price,
-         p.stock,
-         p.is_listed,
-         p.department,
-         p.category,
-         p.color,
-         p.size,
-         p.created_at,
-         v.id AS vendor_id,
-         v.shop_name,
-         v.logo_url
+         hs.id,
+         hs.internal_name,
+         hs.desktop_image_url,
+         hs.mobile_image_url,
+         hs.target_url,
+         hs.sort_order
        FROM homepage_hero_slides hs
-       INNER JOIN products p ON p.id = hs.product_id
-       INNER JOIN vendors v ON v.id = p.vendor_id
        WHERE hs.is_active = 1
-         AND ${this.publicProductVisibilityClause('p', 'v')}
+         AND hs.desktop_image_url IS NOT NULL
+         AND hs.target_url IS NOT NULL
+         AND (hs.starts_at IS NULL OR hs.starts_at <= SYSDATETIME())
+         AND (hs.ends_at IS NULL OR hs.ends_at >= SYSDATETIME())
        ORDER BY hs.sort_order ASC, hs.created_at ASC`,
     );
 
-    const products = await this.attachImages(slideRows.rows);
-
     return {
+      autoRotate:
+        intervalResult.rows[0]?.homepage_hero_autoplay_enabled ?? true,
       intervalSeconds:
         intervalResult.rows[0]?.homepage_hero_interval_seconds ?? 6,
-      slides: products.map((product, index) => ({
-        id: slideRows.rows[index].slide_id,
-        headline: slideRows.rows[index].headline,
-        subheading: slideRows.rows[index].subheading,
-        ctaLabel: slideRows.rows[index].cta_label,
-        product,
+      slides: slideRows.rows.map((slide) => ({
+        id: slide.id,
+        internalName: slide.internal_name,
+        imageUrl: slide.desktop_image_url,
+        mobileImageUrl: slide.mobile_image_url,
+        targetUrl: slide.target_url,
       })),
     };
   }
@@ -374,43 +537,54 @@ export class ProductsService {
     );
 
     try {
-      const product = await this.databaseService.withTransaction(async (client) => {
-        const created = await client.query<{ id: string }>(
-          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
+      const product = await this.databaseService.withTransaction(
+        async (client) => {
+          const created = await client.query<{ id: string }>(
+            `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
            OUTPUT INSERTED.id
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            vendor.id,
-            normalizedDto.title,
-            normalizedDto.description,
-            normalizedDto.price,
-            normalizedDto.stock,
-            true,
-            normalizedDto.department,
-            normalizedDto.category,
-            normalizedDto.color,
-            normalizedDto.size,
-          ],
-        );
-
-        const productCode = this.generateProductCode(vendor, normalizedDto, created.rows[0].id);
-        await client.query(
-          'UPDATE products SET product_code = $1, updated_at = SYSDATETIME() WHERE id = $2',
-          [productCode, created.rows[0].id],
-        );
-
-        for (const [index, file] of files.entries()) {
-          const imageUrl = this.storeProductImage(vendor, normalizedDto.category, file);
-          await client.query(
-            `INSERT INTO product_images (product_id, image_url, sort_order)
-             VALUES ($1, $2, $3)`,
-            [created.rows[0].id, imageUrl, index],
+            [
+              vendor.id,
+              normalizedDto.title,
+              normalizedDto.description,
+              normalizedDto.price,
+              normalizedDto.stock,
+              true,
+              normalizedDto.department,
+              normalizedDto.category,
+              normalizedDto.color,
+              normalizedDto.size,
+            ],
           );
-        }
 
-        return created.rows[0];
-      });
+          const productCode = this.generateProductCode(
+            vendor,
+            normalizedDto,
+            created.rows[0].id,
+          );
+          await client.query(
+            'UPDATE products SET product_code = $1, updated_at = SYSDATETIME() WHERE id = $2',
+            [productCode, created.rows[0].id],
+          );
 
+          for (const [index, file] of files.entries()) {
+            const imageUrl = this.storeProductImage(
+              vendor,
+              normalizedDto.category,
+              file,
+            );
+            await client.query(
+              `INSERT INTO product_images (product_id, image_url, sort_order)
+             VALUES ($1, $2, $3)`,
+              [created.rows[0].id, imageUrl, index],
+            );
+          }
+
+          return created.rows[0];
+        },
+      );
+
+      await this.syncProductToSearchIndexSafely(product.id);
       return this.getVendorProductById(product.id, vendor.id);
     } catch (error) {
       this.cleanupTemporaryFiles(files);
@@ -469,14 +643,22 @@ export class ProductsService {
           updates.push(`${column} = $${values.length}`);
         };
 
-        if (normalizedDto.title !== undefined) pushUpdate('title', normalizedDto.title);
-        if (normalizedDto.description !== undefined) pushUpdate('description', normalizedDto.description);
-        if (normalizedDto.price !== undefined) pushUpdate('price', normalizedDto.price);
-        if (normalizedDto.stock !== undefined) pushUpdate('stock', normalizedDto.stock);
-        if (normalizedDto.department !== undefined) pushUpdate('department', normalizedDto.department);
-        if (normalizedDto.category !== undefined) pushUpdate('category', normalizedDto.category);
-        if (normalizedDto.color !== undefined) pushUpdate('color', normalizedDto.color);
-        if (normalizedDto.size !== undefined) pushUpdate('size', normalizedDto.size);
+        if (normalizedDto.title !== undefined)
+          pushUpdate('title', normalizedDto.title);
+        if (normalizedDto.description !== undefined)
+          pushUpdate('description', normalizedDto.description);
+        if (normalizedDto.price !== undefined)
+          pushUpdate('price', normalizedDto.price);
+        if (normalizedDto.stock !== undefined)
+          pushUpdate('stock', normalizedDto.stock);
+        if (normalizedDto.department !== undefined)
+          pushUpdate('department', normalizedDto.department);
+        if (normalizedDto.category !== undefined)
+          pushUpdate('category', normalizedDto.category);
+        if (normalizedDto.color !== undefined)
+          pushUpdate('color', normalizedDto.color);
+        if (normalizedDto.size !== undefined)
+          pushUpdate('size', normalizedDto.size);
 
         if (updates.length) {
           values.push(productId);
@@ -531,13 +713,21 @@ export class ProductsService {
           this.assertImageCount(nextImageCount);
 
           if (shouldReplace) {
-            await client.query('DELETE FROM product_images WHERE product_id = $1', [productId]);
-            currentImageRows.rows.forEach((row) => this.deleteStoredImage(row.image_url));
+            await client.query(
+              'DELETE FROM product_images WHERE product_id = $1',
+              [productId],
+            );
+            currentImageRows.rows.forEach((row) =>
+              this.deleteStoredImage(row.image_url),
+            );
           }
 
-          const baseSortOrder = shouldReplace ? 0 : currentImageRows.rows.length;
+          const baseSortOrder = shouldReplace
+            ? 0
+            : currentImageRows.rows.length;
           const category =
-            normalizedDto.category ?? (await this.getProductCategory(client, productId));
+            normalizedDto.category ??
+            (await this.getProductCategory(client, productId));
 
           for (const [index, file] of files.entries()) {
             const imageUrl = this.storeProductImage(vendor, category, file);
@@ -554,6 +744,7 @@ export class ProductsService {
         await this.mailService.sendVendorLowStockAlert(lowStockAlert);
       }
 
+      await this.syncProductToSearchIndexSafely(productId);
       return this.getVendorProductById(productId, vendor.id);
     } catch (error) {
       this.cleanupTemporaryFiles(files);
@@ -565,7 +756,9 @@ export class ProductsService {
     const vendor = await this.getVendorForUser(user.sub);
     this.assertVendorReady(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
-    return this.deleteProductAndImages(productId);
+    const response = await this.deleteProductAndImages(productId);
+    await this.syncProductToSearchIndexSafely(productId);
+    return response;
   }
 
   async setProductListing(
@@ -585,6 +778,7 @@ export class ProductsService {
       [isListed, productId],
     );
 
+    await this.syncProductToSearchIndexSafely(productId);
     return this.getVendorProductById(productId, vendor.id);
   }
 
@@ -615,7 +809,9 @@ export class ProductsService {
       );
 
       if (productRows.rows.length !== productIds.length) {
-        throw new ForbiddenException('One or more selected products are invalid');
+        throw new ForbiddenException(
+          'One or more selected products are invalid',
+        );
       }
 
       await client.query(
@@ -669,6 +865,12 @@ export class ProductsService {
       await this.mailService.sendVendorLowStockAlert(lowStockAlert);
     }
 
+    await Promise.all(
+      productIds.map((productId) =>
+        this.syncProductToSearchIndexSafely(productId),
+      ),
+    );
+
     return {
       updatedCount: productIds.length,
       stock: dto.stock,
@@ -710,51 +912,54 @@ export class ProductsService {
       [productId],
     );
 
-    const duplicated = await this.databaseService.withTransaction(async (client) => {
-      const created = await client.query<{ id: string }>(
-        `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
+    const duplicated = await this.databaseService.withTransaction(
+      async (client) => {
+        const created = await client.query<{ id: string }>(
+          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
          OUTPUT INSERTED.id
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          vendor.id,
-          `${source.title} Copy`,
-          source.description,
-          Number(source.price),
-          source.stock,
-          false,
-          source.department,
-          source.category,
-          source.color,
-          source.size,
-        ],
-      );
-
-      const productCode = this.generateProductCode(
-        vendor,
-        {
-          category: source.category,
-          color: source.color,
-          size: source.size,
-        },
-        created.rows[0].id,
-      );
-
-      await client.query(
-        'UPDATE products SET product_code = $1, updated_at = SYSDATETIME() WHERE id = $2',
-        [productCode, created.rows[0].id],
-      );
-
-      for (const [index, row] of imageRows.rows.entries()) {
-        await client.query(
-          `INSERT INTO product_images (product_id, image_url, sort_order)
-           VALUES ($1, $2, $3)`,
-          [created.rows[0].id, row.image_url, index],
+          [
+            vendor.id,
+            `${source.title} Copy`,
+            source.description,
+            Number(source.price),
+            source.stock,
+            false,
+            source.department,
+            source.category,
+            source.color,
+            source.size,
+          ],
         );
-      }
 
-      return created.rows[0];
-    });
+        const productCode = this.generateProductCode(
+          vendor,
+          {
+            category: source.category,
+            color: source.color,
+            size: source.size,
+          },
+          created.rows[0].id,
+        );
 
+        await client.query(
+          'UPDATE products SET product_code = $1, updated_at = SYSDATETIME() WHERE id = $2',
+          [productCode, created.rows[0].id],
+        );
+
+        for (const [index, row] of imageRows.rows.entries()) {
+          await client.query(
+            `INSERT INTO product_images (product_id, image_url, sort_order)
+           VALUES ($1, $2, $3)`,
+            [created.rows[0].id, row.image_url, index],
+          );
+        }
+
+        return created.rows[0];
+      },
+    );
+
+    await this.syncProductToSearchIndexSafely(duplicated.id);
     return this.getVendorProductById(duplicated.id, vendor.id);
   }
 
@@ -785,7 +990,36 @@ export class ProductsService {
   }
 
   async adminDeleteProduct(productId: string) {
-    return this.deleteProductAndImages(productId);
+    const response = await this.deleteProductAndImages(productId);
+    await this.syncProductToSearchIndexSafely(productId);
+    return response;
+  }
+
+  async reindexPublicSearchCatalog() {
+    const client = this.getAlgoliaClient();
+    if (!client) {
+      return {
+        enabled: false,
+        indexedCount: 0,
+        message: 'Algolia credentials are not configured.',
+      };
+    }
+
+    await this.ensureAlgoliaSearchSettings();
+    const catalog = await this.getPublicSearchCatalog();
+    const objects = catalog.map((product) => this.buildSearchIndexObject(product));
+
+    await client.saveObjects({
+      indexName: this.getAlgoliaIndexName(),
+      objects,
+      waitForTasks: true,
+    });
+
+    return {
+      enabled: true,
+      indexedCount: objects.length,
+      message: `Indexed ${objects.length} public products.`,
+    };
   }
 
   private async attachImages(products: ProductRow[]) {
@@ -793,7 +1027,9 @@ export class ProductsService {
       return [];
     }
 
-    const imageRows = await this.getImagesForProducts(products.map((product) => product.id));
+    const imageRows = await this.getImagesForProducts(
+      products.map((product) => product.id),
+    );
     const imageMap = new Map<string, string[]>();
 
     for (const image of imageRows) {
@@ -826,6 +1062,519 @@ export class ProductsService {
       images: imageMap.get(row.id) ?? [],
       createdAt: row.created_at,
     }));
+  }
+
+  private async getPublicSearchCatalog(input?: {
+    productIds?: string[];
+    category?: string | null;
+    department?: string | null;
+  }) {
+    const filters: string[] = [this.publicProductVisibilityClause('p', 'v')];
+    const values: unknown[] = [];
+
+    if (input?.department) {
+      values.push(input.department);
+      filters.push(`p.department = $${values.length}`);
+    }
+
+    if (input?.category) {
+      values.push(input.category);
+      filters.push(`p.category = $${values.length}`);
+    }
+
+    if (input?.productIds?.length) {
+      filters.push(
+        `p.id IN (${this.buildGuidLiteralClause(input.productIds)})`,
+      );
+    }
+
+    const result = await this.databaseService.query<SearchableProductRow>(
+      `SELECT
+         p.id,
+         p.title,
+         p.description,
+         p.price,
+         p.stock,
+         p.is_listed,
+         p.department,
+         p.category,
+         p.color,
+         p.size,
+         p.created_at,
+         v.id AS vendor_id,
+         v.shop_name,
+         v.logo_url,
+         ISNULL(SUM(oi.quantity), 0) AS total_units_sold
+       FROM products p
+       INNER JOIN vendors v ON v.id = p.vendor_id
+       LEFT JOIN order_items oi ON oi.product_id = p.id
+       WHERE ${filters.join(' AND ')}
+       GROUP BY
+         p.id,
+         p.title,
+         p.description,
+         p.price,
+         p.stock,
+         p.is_listed,
+         p.department,
+         p.category,
+         p.color,
+         p.size,
+         p.created_at,
+         v.id,
+         v.shop_name,
+         v.logo_url`,
+      values,
+    );
+
+    const products = await this.attachImages(result.rows);
+    const unitsSoldById = new Map(
+      result.rows.map((row) => [row.id, Number(row.total_units_sold ?? 0)]),
+    );
+
+    const searchableProducts = products.map((product) => {
+      const totalUnitsSold = unitsSoldById.get(product.id) ?? 0;
+      return {
+        ...product,
+        totalUnitsSold,
+        popularityScore: totalUnitsSold * 10 + (product.stock > 0 ? 3 : 0),
+        brand: product.vendor?.shopName ?? null,
+        tags: this.buildSearchTags(product),
+      };
+    });
+
+    if (!input?.productIds?.length) {
+      return searchableProducts;
+    }
+
+    const order = new Map(input.productIds.map((id, index) => [id, index]));
+    return searchableProducts.sort(
+      (left, right) =>
+        (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }
+
+  private async getSearchCandidates(input: {
+    query: string;
+    category: string | null;
+    department: string | null;
+    limit: number;
+    fullCatalog: SearchableProduct[];
+  }) {
+    const client = this.getAlgoliaClient();
+    if (!client) {
+      return {
+        algorithm: 'database' as const,
+        products: input.fullCatalog,
+      };
+    }
+
+    try {
+      await this.ensureAlgoliaSearchSettings();
+      const response = await client.searchSingleIndex<SearchIndexRecord>({
+        indexName: this.getAlgoliaIndexName(),
+        searchParams: {
+          query: input.query,
+          hitsPerPage: Math.max(input.limit * 4, 40),
+          filters: this.buildAlgoliaFilters(
+            input.department,
+            input.category,
+          ),
+          typoTolerance: true,
+          removeWordsIfNoResults: 'allOptional',
+        },
+      });
+
+      const orderedIds = response.hits
+        .map((hit) => hit.objectID)
+        .filter((value): value is string => Boolean(value));
+
+      if (!orderedIds.length) {
+        return {
+          algorithm: 'database' as const,
+          products: input.fullCatalog,
+        };
+      }
+
+      return {
+        algorithm: 'algolia' as const,
+        products: await this.getPublicSearchCatalog({ productIds: orderedIds }),
+      };
+    } catch {
+      return {
+        algorithm: 'database' as const,
+        products: input.fullCatalog,
+      };
+    }
+  }
+
+  private buildSearchLayers(
+    products: SearchableProduct[],
+    queryProfile: ReturnType<ProductsService['buildSearchQueryProfile']>,
+    limit: number,
+  ): SearchLayer[] {
+    const annotated = products
+      .map((product, index) =>
+        this.annotateSearchProduct(product, queryProfile, index),
+      )
+      .filter(
+        (entry) =>
+          entry.matchesAllTokens ||
+          entry.categoryMatch ||
+          entry.colorMatch ||
+          entry.textScore > 0,
+      );
+    const used = new Set<string>();
+    const layers: SearchLayer[] = [];
+
+    const pushLayer = (
+      id: SearchLayer['id'],
+      title: string,
+      items: AnnotatedSearchProduct[],
+    ) => {
+      const nextProducts = items
+        .filter((item) => !used.has(item.product.id))
+        .sort((left, right) => this.compareAnnotatedProducts(left, right))
+        .slice(0, limit)
+        .map((item) => item.product);
+
+      nextProducts.forEach((product) => used.add(product.id));
+      layers.push({ id, title, products: nextProducts });
+    };
+
+    pushLayer(
+      'exact',
+      'Exact matches',
+      annotated.filter((item) => item.matchesAllTokens),
+    );
+
+    if (queryProfile.category) {
+      pushLayer(
+        'category',
+        `More ${this.formatSearchSectionLabel(queryProfile.category)}`,
+        annotated.filter(
+          (item) => !item.matchesAllTokens && item.categoryMatch,
+        ),
+      );
+    }
+
+    if (queryProfile.color) {
+      pushLayer(
+        'color',
+        `More ${this.formatSearchSectionLabel(queryProfile.color)} styles`,
+        annotated.filter(
+          (item) =>
+            !item.matchesAllTokens &&
+            !item.categoryMatch &&
+            item.colorMatch,
+        ),
+      );
+    }
+
+    pushLayer(
+      'related',
+      'Related results',
+      annotated.filter(
+        (item) =>
+          !item.matchesAllTokens && !item.categoryMatch && !item.colorMatch,
+      ),
+    );
+
+    return layers;
+  }
+
+  private buildSearchQueryProfile(query: string, catalog: SearchableProduct[]) {
+    const normalizedQuery = this.normalizeSearchText(query);
+    const tokens = normalizedQuery
+      .split(' ')
+      .map((token) => token.trim())
+      .filter((token) => token && !SEARCH_STOP_WORDS.has(token));
+    const category = this.matchCategoryToken(tokens);
+    const colors = [
+      ...new Set(
+        catalog
+          .map((product) => this.normalizeSearchText(product.color))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const color = tokens.find((token) => colors.includes(token)) ?? null;
+
+    return {
+      normalizedQuery,
+      tokens,
+      category,
+      color,
+    };
+  }
+
+  private annotateSearchProduct(
+    product: SearchableProduct,
+    queryProfile: ReturnType<ProductsService['buildSearchQueryProfile']>,
+    algoliaRank: number,
+  ): AnnotatedSearchProduct {
+    const titleText = this.normalizeSearchText(product.title);
+    const searchBlob = this.normalizeSearchText([
+      product.title,
+      product.category,
+      product.department,
+      product.color,
+      product.brand,
+      ...product.tags,
+    ]);
+    const titleTokens = new Set(titleText.split(' ').filter(Boolean));
+    const blobTokens = new Set(searchBlob.split(' ').filter(Boolean));
+    const matchedTokens = queryProfile.tokens.filter(
+      (token) => titleTokens.has(token) || blobTokens.has(token),
+    );
+    const phraseInTitle =
+      queryProfile.normalizedQuery.length > 0 &&
+      titleText.includes(queryProfile.normalizedQuery);
+    const categoryMatch =
+      queryProfile.category != null &&
+      this.normalizeSearchText(product.category) === queryProfile.category;
+    const colorMatch =
+      queryProfile.color != null &&
+      this.normalizeSearchText(product.color) === queryProfile.color;
+    const matchesAllTokens =
+      queryProfile.tokens.length > 0 &&
+      queryProfile.tokens.every(
+        (token) => titleTokens.has(token) || blobTokens.has(token),
+      ) &&
+      (!queryProfile.category || categoryMatch) &&
+      (!queryProfile.color || colorMatch);
+
+    return {
+      product,
+      algoliaRank,
+      textScore: matchedTokens.length,
+      titleScore: queryProfile.tokens.filter((token) => titleTokens.has(token))
+        .length,
+      matchesAllTokens,
+      phraseInTitle,
+      categoryMatch,
+      colorMatch,
+    };
+  }
+
+  private compareAnnotatedProducts(
+    left: AnnotatedSearchProduct,
+    right: AnnotatedSearchProduct,
+  ) {
+    if (left.phraseInTitle !== right.phraseInTitle) {
+      return left.phraseInTitle ? -1 : 1;
+    }
+
+    if (left.matchesAllTokens !== right.matchesAllTokens) {
+      return left.matchesAllTokens ? -1 : 1;
+    }
+
+    if (left.titleScore !== right.titleScore) {
+      return right.titleScore - left.titleScore;
+    }
+
+    if (left.textScore !== right.textScore) {
+      return right.textScore - left.textScore;
+    }
+
+    if ((left.product.stock > 0) !== (right.product.stock > 0)) {
+      return left.product.stock > 0 ? -1 : 1;
+    }
+
+    return (
+      this.compareSearchableProducts(left.product, right.product) ||
+      left.algoliaRank - right.algoliaRank
+    );
+  }
+
+  private compareSearchableProducts(
+    left: SearchableProduct,
+    right: SearchableProduct,
+  ) {
+    if ((left.stock > 0) !== (right.stock > 0)) {
+      return left.stock > 0 ? -1 : 1;
+    }
+
+    if (left.popularityScore !== right.popularityScore) {
+      return right.popularityScore - left.popularityScore;
+    }
+
+    if (left.totalUnitsSold !== right.totalUnitsSold) {
+      return right.totalUnitsSold - left.totalUnitsSold;
+    }
+
+    return (
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+    );
+  }
+
+  private buildSearchIndexObject(product: SearchableProduct): SearchIndexRecord {
+    return {
+      objectID: product.id,
+      title: product.title,
+      category: product.category,
+      subcategory: product.category,
+      color: product.color ?? null,
+      brand: product.brand,
+      tags: product.tags,
+      department: product.department,
+      inStock: product.stock > 0,
+      popularityScore: product.popularityScore,
+      totalUnitsSold: product.totalUnitsSold,
+      createdAtTimestamp: new Date(product.createdAt).getTime(),
+    };
+  }
+
+  private buildSearchTags(product: PublicCatalogProduct) {
+    const aliasTags = SEARCH_CATEGORY_ALIASES[product.category] ?? [];
+    return [...new Set([
+      product.department,
+      product.category,
+      ...(product.color ? [product.color] : []),
+      ...(product.size ? [product.size] : []),
+      ...aliasTags,
+    ])];
+  }
+
+  private normalizeCatalogFilter(value?: string | null) {
+    if (!value) {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    return normalized && normalized !== 'all' ? normalized : null;
+  }
+
+  private normalizeSearchText(value?: string | null | Array<string | null | undefined>) {
+    const source = Array.isArray(value)
+      ? value.filter(Boolean).join(' ')
+      : value ?? '';
+
+    return source
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private matchCategoryToken(tokens: string[]) {
+    for (const [category, aliases] of Object.entries(SEARCH_CATEGORY_ALIASES)) {
+      if (tokens.some((token) => aliases.includes(token))) {
+        return category;
+      }
+    }
+
+    return null;
+  }
+
+  private formatSearchSectionLabel(value: string) {
+    return value
+      .split(/[\s-]+/)
+      .filter(Boolean)
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ');
+  }
+
+  private buildAlgoliaFilters(
+    department: string | null,
+    category: string | null,
+  ) {
+    return [department ? `department:${department}` : null, category ? `category:${category}` : null]
+      .filter((value): value is string => Boolean(value))
+      .join(' AND ');
+  }
+
+  private getAlgoliaClient() {
+    const appId = this.configService.get<string>('ALGOLIA_APP_ID')?.trim();
+    const adminKey = this.configService
+      .get<string>('ALGOLIA_ADMIN_API_KEY')
+      ?.trim();
+
+    if (!appId || !adminKey) {
+      return null;
+    }
+
+    if (!this.algoliaClient) {
+      this.algoliaClient = algoliasearch(appId, adminKey);
+    }
+
+    return this.algoliaClient;
+  }
+
+  private getAlgoliaIndexName() {
+    return (
+      this.configService.get<string>('ALGOLIA_INDEX_NAME')?.trim() ||
+      'vishu_products'
+    );
+  }
+
+  private async ensureAlgoliaSearchSettings() {
+    const client = this.getAlgoliaClient();
+    if (!client || this.algoliaSettingsEnsured) {
+      return;
+    }
+
+    await client.setSettings({
+      indexName: this.getAlgoliaIndexName(),
+      indexSettings: {
+        searchableAttributes: [
+          'unordered(title)',
+          'unordered(category)',
+          'unordered(subcategory)',
+          'unordered(color)',
+          'unordered(brand)',
+          'unordered(tags)',
+        ],
+        attributesForFaceting: [
+          'filterOnly(department)',
+          'filterOnly(category)',
+          'filterOnly(inStock)',
+        ],
+        customRanking: [
+          'desc(inStock)',
+          'desc(popularityScore)',
+          'desc(totalUnitsSold)',
+          'desc(createdAtTimestamp)',
+        ],
+        typoTolerance: true,
+        removeWordsIfNoResults: 'allOptional',
+      },
+      forwardToReplicas: false,
+    });
+
+    this.algoliaSettingsEnsured = true;
+  }
+
+  private async syncProductToSearchIndex(productId: string) {
+    const client = this.getAlgoliaClient();
+    if (!client) {
+      return;
+    }
+
+    await this.ensureAlgoliaSearchSettings();
+    const [product] = await this.getPublicSearchCatalog({ productIds: [productId] });
+
+    if (!product) {
+      await client.deleteObject({
+        indexName: this.getAlgoliaIndexName(),
+        objectID: productId,
+      });
+      return;
+    }
+
+    await client.saveObjects({
+      indexName: this.getAlgoliaIndexName(),
+      objects: [this.buildSearchIndexObject(product)],
+      waitForTasks: false,
+    });
+  }
+
+  private async syncProductToSearchIndexSafely(productId: string) {
+    try {
+      await this.syncProductToSearchIndex(productId);
+    } catch {
+      // Keep product mutations successful even if Algolia is unavailable.
+    }
   }
 
   private async getImagesForProducts(productIds: string[]) {
@@ -1049,8 +1798,12 @@ export class ProductsService {
       description: dto.description?.trim(),
       department: dto.department?.trim().toLowerCase(),
       category: dto.category?.trim().toLowerCase(),
-      color: dto.color === undefined ? undefined : this.normalizeColorValue(dto.color),
-      size: dto.size === undefined ? undefined : this.normalizeSizeValue(dto.size),
+      color:
+        dto.color === undefined
+          ? undefined
+          : this.normalizeColorValue(dto.color),
+      size:
+        dto.size === undefined ? undefined : this.normalizeSizeValue(dto.size),
     };
   }
 
@@ -1098,7 +1851,11 @@ export class ProductsService {
   }
 
   private assertValidCatalogPlacement(department: string, category: string) {
-    if (!PRODUCT_DEPARTMENTS.includes(department as (typeof PRODUCT_DEPARTMENTS)[number])) {
+    if (
+      !PRODUCT_DEPARTMENTS.includes(
+        department as (typeof PRODUCT_DEPARTMENTS)[number],
+      )
+    ) {
       throw new BadRequestException('Invalid product gender');
     }
 
@@ -1120,83 +1877,71 @@ export class ProductsService {
     productId: string,
   ) {
     return [
-      this.readableProductCodePart(
-        product.category,
-        'GEN',
-        {
-          top: 'TOP',
-          tops: 'TOP',
-          tshirt: 'TEE',
-          't shirt': 'TEE',
-          't-shirt': 'TEE',
-          tee: 'TEE',
-          tees: 'TEE',
-          shirt: 'SHT',
-          shirts: 'SHT',
-          blouse: 'BLS',
-          blouses: 'BLS',
-          pants: 'PNT',
-          trouser: 'PNT',
-          trousers: 'PNT',
-          jeans: 'JNS',
-          outerwear: 'OUT',
-          jacket: 'JKT',
-          jackets: 'JKT',
-          coat: 'COT',
-          coats: 'COT',
-          hoodie: 'HOD',
-          hoodies: 'HOD',
-          sweater: 'SWT',
-          sweaters: 'SWT',
-          dress: 'DRS',
-          dresses: 'DRS',
-          skirt: 'SKT',
-          skirts: 'SKT',
-          suit: 'SUT',
-          suits: 'SUT',
-        },
-      ),
-      this.readableProductCodePart(
-        product.color,
-        'NA',
-        {
-          black: 'BLK',
-          white: 'WHT',
-          ivory: 'IVR',
-          cream: 'CRM',
-          beige: 'BEI',
-          brown: 'BRN',
-          tan: 'TAN',
-          gray: 'GRY',
-          grey: 'GRY',
-          blue: 'BLU',
-          navy: 'NVY',
-          red: 'RED',
-          orange: 'ORG',
-          yellow: 'YLW',
-          green: 'GRN',
-          pink: 'PNK',
-          purple: 'PRP',
-          gold: 'GLD',
-          silver: 'SLV',
-        },
-      ),
-      this.readableProductCodePart(
-        product.size,
-        'NA',
-        {
-          xs: 'XSM',
-          s: 'SML',
-          m: 'MED',
-          l: 'LRG',
-          xl: 'XLG',
-          xxl: 'XXL',
-          xxxl: '3XL',
-          'one size': 'ONE',
-          onesize: 'ONE',
-          os: 'ONE',
-        },
-      ),
+      this.readableProductCodePart(product.category, 'GEN', {
+        top: 'TOP',
+        tops: 'TOP',
+        tshirt: 'TEE',
+        't shirt': 'TEE',
+        't-shirt': 'TEE',
+        tee: 'TEE',
+        tees: 'TEE',
+        shirt: 'SHT',
+        shirts: 'SHT',
+        blouse: 'BLS',
+        blouses: 'BLS',
+        pants: 'PNT',
+        trouser: 'PNT',
+        trousers: 'PNT',
+        jeans: 'JNS',
+        outerwear: 'OUT',
+        jacket: 'JKT',
+        jackets: 'JKT',
+        coat: 'COT',
+        coats: 'COT',
+        hoodie: 'HOD',
+        hoodies: 'HOD',
+        sweater: 'SWT',
+        sweaters: 'SWT',
+        dress: 'DRS',
+        dresses: 'DRS',
+        skirt: 'SKT',
+        skirts: 'SKT',
+        suit: 'SUT',
+        suits: 'SUT',
+      }),
+      this.readableProductCodePart(product.color, 'NA', {
+        black: 'BLK',
+        white: 'WHT',
+        ivory: 'IVR',
+        cream: 'CRM',
+        beige: 'BEI',
+        brown: 'BRN',
+        tan: 'TAN',
+        gray: 'GRY',
+        grey: 'GRY',
+        blue: 'BLU',
+        navy: 'NVY',
+        red: 'RED',
+        orange: 'ORG',
+        yellow: 'YLW',
+        green: 'GRN',
+        pink: 'PNK',
+        purple: 'PRP',
+        gold: 'GLD',
+        silver: 'SLV',
+      }),
+      this.readableProductCodePart(product.size, 'NA', {
+        xs: 'XSM',
+        s: 'SML',
+        m: 'MED',
+        l: 'LRG',
+        xl: 'XLG',
+        xxl: 'XXL',
+        xxxl: '3XL',
+        'one size': 'ONE',
+        onesize: 'ONE',
+        os: 'ONE',
+      }),
       this.readableProductCodePart(vendor.shop_name, 'VEN'),
       productId.replace(/-/g, '').slice(-6).toUpperCase(),
     ].join('-');

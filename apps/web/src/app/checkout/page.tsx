@@ -12,7 +12,7 @@ import type { CustomerAccount, CustomerOrder } from "@/lib/types";
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { token, user } = useAuth();
+  const { token, currentRole } = useAuth();
   const { items, clearCart } = useCart();
   const [account, setAccount] = useState<CustomerAccount | null>(null);
   const [accountLoading, setAccountLoading] = useState(true);
@@ -28,7 +28,7 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     async function loadAccount() {
-      if (!token || user?.role !== "customer") {
+      if (!token || currentRole !== "customer") {
         setAccount(null);
         setAccountLoading(false);
         return;
@@ -51,13 +51,13 @@ export default function CheckoutPage() {
     }
 
     void loadAccount();
-  }, [token, user]);
+  }, [currentRole, token]);
 
   async function placeOrder() {
     setError(null);
     setMessage(null);
 
-    if (!token || user?.role !== "customer") {
+    if (!token || currentRole !== "customer") {
       setError("Please login as a customer before checking out.");
       return;
     }

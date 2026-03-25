@@ -11,18 +11,18 @@ import type { AdminUserDetail } from "@/lib/types";
 
 export default function AdminUserDetailPage() {
   const params = useParams<{ id: string }>();
-  const { token, user } = useAuth();
+  const { token, currentRole } = useAuth();
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [actionSaving, setActionSaving] = useState<"activation" | "reset" | "vendorActivation" | "delete" | null>(null);
+  const [actionSaving, setActionSaving] = useState<"activation" | "reset" | "vendorActivation" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadDetail() {
-    if (!token || user?.role !== "admin") {
+    if (!token || currentRole !== "admin") {
       return;
     }
 
@@ -41,7 +41,7 @@ export default function AdminUserDetailPage() {
 
   useEffect(() => {
     void loadDetail();
-  }, [params.id, token, user]);
+  }, [currentRole, params.id, token]);
 
   async function saveContact() {
     if (!token) return;
@@ -140,30 +140,6 @@ export default function AdminUserDetailPage() {
     }
   }
 
-  async function handleDeleteCustomer() {
-    if (!token) return;
-
-    const confirmed = window.confirm("Delete this customer account permanently?");
-    if (!confirmed) return;
-
-    try {
-      setActionSaving("delete");
-      setMessage(null);
-      setError(null);
-      const response = await apiRequest<{ message: string }>(
-        `/admin/users/${params.id}`,
-        { method: "DELETE" },
-        token,
-      );
-      setMessage(response.message);
-      setDetail(null);
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to delete customer.");
-    } finally {
-      setActionSaving(null);
-    }
-  }
-
   if (loading) {
     return (
       <RequireRole requiredRole="admin">
@@ -183,7 +159,7 @@ export default function AdminUserDetailPage() {
   if (!detail) {
     return (
       <RequireRole requiredRole="admin">
-        <div className="message">{message ?? "User not found."}</div>
+        <div className="message error">User not found.</div>
       </RequireRole>
     );
   }
@@ -251,16 +227,6 @@ export default function AdminUserDetailPage() {
             >
               {actionSaving === "reset" ? "Sending..." : "Send reset email"}
             </button>
-            {detail.role === "customer" && (
-              <button
-                className="danger-button"
-                type="button"
-                disabled={actionSaving !== null}
-                onClick={() => void handleDeleteCustomer()}
-              >
-                {actionSaving === "delete" ? "Deleting..." : "Delete customer"}
-              </button>
-            )}
           </div>
           <div className="stack">
             <div className="card">

@@ -56,6 +56,7 @@ async function resetDatabase() {
          vendor_verification_emails_enabled = 1,
          admin_vendor_approval_emails_enabled = 1,
          password_reset_emails_enabled = 1,
+         homepage_hero_autoplay_enabled = 1,
          homepage_hero_interval_seconds = 6,
          updated_at = SYSDATETIME()
      WHERE id = 1`,
@@ -105,7 +106,8 @@ describe('Marketplace API (e2e)', () => {
     process.env.DB_NAME = DB_NAME;
     process.env.DB_INSTANCE = process.env.DB_INSTANCE || 'MARKET';
     process.env.DB_SERVER = process.env.DB_SERVER || 'localhost';
-    process.env.DB_TRUSTED_CONNECTION = process.env.DB_TRUSTED_CONNECTION || 'true';
+    process.env.DB_TRUSTED_CONNECTION =
+      process.env.DB_TRUSTED_CONNECTION || 'true';
     process.env.JWT_SECRET = 'test-secret';
     process.env.JWT_EXPIRES_IN = '1h';
 
@@ -146,17 +148,23 @@ describe('Marketplace API (e2e)', () => {
   });
 
   it('GET /health returns service health', async () => {
-    const response = await request(app.getHttpServer()).get('/health').expect(200);
+    const response = await request(app.getHttpServer())
+      .get('/health')
+      .expect(200);
 
     expect(response.body.status).toBe('ok');
     expect(response.body.service).toBe('multi-vendor-marketplace-api');
   });
 
   it('GET /branding returns the shared site logo from the database', async () => {
-    const response = await request(app.getHttpServer()).get('/branding').expect(200);
+    const response = await request(app.getHttpServer())
+      .get('/branding')
+      .expect(200);
 
     expect(response.body.siteName).toBe('Vishu.shop');
-    expect(response.body.tagline).toBe('Unified fashion storefront, hidden vendor identity');
+    expect(response.body.tagline).toBe(
+      'Unified fashion storefront, hidden vendor identity',
+    );
     expect(response.body).toHaveProperty('logoSvg');
     expect(response.body).toHaveProperty('logoDataUrl');
   });
@@ -165,7 +173,8 @@ describe('Marketplace API (e2e)', () => {
     const email = 'customer-e2e@example.com';
     const password = 'secret123';
 
-    const { registerResponse, loginResponse } = await registerVerifyAndLoginCustomer(app, email, password);
+    const { registerResponse, loginResponse } =
+      await registerVerifyAndLoginCustomer(app, email, password);
 
     expect(registerResponse.body.message).toContain('Customer account created');
     expect(registerResponse.body).toHaveProperty('accessToken');
@@ -188,7 +197,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('vendor-e2e@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -198,28 +209,28 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, department, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Privacy Tee', 'Visible product, hidden vendor.', 35.00, 8, 'women', 'tops')
       `);
 
-    await pool
-      .request()
-      .input('productId', product.recordset[0].id)
-      .query(`
+    await pool.request().input('productId', product.recordset[0].id).query(`
         INSERT INTO dbo.product_images (product_id, image_url, sort_order)
         VALUES (@productId, '/media/demo/privacy-tee.jpg', 0)
       `);
 
     await pool.close();
 
-    const listResponse = await request(app.getHttpServer()).get('/products').expect(200);
+    const listResponse = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
     const detailResponse = await request(app.getHttpServer())
       .get(`/products/${product.recordset[0].id}`)
       .expect(200);
-    const vendorsResponse = await request(app.getHttpServer()).get('/products/vendors').expect(200);
+    const vendorsResponse = await request(app.getHttpServer())
+      .get('/products/vendors')
+      .expect(200);
     const vendorResponse = await request(app.getHttpServer())
       .get(`/products/vendors/${vendor.recordset[0].id}`)
       .expect(200);
@@ -244,7 +255,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('empty-shop@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -254,7 +267,9 @@ describe('Marketplace API (e2e)', () => {
 
     await pool.close();
 
-    const vendorsResponse = await request(app.getHttpServer()).get('/products/vendors').expect(200);
+    const vendorsResponse = await request(app.getHttpServer())
+      .get('/products/vendors')
+      .expect(200);
     const vendorResponse = await request(app.getHttpServer())
       .get(`/products/vendors/${vendor.recordset[0].id}`)
       .expect(200);
@@ -273,46 +288,14 @@ describe('Marketplace API (e2e)', () => {
     expect(vendorResponse.body.productCount).toBe(0);
   });
 
-  it('lets admin configure the homepage hero carousel and exposes it publicly', async () => {
-    const pool = await createPool(DB_NAME);
+  it('lets admin manage homepage promotions and exposes only active scheduled banners publicly', async () => {
     const adminHash = await bcrypt.hash('adminsecret', 10);
 
+    const pool = await createPool(DB_NAME);
     await pool.request().input('passwordHash', adminHash).query(`
       INSERT INTO dbo.users (email, password_hash, role, is_active)
       VALUES ('carousel-admin@example.com', @passwordHash, 'admin', 1)
     `);
-
-    const vendorUser = await pool.request().query<{ id: string }>(`
-      INSERT INTO dbo.users (email, password_hash, role, is_active)
-      OUTPUT INSERTED.id
-      VALUES ('carousel-vendor@example.com', 'hash', 'vendor', 1)
-    `);
-
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
-      INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
-      )
-      OUTPUT INSERTED.id
-      VALUES (@userId, 'Carousel Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
-    `);
-
-    const product = await pool
-      .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
-        INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
-        OUTPUT INSERTED.id
-        VALUES (@vendorId, 'Hero Coat', 'Front-page spotlight product', 89.00, 4, 'outerwear')
-      `);
-
-    await pool
-      .request()
-      .input('productId', product.recordset[0].id)
-      .query(`
-        INSERT INTO dbo.product_images (product_id, image_url, sort_order)
-        VALUES (@productId, '/media/demo/hero-coat.jpg', 0)
-      `);
-
     await pool.close();
 
     const adminLogin = await request(app.getHttpServer())
@@ -320,32 +303,67 @@ describe('Marketplace API (e2e)', () => {
       .send({ email: 'carousel-admin@example.com', password: 'adminsecret' })
       .expect(201);
 
+    const bannerPayload = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm1cAAAAASUVORK5CYII=',
+      'base64',
+    );
+
     await request(app.getHttpServer())
-      .patch('/admin/platform-settings')
+      .patch('/admin/promotions/settings')
       .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
       .send({
-        homepageHeroIntervalSeconds: 8,
-        homepageHeroSlides: [
-          {
-            productId: product.recordset[0].id,
-            headline: 'Board headline',
-            subheading: 'Board subheading',
-            ctaLabel: 'Open now',
-            isActive: true,
-            sortOrder: 0,
-          },
-        ],
+        autoRotate: true,
+        intervalSeconds: 8,
       })
       .expect(200);
 
-    const heroResponse = await request(app.getHttpServer()).get('/homepage-hero').expect(200);
+    await request(app.getHttpServer())
+      .post('/admin/promotions')
+      .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
+      .field('internalName', 'Spring Launch')
+      .field('customUrl', '/shops')
+      .field('isActive', 'true')
+      .field('displayOrder', '0')
+      .field('startDate', '2020-01-01')
+      .field('endDate', '2099-12-31')
+      .attach('desktopBannerImage', bannerPayload, {
+        filename: 'promo-desktop.png',
+        contentType: 'image/png',
+      })
+      .attach('mobileBannerImage', bannerPayload, {
+        filename: 'promo-mobile.png',
+        contentType: 'image/png',
+      })
+      .expect(201);
 
+    await request(app.getHttpServer())
+      .post('/admin/promotions')
+      .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
+      .field('internalName', 'Inactive Banner')
+      .field('customUrl', '/account')
+      .field('isActive', 'false')
+      .field('displayOrder', '1')
+      .attach('desktopBannerImage', bannerPayload, {
+        filename: 'promo-inactive.png',
+        contentType: 'image/png',
+      })
+      .expect(201);
+
+    const heroResponse = await request(app.getHttpServer())
+      .get('/homepage-hero')
+      .expect(200);
+
+    expect(heroResponse.body.autoRotate).toBe(true);
     expect(heroResponse.body.intervalSeconds).toBe(8);
     expect(heroResponse.body.slides).toHaveLength(1);
-    expect(heroResponse.body.slides[0].headline).toBe('Board headline');
-    expect(heroResponse.body.slides[0].ctaLabel).toBe('Open now');
-    expect(heroResponse.body.slides[0].product.title).toBe('Hero Coat');
-    expect(heroResponse.body.slides[0].product.images[0]).toBe('/media/demo/hero-coat.jpg');
+    expect(heroResponse.body.slides[0].internalName).toBe('Spring Launch');
+    expect(heroResponse.body.slides[0].targetUrl).toBe('/shops');
+    expect(heroResponse.body.slides[0].imageUrl).toContain(
+      '/media/homepage-promotions/',
+    );
+    expect(heroResponse.body.slides[0].mobileImageUrl).toContain(
+      '/media/homepage-promotions/',
+    );
   });
 
   it('protects vendor product access from unauthenticated users', async () => {
@@ -361,7 +379,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('expired-sub-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -371,25 +391,27 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Expired Listing Tee', 'Should not appear publicly', 20.00, 5, 'tops')
       `);
 
-    await pool
-      .request()
-      .input('productId', product.recordset[0].id)
-      .query(`
+    await pool.request().input('productId', product.recordset[0].id).query(`
         INSERT INTO dbo.product_images (product_id, image_url, sort_order)
         VALUES (@productId, '/media/demo/expired-sub.jpg', 0)
       `);
 
     await pool.close();
 
-    const listResponse = await request(app.getHttpServer()).get('/products').expect(200);
-    expect(listResponse.body.find((entry: { id: string }) => entry.id === product.recordset[0].id)).toBeUndefined();
+    const listResponse = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
+    expect(
+      listResponse.body.find(
+        (entry: { id: string }) => entry.id === product.recordset[0].id,
+      ),
+    ).toBeUndefined();
 
     await request(app.getHttpServer())
       .get(`/products/${product.recordset[0].id}`)
@@ -401,16 +423,16 @@ describe('Marketplace API (e2e)', () => {
     const vendorPassword = 'listing123';
     const vendorHash = await bcrypt.hash(vendorPassword, 10);
 
-    const vendorUser = await pool
-      .request()
-      .input('passwordHash', vendorHash)
+    const vendorUser = await pool.request().input('passwordHash', vendorHash)
       .query<{ id: string }>(`
         INSERT INTO dbo.users (email, password_hash, role, is_active)
         OUTPUT INSERTED.id
         VALUES ('listing-vendor@example.com', @passwordHash, 'vendor', 1)
       `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -420,17 +442,13 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, department, category, color, size, is_listed)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Listing Tee', 'Visible listing control product', 42.00, 9, 'men', 'tops', 'black', 'l', 1)
       `);
 
-    await pool
-      .request()
-      .input('productId', product.recordset[0].id)
-      .query(`
+    await pool.request().input('productId', product.recordset[0].id).query(`
         INSERT INTO dbo.product_images (product_id, image_url, sort_order)
         VALUES (@productId, '/media/demo/listing-tee.jpg', 0)
       `);
@@ -442,9 +460,13 @@ describe('Marketplace API (e2e)', () => {
       .send({ email: 'listing-vendor@example.com', password: vendorPassword })
       .expect(201);
 
-    const initiallyPublic = await request(app.getHttpServer()).get('/products').expect(200);
+    const initiallyPublic = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
     expect(
-      initiallyPublic.body.find((entry: { id: string }) => entry.id === product.recordset[0].id),
+      initiallyPublic.body.find(
+        (entry: { id: string }) => entry.id === product.recordset[0].id,
+      ),
     ).toBeDefined();
 
     const hiddenResponse = await request(app.getHttpServer())
@@ -455,14 +477,40 @@ describe('Marketplace API (e2e)', () => {
 
     expect(hiddenResponse.body.isListed).toBe(false);
 
-    const hiddenPublicList = await request(app.getHttpServer()).get('/products').expect(200);
+    const hiddenPublicList = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
     expect(
-      hiddenPublicList.body.find((entry: { id: string }) => entry.id === product.recordset[0].id),
+      hiddenPublicList.body.find(
+        (entry: { id: string }) => entry.id === product.recordset[0].id,
+      ),
     ).toBeUndefined();
 
-    await request(app.getHttpServer()).get(`/products/${product.recordset[0].id}`).expect(404);
+    await request(app.getHttpServer())
+      .get(`/products/${product.recordset[0].id}`)
+      .expect(404);
 
-    const vendorsResponse = await request(app.getHttpServer()).get('/products/vendors').expect(200);
+    const customerAuth = await registerVerifyAndLoginCustomer(
+      app,
+      'listing-customer@example.com',
+      'secret123',
+      { fullName: 'Listing Customer' },
+    );
+
+    await request(app.getHttpServer())
+      .post('/orders')
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
+      .send({
+        items: [{ productId: product.recordset[0].id, quantity: 1 }],
+      })
+      .expect(400);
+
+    const vendorsResponse = await request(app.getHttpServer())
+      .get('/products/vendors')
+      .expect(200);
     expect(vendorsResponse.body).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -480,7 +528,9 @@ describe('Marketplace API (e2e)', () => {
 
     expect(duplicateResponse.body.title).toBe('Listing Tee Copy');
     expect(duplicateResponse.body.isListed).toBe(false);
-    expect(duplicateResponse.body.images).toEqual(['/media/demo/listing-tee.jpg']);
+    expect(duplicateResponse.body.images).toEqual([
+      '/media/demo/listing-tee.jpg',
+    ]);
 
     const vendorProducts = await request(app.getHttpServer())
       .get('/products/vendor/me')
@@ -489,8 +539,14 @@ describe('Marketplace API (e2e)', () => {
 
     expect(vendorProducts.body.products).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: product.recordset[0].id, isListed: false }),
-        expect.objectContaining({ id: duplicateResponse.body.id, isListed: false }),
+        expect.objectContaining({
+          id: product.recordset[0].id,
+          isListed: false,
+        }),
+        expect.objectContaining({
+          id: duplicateResponse.body.id,
+          isListed: false,
+        }),
       ]),
     );
 
@@ -502,10 +558,16 @@ describe('Marketplace API (e2e)', () => {
 
     expect(relistedDuplicate.body.isListed).toBe(true);
 
-    const relistedPublicList = await request(app.getHttpServer()).get('/products').expect(200);
+    const relistedPublicList = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
     expect(
-      relistedPublicList.body.find((entry: { id: string }) => entry.id === duplicateResponse.body.id),
-    ).toEqual(expect.objectContaining({ title: 'Listing Tee Copy', isListed: true }));
+      relistedPublicList.body.find(
+        (entry: { id: string }) => entry.id === duplicateResponse.body.id,
+      ),
+    ).toEqual(
+      expect.objectContaining({ title: 'Listing Tee Copy', isListed: true }),
+    );
   });
 
   it('lets vendors bulk update stock for selected products and sends low-stock alerts when needed', async () => {
@@ -518,16 +580,16 @@ describe('Marketplace API (e2e)', () => {
     const vendorPassword = 'bulkstock123';
     const vendorHash = await bcrypt.hash(vendorPassword, 10);
 
-    const vendorUser = await pool
-      .request()
-      .input('passwordHash', vendorHash)
+    const vendorUser = await pool.request().input('passwordHash', vendorHash)
       .query<{ id: string }>(`
         INSERT INTO dbo.users (email, password_hash, role, is_active)
         OUTPUT INSERTED.id
         VALUES ('bulk-stock-vendor@example.com', @passwordHash, 'vendor', 1)
       `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, low_stock_threshold, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -537,8 +599,7 @@ describe('Marketplace API (e2e)', () => {
 
     const firstProduct = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, department, category, is_listed)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Bulk Stock Tee', 'Bulk stock test 1', 30.00, 10, 'men', 'tops', 1)
@@ -546,8 +607,7 @@ describe('Marketplace API (e2e)', () => {
 
     const secondProduct = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, department, category, is_listed)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Bulk Stock Hoodie', 'Bulk stock test 2', 65.00, 11, 'men', 'hoodies', 1)
@@ -557,14 +617,20 @@ describe('Marketplace API (e2e)', () => {
 
     const vendorLogin = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'bulk-stock-vendor@example.com', password: vendorPassword })
+      .send({
+        email: 'bulk-stock-vendor@example.com',
+        password: vendorPassword,
+      })
       .expect(201);
 
     const bulkResponse = await request(app.getHttpServer())
       .patch('/products/bulk-stock')
       .set('Authorization', `Bearer ${vendorLogin.body.accessToken}`)
       .send({
-        productIds: [firstProduct.recordset[0].id, secondProduct.recordset[0].id],
+        productIds: [
+          firstProduct.recordset[0].id,
+          secondProduct.recordset[0].id,
+        ],
         stock: 3,
       })
       .expect(200);
@@ -581,7 +647,10 @@ describe('Marketplace API (e2e)', () => {
     expect(vendorProducts.body.products).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: firstProduct.recordset[0].id, stock: 3 }),
-        expect.objectContaining({ id: secondProduct.recordset[0].id, stock: 3 }),
+        expect.objectContaining({
+          id: secondProduct.recordset[0].id,
+          stock: 3,
+        }),
       ]),
     );
 
@@ -597,7 +666,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('order-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -607,8 +678,7 @@ describe('Marketplace API (e2e)', () => {
 
     const productOne = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Order Tee', 'Order test tee', 30.00, 10, 'tops')
@@ -616,8 +686,7 @@ describe('Marketplace API (e2e)', () => {
 
     const productTwo = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Order Pants', 'Order test pants', 70.00, 7, 'pants')
@@ -633,14 +702,20 @@ describe('Marketplace API (e2e)', () => {
 
     const accountResponse = await request(app.getHttpServer())
       .get('/account/me')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
     const defaultAddressId = accountResponse.body.addresses[0].id;
 
     const savedCard = await request(app.getHttpServer())
       .post('/account/payment-methods')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         nickname: 'Primary Visa',
         cardholderName: 'Order Customer',
@@ -655,7 +730,10 @@ describe('Marketplace API (e2e)', () => {
 
     const orderResponse = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [
           { productId: productOne.recordset[0].id, quantity: 2 },
@@ -685,7 +763,10 @@ describe('Marketplace API (e2e)', () => {
 
     const ordersResponse = await request(app.getHttpServer())
       .get('/orders/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
     expect(ordersResponse.body).toHaveLength(1);
@@ -695,7 +776,10 @@ describe('Marketplace API (e2e)', () => {
     expect(ordersResponse.body[0].paymentCard.last4).toBe('1111');
 
     const verifyPool = await createPool(DB_NAME);
-    const stockCheck = await verifyPool.query<{ title: string; stock: number }>(`
+    const stockCheck = await verifyPool.query<{
+      title: string;
+      stock: number;
+    }>(`
       SELECT title, stock
       FROM dbo.products
       WHERE title IN ('Order Tee', 'Order Pants')
@@ -746,16 +830,16 @@ describe('Marketplace API (e2e)', () => {
     const vendorPassword = 'lowstock123';
     const vendorHash = await bcrypt.hash(vendorPassword, 10);
 
-    const vendorUser = await pool
-      .request()
-      .input('passwordHash', vendorHash)
+    const vendorUser = await pool.request().input('passwordHash', vendorHash)
       .query<{ id: string }>(`
         INSERT INTO dbo.users (email, password_hash, role, is_active)
         OUTPUT INSERTED.id
         VALUES ('low-stock-vendor@example.com', @passwordHash, 'vendor', 1)
       `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, low_stock_threshold, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -765,8 +849,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Low Stock Tee', 'Threshold test product', 25.00, 6, 'tops')
@@ -782,7 +865,10 @@ describe('Marketplace API (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 1 }],
       })
@@ -801,7 +887,10 @@ describe('Marketplace API (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 1 }],
       })
@@ -852,7 +941,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('postpurchase-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -862,8 +953,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Reorder Hoodie', 'Reorder and cancel workflow product', 45.00, 6, 'outerwear')
@@ -879,7 +969,10 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 2 }],
       })
@@ -889,33 +982,49 @@ describe('Marketplace API (e2e)', () => {
 
     const cancelRequest = await request(app.getHttpServer())
       .patch(`/orders/${createdOrder.body.id}/cancel-request`)
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({ note: 'Ordered the wrong size' })
       .expect(200);
 
     expect(cancelRequest.body.cancelRequest.status).toBe('requested');
-    expect(cancelRequest.body.cancelRequest.note).toBe('Ordered the wrong size');
+    expect(cancelRequest.body.cancelRequest.note).toBe(
+      'Ordered the wrong size',
+    );
 
     const orderHistory = await request(app.getHttpServer())
       .get('/orders/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
     expect(orderHistory.body[0].cancelRequest.status).toBe('requested');
 
     const reorderResponse = await request(app.getHttpServer())
       .post(`/orders/${createdOrder.body.id}/reorder`)
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(201);
 
     expect(reorderResponse.body.message).toBe('Items added back to cart');
     expect(reorderResponse.body.addedCount).toBe(2);
-    expect(reorderResponse.body.cart.items[0].product.title).toBe('Reorder Hoodie');
+    expect(reorderResponse.body.cart.items[0].product.title).toBe(
+      'Reorder Hoodie',
+    );
     expect(reorderResponse.body.cart.items[0].quantity).toBe(2);
 
     const cartResponse = await request(app.getHttpServer())
       .get('/cart/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
     expect(cartResponse.body.items).toHaveLength(1);
@@ -979,6 +1088,52 @@ describe('Marketplace API (e2e)', () => {
     expect(response.body.message).toContain('Unexpected field');
   });
 
+  it('requires vendor email verification before login and allows login after using the verification link', async () => {
+    const vendorPassword = 'verifyme123';
+
+    await request(app.getHttpServer())
+      .post('/auth/vendor/register')
+      .send({
+        email: 'verify-flow-vendor@example.com',
+        password: vendorPassword,
+        shopName: 'Verify Flow Shop',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'verify-flow-vendor@example.com',
+        password: vendorPassword,
+      })
+      .expect(401);
+
+    const pool = await createPool(DB_NAME);
+    const tokenLookup = await pool.request().query<{ token: string }>(`
+      SELECT TOP 1 ev.token
+      FROM dbo.email_verifications ev
+      INNER JOIN dbo.users u ON u.id = ev.user_id
+      WHERE u.email = 'verify-flow-vendor@example.com'
+      ORDER BY ev.created_at DESC
+    `);
+    await pool.close();
+
+    const verifyResponse = await request(app.getHttpServer())
+      .post('/auth/vendor/verify')
+      .send({ token: tokenLookup.recordset[0].token })
+      .expect(201);
+
+    expect(verifyResponse.body.message).toContain('Awaiting admin approval');
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'verify-flow-vendor@example.com',
+        password: vendorPassword,
+      })
+      .expect(201);
+  });
+
   it('rejects categories that do not belong to the selected department', async () => {
     const vendorPassword = 'departmentguard';
     await request(app.getHttpServer())
@@ -1006,7 +1161,10 @@ describe('Marketplace API (e2e)', () => {
 
     const vendorLogin = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'department-vendor@example.com', password: vendorPassword })
+      .send({
+        email: 'department-vendor@example.com',
+        password: vendorPassword,
+      })
       .expect(201);
 
     const imagePayload = Buffer.from(
@@ -1029,7 +1187,9 @@ describe('Marketplace API (e2e)', () => {
       })
       .expect(400);
 
-    expect(response.body.message).toContain('not available under the men gender');
+    expect(response.body.message).toContain(
+      'not available under the men gender',
+    );
   });
 
   it('normalizes common color and size values when vendors create products', async () => {
@@ -1064,7 +1224,10 @@ describe('Marketplace API (e2e)', () => {
 
     const vendorLogin = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'normalized-vendor@example.com', password: vendorPassword })
+      .send({
+        email: 'normalized-vendor@example.com',
+        password: vendorPassword,
+      })
       .expect(201);
 
     const imagePayload = Buffer.from(
@@ -1111,7 +1274,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('admin-orders-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -1121,8 +1286,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Admin Order Tee', 'Admin order visibility tee', 50.00, 4, 'tops')
@@ -1137,7 +1301,10 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 2 }],
       })
@@ -1154,15 +1321,22 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(adminOrders.body).toHaveLength(1);
-    expect(adminOrders.body[0].customerEmail).toBe('admin-order-customer@example.com');
+    expect(adminOrders.body[0].customerEmail).toBe(
+      'admin-order-customer@example.com',
+    );
     expect(adminOrders.body[0].items).toHaveLength(1);
-    expect(adminOrders.body[0].items[0].vendor.shopName).toBe('Admin Visible Shop');
+    expect(adminOrders.body[0].items[0].vendor.shopName).toBe(
+      'Admin Visible Shop',
+    );
     expect(adminOrders.body[0].items[0].commission).toBe(10);
     expect(adminOrders.body[0].items[0].vendorEarnings).toBe(90);
 
     await request(app.getHttpServer())
       .get('/admin/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(403);
   });
 
@@ -1171,7 +1345,8 @@ describe('Marketplace API (e2e)', () => {
     const adminPassword = 'adminsecret';
     const adminHash = await bcrypt.hash(adminPassword, 10);
 
-    const adminUser = await pool.request().input('passwordHash', adminHash).query<{ id: string }>(`
+    const adminUser = await pool.request().input('passwordHash', adminHash)
+      .query<{ id: string }>(`
       INSERT INTO dbo.users (email, password_hash, role, is_active)
       OUTPUT INSERTED.id
       VALUES ('ops-admin@example.com', @passwordHash, 'admin', 1)
@@ -1183,7 +1358,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('ops-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -1193,8 +1370,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Ops Tee', 'Ops admin detail tee', 40.00, 9, 'tops')
@@ -1209,7 +1385,10 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 2 }],
       })
@@ -1227,13 +1406,19 @@ describe('Marketplace API (e2e)', () => {
 
     expect(overview.body.totals.totalUsers).toBeGreaterThanOrEqual(3);
     expect(overview.body.commerce.grossRevenue).toBe(80);
-    expect(overview.body.commerce.cashOnDeliveryOrders).toBeGreaterThanOrEqual(1);
+    expect(overview.body.commerce.cashOnDeliveryOrders).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(overview.body.reporting.averageOrderValue).toBe(80);
     expect(overview.body.reporting.revenueLast7Days).toBe(80);
     expect(overview.body.reporting.revenueLast30Days).toBe(80);
     expect(overview.body.reporting.newUsersLast7Days).toBeGreaterThanOrEqual(3);
-    expect(overview.body.reporting.newCustomersLast7Days).toBeGreaterThanOrEqual(1);
-    expect(overview.body.reporting.newVendorsLast7Days).toBeGreaterThanOrEqual(1);
+    expect(
+      overview.body.reporting.newCustomersLast7Days,
+    ).toBeGreaterThanOrEqual(1);
+    expect(overview.body.reporting.newVendorsLast7Days).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(overview.body.reporting.topShop.shopName).toBe('Ops Vendor');
     expect(overview.body.reporting.topShop.orderCount).toBe(1);
     expect(overview.body.reporting.topCategory.category).toBe('tops');
@@ -1246,7 +1431,9 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(vendorExport.body.filename).toBe('vendors-export.csv');
-    expect(vendorExport.body.csv).toContain('Shop name,Vendor email,Vendor active,Vendor verified,Login active,Created at');
+    expect(vendorExport.body.csv).toContain(
+      'Shop name,Vendor email,Vendor active,Vendor verified,Login active,Created at',
+    );
     expect(vendorExport.body.csv).toContain('Ops Vendor');
 
     const orderExport = await request(app.getHttpServer())
@@ -1255,7 +1442,9 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(orderExport.body.filename).toBe('orders-export.csv');
-    expect(orderExport.body.csv).toContain('Order ID,Customer email,Status,Payment method,Payment status,Total price,Created at');
+    expect(orderExport.body.csv).toContain(
+      'Order ID,Customer email,Status,Payment method,Payment status,Total price,Created at',
+    );
     expect(orderExport.body.csv).toContain(createdOrder.body.id);
 
     const reporting = await request(app.getHttpServer())
@@ -1297,8 +1486,12 @@ describe('Marketplace API (e2e)', () => {
 
     expect(grantedSubscription.body.subscription.planType).toBe('yearly');
     expect(grantedSubscription.body.subscription.status).toBe('active');
-    expect(grantedSubscription.body.subscriptionHistory[0].planType).toBe('yearly');
-    expect(grantedSubscription.body.subscriptionHistory[0].adminNote).toBe('Manual yearly grant');
+    expect(grantedSubscription.body.subscriptionHistory[0].planType).toBe(
+      'yearly',
+    );
+    expect(grantedSubscription.body.subscriptionHistory[0].adminNote).toBe(
+      'Manual yearly grant',
+    );
     expect(grantedSubscription.body.subscriptionHistory[0].adminEmail).toBe(
       'ops-admin@example.com',
     );
@@ -1314,7 +1507,9 @@ describe('Marketplace API (e2e)', () => {
 
     expect(cutSubscription.body.subscription.status).toBe('expired');
     expect(cutSubscription.body.subscriptionHistory[0].status).toBe('expired');
-    expect(cutSubscription.body.subscriptionHistory[0].adminNote).toBe('Contract ended');
+    expect(cutSubscription.body.subscriptionHistory[0].adminNote).toBe(
+      'Contract ended',
+    );
 
     const orderDetail = await request(app.getHttpServer())
       .get(`/admin/orders/${createdOrder.body.id}`)
@@ -1341,7 +1536,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('detail-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -1351,8 +1548,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Detail Tee', 'Detail tee', 22.00, 12, 'tops')
@@ -1366,11 +1562,16 @@ describe('Marketplace API (e2e)', () => {
       { phoneNumber: '+3551234567' },
     );
 
-    expect(customerAuth.registerResponse.body.message).toContain('Customer account created');
+    expect(customerAuth.registerResponse.body.message).toContain(
+      'Customer account created',
+    );
 
     await request(app.getHttpServer())
       .post('/cart/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 3 }],
       })
@@ -1378,14 +1579,19 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 2 }],
         specialRequest: 'Please gift wrap this order',
       })
       .expect(201);
 
-    expect(createdOrder.body.specialRequest).toBe('Please gift wrap this order');
+    expect(createdOrder.body.specialRequest).toBe(
+      'Please gift wrap this order',
+    );
 
     const adminLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -1394,7 +1600,10 @@ describe('Marketplace API (e2e)', () => {
 
     const customerUser = await request(app.getHttpServer())
       .get('/auth/me')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
     const userDetail = await request(app.getHttpServer())
@@ -1410,7 +1619,10 @@ describe('Marketplace API (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/cart/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 1 }],
       })
@@ -1422,7 +1634,9 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(refreshedUserDetail.body.customer.cart.itemCount).toBe(1);
-    expect(refreshedUserDetail.body.customer.cart.items[0].title).toBe('Detail Tee');
+    expect(refreshedUserDetail.body.customer.cart.items[0].title).toBe(
+      'Detail Tee',
+    );
   });
 
   it('lets customers manage their account profile, addresses, cards, and password', async () => {
@@ -1436,7 +1650,9 @@ describe('Marketplace API (e2e)', () => {
       },
     );
 
-    expect(customerAuth.registerResponse.body.message).toContain('Customer account created');
+    expect(customerAuth.registerResponse.body.message).toContain(
+      'Customer account created',
+    );
 
     const token = customerAuth.loginResponse.body.accessToken as string;
 
@@ -1590,13 +1806,19 @@ describe('Marketplace API (e2e)', () => {
       })
       .expect(200);
 
-    expect(updatedVendorSettings.body.vendor.shopName).toBe('Updated Settings Shop');
-    expect(updatedVendorSettings.body.vendor.supportEmail).toBe('shop-support@example.com');
+    expect(updatedVendorSettings.body.vendor.shopName).toBe(
+      'Updated Settings Shop',
+    );
+    expect(updatedVendorSettings.body.vendor.supportEmail).toBe(
+      'shop-support@example.com',
+    );
     expect(updatedVendorSettings.body.vendor.supportPhone).toBe('+355123000');
     expect(updatedVendorSettings.body.vendor.shopDescription).toBe(
       'Custom tailoring and shipping support.',
     );
-    expect(updatedVendorSettings.body.vendor.logoUrl).toBe('https://cdn.example.com/logo.png');
+    expect(updatedVendorSettings.body.vendor.logoUrl).toBe(
+      'https://cdn.example.com/logo.png',
+    );
     expect(updatedVendorSettings.body.vendor.bannerUrl).toBe(
       'https://cdn.example.com/banner.jpg',
     );
@@ -1606,12 +1828,16 @@ describe('Marketplace API (e2e)', () => {
     expect(updatedVendorSettings.body.vendor.returnPolicy).toBe(
       'Returns accepted within 14 days for unworn items.',
     );
-    expect(updatedVendorSettings.body.vendor.businessHours).toBe('Mon-Fri 09:00-18:00');
+    expect(updatedVendorSettings.body.vendor.businessHours).toBe(
+      'Mon-Fri 09:00-18:00',
+    );
     expect(updatedVendorSettings.body.vendor.shippingNotes).toBe(
       'Orders dispatch within 2 business days.',
     );
     expect(updatedVendorSettings.body.vendor.lowStockThreshold).toBe(8);
-    expect(updatedVendorSettings.body.vendor.subscription.status).toBe('expired');
+    expect(updatedVendorSettings.body.vendor.subscription.status).toBe(
+      'expired',
+    );
 
     const imagePayload = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm1cAAAAASUVORK5CYII=',
@@ -1627,7 +1853,10 @@ describe('Marketplace API (e2e)', () => {
       .field('shopDescription', 'Custom tailoring and shipping support.')
       .field('bannerUrl', 'https://cdn.example.com/banner.jpg')
       .field('businessAddress', 'Main Boulevard 12, Tirane, Albania')
-      .field('returnPolicy', 'Returns accepted within 14 days for unworn items.')
+      .field(
+        'returnPolicy',
+        'Returns accepted within 14 days for unworn items.',
+      )
       .field('businessHours', 'Mon-Fri 09:00-18:00')
       .field('shippingNotes', 'Orders dispatch within 2 business days.')
       .field('lowStockThreshold', '8')
@@ -1647,9 +1876,13 @@ describe('Marketplace API (e2e)', () => {
       .send({ planType: 'monthly' })
       .expect(201);
 
-    expect(monthlySubscription.body.vendor.subscription.planType).toBe('monthly');
+    expect(monthlySubscription.body.vendor.subscription.planType).toBe(
+      'monthly',
+    );
     expect(monthlySubscription.body.vendor.subscription.status).toBe('active');
-    expect(monthlySubscription.body.vendor.subscriptionHistory.length).toBeGreaterThan(0);
+    expect(
+      monthlySubscription.body.vendor.subscriptionHistory.length,
+    ).toBeGreaterThan(0);
 
     await request(app.getHttpServer())
       .post('/account/vendor-subscription')
@@ -1680,8 +1913,12 @@ describe('Marketplace API (e2e)', () => {
       .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
       .expect(200);
 
-    expect(initialPlatformSettings.body.email.smtpPasswordConfigured).toBe(false);
-    expect(initialPlatformSettings.body.email.adminVendorApprovalEmailsEnabled).toBe(true);
+    expect(initialPlatformSettings.body.email.smtpPasswordConfigured).toBe(
+      false,
+    );
+    expect(
+      initialPlatformSettings.body.email.adminVendorApprovalEmailsEnabled,
+    ).toBe(true);
     expect(initialPlatformSettings.body.activityLog).toEqual([]);
 
     const testEmailResponse = await request(app.getHttpServer())
@@ -1709,12 +1946,20 @@ describe('Marketplace API (e2e)', () => {
       })
       .expect(200);
 
-    expect(updatedPlatformSettings.body.email.smtpHost).toBe('sandbox.smtp.mailtrap.io');
+    expect(updatedPlatformSettings.body.email.smtpHost).toBe(
+      'sandbox.smtp.mailtrap.io',
+    );
     expect(updatedPlatformSettings.body.email.smtpPort).toBe(2525);
     expect(updatedPlatformSettings.body.email.smtpUser).toBe('mailtrap-user');
-    expect(updatedPlatformSettings.body.email.smtpPasswordConfigured).toBe(true);
-    expect(updatedPlatformSettings.body.email.adminVendorApprovalEmailsEnabled).toBe(true);
-    expect(updatedPlatformSettings.body.email.passwordResetEmailsEnabled).toBe(false);
+    expect(updatedPlatformSettings.body.email.smtpPasswordConfigured).toBe(
+      true,
+    );
+    expect(
+      updatedPlatformSettings.body.email.adminVendorApprovalEmailsEnabled,
+    ).toBe(true);
+    expect(updatedPlatformSettings.body.email.passwordResetEmailsEnabled).toBe(
+      false,
+    );
     expect(updatedPlatformSettings.body.activityLog).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1754,7 +1999,9 @@ describe('Marketplace API (e2e)', () => {
     expect(registerResponse.body.message).toContain('Verify your email');
 
     const verificationPool = await createPool(DB_NAME);
-    const tokenLookup = await verificationPool.request().query<{ token: string }>(`
+    const tokenLookup = await verificationPool.request().query<{
+      token: string;
+    }>(`
       SELECT TOP 1 ev.token
       FROM dbo.email_verifications ev
       INNER JOIN dbo.users u ON u.id = ev.user_id
@@ -1780,9 +2027,15 @@ describe('Marketplace API (e2e)', () => {
 
     expect(overviewAfterVerify.body.totals.pendingVendorApprovals).toBe(1);
     expect(overviewAfterVerify.body.totals.unreadNotifications).toBe(1);
-    expect(overviewAfterVerify.body.notifications[0].type).toBe('vendor_pending_approval');
-    expect(overviewAfterVerify.body.notifications[0].title).toBe('Vendor waiting for approval');
-    expect(overviewAfterVerify.body.notifications[0].body).toContain('Notify Shop');
+    expect(overviewAfterVerify.body.notifications[0].type).toBe(
+      'vendor_pending_approval',
+    );
+    expect(overviewAfterVerify.body.notifications[0].title).toBe(
+      'Vendor waiting for approval',
+    );
+    expect(overviewAfterVerify.body.notifications[0].body).toContain(
+      'Notify Shop',
+    );
 
     const vendorId = overviewAfterVerify.body.pendingVendors[0].id;
 
@@ -1815,7 +2068,9 @@ describe('Marketplace API (e2e)', () => {
     const adminPassword = 'adminsecret';
     const adminHash = await bcrypt.hash(adminPassword, 10);
 
-    const admin = await pool.request().input('passwordHash', adminHash).query<{ id: string }>(`
+    const admin = await pool.request().input('passwordHash', adminHash).query<{
+      id: string;
+    }>(`
       INSERT INTO dbo.users (email, password_hash, role, is_active)
       OUTPUT INSERTED.id
       VALUES ('manual-notify-admin@example.com', @passwordHash, 'admin', 1)
@@ -1827,7 +2082,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('manual-notify-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (user_id, shop_name, is_active, is_verified)
       OUTPUT INSERTED.id
       VALUES (@userId, 'Manual Notify Shop', 0, 1)
@@ -1836,8 +2093,7 @@ describe('Marketplace API (e2e)', () => {
     await pool
       .request()
       .input('adminUserId', admin.recordset[0].id)
-      .input('vendorId', vendor.recordset[0].id)
-      .query(`
+      .input('vendorId', vendor.recordset[0].id).query(`
         INSERT INTO dbo.admin_notifications (admin_user_id, vendor_id, notification_type, title, body, action_url)
         VALUES (@adminUserId, @vendorId, 'vendor_pending_approval', 'Vendor waiting for approval', 'Manual notification body', '/admin/vendors/${vendor.recordset[0].id}')
       `);
@@ -1845,7 +2101,10 @@ describe('Marketplace API (e2e)', () => {
 
     const adminLogin = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'manual-notify-admin@example.com', password: adminPassword })
+      .send({
+        email: 'manual-notify-admin@example.com',
+        password: adminPassword,
+      })
       .expect(201);
 
     const beforeRead = await request(app.getHttpServer())
@@ -1869,6 +2128,77 @@ describe('Marketplace API (e2e)', () => {
     expect(afterRead.body.notifications[0].readAt).toBeTruthy();
   });
 
+  it('lets admins resend a verification email for an unverified vendor', async () => {
+    const pool = await createPool(DB_NAME);
+    const adminPassword = 'adminsecret';
+    const adminHash = await bcrypt.hash(adminPassword, 10);
+
+    await pool.request().input('passwordHash', adminHash).query(`
+      INSERT INTO dbo.users (email, password_hash, role, is_active)
+      VALUES ('verify-admin@example.com', @passwordHash, 'admin', 1)
+    `);
+
+    const vendorUser = await pool.request().query<{ id: string }>(`
+      INSERT INTO dbo.users (email, password_hash, role, is_active, email_verified_at)
+      OUTPUT INSERTED.id
+      VALUES ('needs-verify@example.com', 'hash', 'vendor', 1, NULL)
+    `);
+
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+      INSERT INTO dbo.vendors (user_id, shop_name, is_active, is_verified)
+      OUTPUT INSERTED.id
+      VALUES (@userId, 'Needs Verify Shop', 0, 0)
+    `);
+    await pool.close();
+
+    const adminLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'verify-admin@example.com', password: adminPassword })
+      .expect(201);
+
+    const resendResponse = await request(app.getHttpServer())
+      .post(`/admin/vendors/${vendor.recordset[0].id}/verification-resend`)
+      .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
+      .expect(201);
+
+    expect(resendResponse.body.message).toBe('Verification email sent.');
+
+    const verificationPool = await createPool(DB_NAME);
+    const verificationRows = await verificationPool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{
+      token: string;
+      used_at: Date | null;
+    }>(`
+        SELECT token, used_at
+        FROM dbo.email_verifications
+        WHERE user_id = @userId
+        ORDER BY created_at DESC
+      `);
+
+    const activityRows = await verificationPool.query<{
+      action_type: string;
+      entity_label: string;
+    }>(`
+      SELECT TOP 1 action_type, entity_label
+      FROM dbo.admin_activity_logs
+      ORDER BY created_at DESC
+    `);
+    await verificationPool.close();
+
+    expect(verificationRows.recordset).toHaveLength(1);
+    expect(verificationRows.recordset[0].token).toBeTruthy();
+    expect(verificationRows.recordset[0].used_at).toBeNull();
+    expect(activityRows.recordset[0]).toEqual(
+      expect.objectContaining({
+        action_type: 'vendor_verification_resent',
+        entity_label: 'Needs Verify Shop',
+      }),
+    );
+  });
+
   it('returns vendor payout summaries including bank details for admin review', async () => {
     const pool = await createPool(DB_NAME);
     const adminPassword = 'adminsecret';
@@ -1885,7 +2215,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES ('payout-vendor@example.com', 'hash', 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, bank_account_name, bank_name, bank_iban,
         subscription_plan, subscription_status, subscription_started_at, subscription_ends_at,
@@ -1895,7 +2227,9 @@ describe('Marketplace API (e2e)', () => {
       VALUES (@userId, 'Payout Shop', 'Payout Vendor', 'Raiffeisen', 'AL47212110090000000235698741', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
     `);
 
-    const product = await pool.request().input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
+    const product = await pool
+      .request()
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
       OUTPUT INSERTED.id
       VALUES (@vendorId, 'Payout Tee', 'Payout product', 50.00, 10, 'tops')
@@ -1910,7 +2244,10 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 2 }],
       })
@@ -1985,13 +2322,16 @@ describe('Marketplace API (e2e)', () => {
     const vendorPassword = 'vendorsecret';
     const vendorHash = await bcrypt.hash(vendorPassword, 10);
 
-    const vendorUser = await pool.request().input('passwordHash', vendorHash).query<{ id: string }>(`
+    const vendorUser = await pool.request().input('passwordHash', vendorHash)
+      .query<{ id: string }>(`
       INSERT INTO dbo.users (email, password_hash, role, is_active)
       OUTPUT INSERTED.id
       VALUES ('workflow-vendor@example.com', @passwordHash, 'vendor', 1)
     `);
 
-    const vendor = await pool.request().input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
+    const vendor = await pool
+      .request()
+      .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
       )
@@ -2001,8 +2341,7 @@ describe('Marketplace API (e2e)', () => {
 
     const product = await pool
       .request()
-      .input('vendorId', vendor.recordset[0].id)
-      .query<{ id: string }>(`
+      .input('vendorId', vendor.recordset[0].id).query<{ id: string }>(`
         INSERT INTO dbo.products (vendor_id, title, description, price, stock, category)
         OUTPUT INSERTED.id
         VALUES (@vendorId, 'Workflow Jacket', 'Vendor workflow jacket', 80.00, 5, 'outerwear')
@@ -2017,7 +2356,10 @@ describe('Marketplace API (e2e)', () => {
 
     const createdOrder = await request(app.getHttpServer())
       .post('/orders')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .send({
         items: [{ productId: product.recordset[0].id, quantity: 1 }],
       })
@@ -2037,7 +2379,11 @@ describe('Marketplace API (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/vendor/orders/${createdOrder.body.id}/status`)
       .set('Authorization', `Bearer ${vendorLogin.body.accessToken}`)
-      .send({ status: 'shipped', shippingCarrier: 'DHL', trackingNumber: 'TRACK-1234' })
+      .send({
+        status: 'shipped',
+        shippingCarrier: 'DHL',
+        trackingNumber: 'TRACK-1234',
+      })
       .expect(200);
 
     await request(app.getHttpServer())
@@ -2053,14 +2399,21 @@ describe('Marketplace API (e2e)', () => {
 
     expect(vendorOrders.body[0].status).toBe('delivered');
     expect(vendorOrders.body[0].items[0].status).toBe('delivered');
-    expect(vendorOrders.body[0].items[0].shipment.trackingNumber).toBe('TRACK-1234');
+    expect(vendorOrders.body[0].items[0].shipment.trackingNumber).toBe(
+      'TRACK-1234',
+    );
 
     const customerOrders = await request(app.getHttpServer())
       .get('/orders/my')
-      .set('Authorization', `Bearer ${customerAuth.loginResponse.body.accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
+      )
       .expect(200);
 
-    expect(customerOrders.body[0].items[0].shipment.shippingCarrier).toBe('DHL');
+    expect(customerOrders.body[0].items[0].shipment.shippingCarrier).toBe(
+      'DHL',
+    );
     expect(customerOrders.body[0].fulfillment.placedAt).toBeTruthy();
     expect(customerOrders.body[0].fulfillment.confirmedAt).toBeTruthy();
     expect(customerOrders.body[0].fulfillment.shippedAt).toBeTruthy();

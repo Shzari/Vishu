@@ -2,36 +2,159 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useAuth, useCart } from "@/components/providers";
+import { useCart } from "@/components/providers";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
-  PRODUCT_DEPARTMENTS,
   formatCatalogLabel,
   getCatalogCategoriesForDepartment,
   getCatalogGenderLabel,
 } from "@/lib/catalog";
 import { ProductMedia } from "@/components/product-media";
-import type { HomepageHeroConfig, Product, PublicVendorSummary } from "@/lib/types";
+import type {
+  HomepageHeroConfig,
+  Product,
+  ProductSearchResponse,
+  PublicVendorSummary,
+} from "@/lib/types";
+
+const STOREFRONT_NAV_GROUPS = [
+  {
+    id: "men",
+    label: "MEN",
+    department: "men",
+    available: true,
+    note: "Refined daily staples, tailoring, and outerwear.",
+    subcategories: [
+      "tshirts",
+      "shirts",
+      "hoodies",
+      "jackets",
+      "jeans",
+      "pants",
+      "outerwear",
+      "sportswear",
+    ],
+  },
+  {
+    id: "women",
+    label: "WOMEN",
+    department: "women",
+    available: true,
+    note: "Dresses, elevated essentials, and seasonal layers.",
+    subcategories: [
+      "dresses",
+      "tops",
+      "jackets",
+      "shirts",
+      "jeans",
+      "skirts",
+      "leggings",
+      "accessories",
+    ],
+  },
+  {
+    id: "kids",
+    label: "KIDS",
+    available: false,
+    note: "Structured kidswear navigation is prepared for the next catalog expansion.",
+    subcategories: [
+      "tshirts",
+      "hoodies",
+      "jackets",
+      "sets",
+      "jeans",
+      "pants",
+      "schoolwear",
+      "sleepwear",
+    ],
+  },
+  {
+    id: "babies",
+    label: "BABIES",
+    available: false,
+    note: "Soft essentials, newborn sets, and nursery basics are coming into the catalog.",
+    subcategories: [
+      "bodysuits",
+      "rompers",
+      "sets",
+      "outerwear",
+      "sleepwear",
+      "blankets",
+      "accessories",
+      "gift sets",
+    ],
+  },
+] as const;
+
+type StorefrontNavGroup = (typeof STOREFRONT_NAV_GROUPS)[number];
+
+function applyCatalogFilters(
+  items: Product[],
+  filters: {
+    department: string;
+    category: string;
+    minPrice: string;
+    maxPrice: string;
+    color: string;
+    size: string;
+  },
+) {
+  return items.filter((product) => {
+    const matchesDepartment =
+      filters.department === "all" || product.department === filters.department;
+    const matchesCategory =
+      filters.category === "all" || product.category === filters.category;
+    const matchesMinPrice =
+      filters.minPrice.trim().length === 0 ||
+      product.price >= Number(filters.minPrice);
+    const matchesMaxPrice =
+      filters.maxPrice.trim().length === 0 ||
+      product.price <= Number(filters.maxPrice);
+    const matchesColor = filters.color === "all" || product.color === filters.color;
+    const matchesSize = filters.size === "all" || product.size === filters.size;
+
+    return (
+      matchesDepartment &&
+      matchesCategory &&
+      matchesMinPrice &&
+      matchesMaxPrice &&
+      matchesColor &&
+      matchesSize
+    );
+  });
+}
 
 export default function HomePage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [vendors, setVendors] = useState<PublicVendorSummary[]>([]);
-  const [homepageHero, setHomepageHero] = useState<HomepageHeroConfig>({ intervalSeconds: 6, slides: [] });
+  const [homepageHero, setHomepageHero] = useState<HomepageHeroConfig>({
+    autoRotate: true,
+    intervalSeconds: 6,
+    slides: [],
+  });
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
-  const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
-  const [selectedQuickViewImage, setSelectedQuickViewImage] = useState<string | undefined>();
+  const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(
+    null,
+  );
+  const [selectedQuickViewImage, setSelectedQuickViewImage] = useState<
+    string | undefined
+  >();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState<ProductSearchResponse | null>(
+    null,
+  );
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("all");
   const [category, setCategory] = useState("all");
-  const [hoveredDepartment, setHoveredDepartment] = useState<string | null>(null);
+  const [activeNavGroupId, setActiveNavGroupId] = useState<string>("men");
+  const [isNavMenuOpen, setIsNavMenuOpen] = useState(false);
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [color, setColor] = useState("all");
   const [size, setSize] = useState("all");
   const [filtersHydrated, setFiltersHydrated] = useState(false);
-  const { token, loading: authLoading } = useAuth();
   const { addItem } = useCart();
 
   useEffect(() => {
@@ -46,7 +169,11 @@ export default function HomePage() {
         setVendors(vendorData);
         setHomepageHero(heroData);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load products.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load products.",
+        );
       } finally {
         setLoading(false);
       }
@@ -100,7 +227,11 @@ export default function HomePage() {
     const currentQuery = window.location.search.replace(/^\?/, "");
 
     if (nextQuery !== currentQuery) {
-      window.history.replaceState({}, "", `/${nextQuery ? `?${nextQuery}` : ""}`);
+      window.history.replaceState(
+        {},
+        "",
+        `/${nextQuery ? `?${nextQuery}` : ""}`,
+      );
     }
   }, [
     category,
@@ -113,6 +244,62 @@ export default function HomePage() {
     size,
   ]);
 
+  useEffect(() => {
+    if (!filtersHydrated) {
+      return;
+    }
+
+    if (!search.trim()) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      setError(null);
+      return;
+    }
+
+    let active = true;
+
+    async function loadSearchResults() {
+      try {
+        setSearchLoading(true);
+        setError(null);
+        const params = new URLSearchParams({ query: search.trim(), limit: "24" });
+        if (department !== "all") {
+          params.set("department", department);
+        }
+        if (category !== "all") {
+          params.set("category", category);
+        }
+
+        const response = await apiRequest<ProductSearchResponse>(
+          `/products/search?${params.toString()}`,
+        );
+
+        if (active) {
+          setSearchResults(response);
+        }
+      } catch (searchError) {
+        if (active) {
+          setError(
+            searchError instanceof Error
+              ? searchError.message
+              : "Failed to search products.",
+          );
+          setSearchResults(null);
+        }
+      } finally {
+        if (active) {
+          setSearchLoading(false);
+        }
+      }
+    }
+
+    void loadSearchResults();
+
+    return () => {
+      active = false;
+    };
+  }, [category, department, filtersHydrated, search]);
+
   const categories = useMemo(
     () => ["all", ...getCatalogCategoriesForDepartment(department)],
     [department],
@@ -120,8 +307,10 @@ export default function HomePage() {
   const categoryScopedProducts = useMemo(
     () =>
       products.filter((product) => {
-        const matchesDepartment = department === "all" || product.department === department;
-        const matchesCategory = category === "all" || product.category === category;
+        const matchesDepartment =
+          department === "all" || product.department === department;
+        const matchesCategory =
+          category === "all" || product.category === category;
 
         return matchesDepartment && matchesCategory;
       }),
@@ -129,14 +318,22 @@ export default function HomePage() {
   );
   const availableColors = useMemo(
     () =>
-      [...new Set(categoryScopedProducts.map((product) => product.color).filter(Boolean))]
-        .map((entry) => String(entry)),
+      [
+        ...new Set(
+          categoryScopedProducts
+            .map((product) => product.color)
+            .filter(Boolean),
+        ),
+      ].map((entry) => String(entry)),
     [categoryScopedProducts],
   );
   const availableSizes = useMemo(
     () =>
-      [...new Set(categoryScopedProducts.map((product) => product.size).filter(Boolean))]
-        .map((entry) => String(entry)),
+      [
+        ...new Set(
+          categoryScopedProducts.map((product) => product.size).filter(Boolean),
+        ),
+      ].map((entry) => String(entry)),
     [categoryScopedProducts],
   );
 
@@ -158,34 +355,93 @@ export default function HomePage() {
     }
   }, [availableSizes, size]);
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
-      const matchesSearch =
-        search.trim().length === 0 ||
-        `${product.title} ${product.description} ${product.department} ${product.category}`
-          .toLowerCase()
-          .includes(search.toLowerCase());
-      const matchesDepartment = department === "all" || product.department === department;
-      const matchesCategory = category === "all" || product.category === category;
-      const matchesMinPrice = minPrice.trim().length === 0 || product.price >= Number(minPrice);
-      const matchesMaxPrice = maxPrice.trim().length === 0 || product.price <= Number(maxPrice);
-      const matchesColor = color === "all" || product.color === color;
-      const matchesSize = size === "all" || product.size === size;
+  const filteredProducts = useMemo(
+    () =>
+      applyCatalogFilters(products, {
+        department,
+        category,
+        minPrice,
+        maxPrice,
+        color,
+        size,
+      }),
+    [category, color, department, maxPrice, minPrice, products, size],
+  );
+  const visibleSearchSections = useMemo(
+    () =>
+      (searchResults?.sections ?? [])
+        .map((section) => ({
+          ...section,
+          products: applyCatalogFilters(section.products, {
+            department,
+            category,
+            minPrice,
+            maxPrice,
+            color,
+            size,
+          }),
+        }))
+        .filter((section) => section.products.length > 0),
+    [
+      category,
+      color,
+      department,
+      maxPrice,
+      minPrice,
+      searchResults,
+      size,
+    ],
+  );
+  const fallbackSearchProducts = useMemo(() => {
+    const visibleIds = new Set(
+      visibleSearchSections.flatMap((section) =>
+        section.products.map((product) => product.id),
+      ),
+    );
 
-      return (
-        matchesSearch &&
-        matchesDepartment &&
-        matchesCategory &&
-        matchesMinPrice &&
-        matchesMaxPrice &&
-        matchesColor &&
-        matchesSize
-      );
-    });
-  }, [category, color, department, maxPrice, minPrice, products, search, size]);
-  const hasFocusedBrowse = department !== "all" || category !== "all" || search.trim().length > 0;
+    return applyCatalogFilters(searchResults?.fallbackProducts ?? [], {
+      department,
+      category,
+      minPrice,
+      maxPrice,
+      color,
+      size,
+    }).filter((product) => !visibleIds.has(product.id));
+  }, [
+    category,
+    color,
+    department,
+    maxPrice,
+    minPrice,
+    searchResults,
+    size,
+    visibleSearchSections,
+  ]);
+  const displayProducts = useMemo(() => {
+    if (!search.trim()) {
+      return filteredProducts;
+    }
 
-  const inStockCount = filteredProducts.filter((product) => product.stock > 0).length;
+    const orderedMatches = visibleSearchSections.flatMap(
+      (section) => section.products,
+    );
+    return orderedMatches.length > 0 ? orderedMatches : fallbackSearchProducts;
+  }, [
+    fallbackSearchProducts,
+    filteredProducts,
+    search,
+    visibleSearchSections,
+  ]);
+  const searchSectionLabel = visibleSearchSections
+    .map((section) => section.title)
+    .join(" -> ");
+  const showingFallbackProducts =
+    search.trim().length > 0 &&
+    visibleSearchSections.length === 0 &&
+    fallbackSearchProducts.length > 0;
+  const hasFocusedBrowse =
+    department !== "all" || category !== "all" || search.trim().length > 0;
+
   const featuredVendors = useMemo(() => {
     const relevantVendors = vendors.filter((vendor) => {
       const matchesDepartment =
@@ -195,49 +451,34 @@ export default function HomePage() {
 
       return matchesDepartment && matchesCategory;
     });
-    const shuffled = [...(relevantVendors.length > 0 ? relevantVendors : vendors)];
+    const shuffled = [
+      ...(relevantVendors.length > 0 ? relevantVendors : vendors),
+    ];
 
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
       const randomIndex = Math.floor(Math.random() * (index + 1));
-      [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+      [shuffled[index], shuffled[randomIndex]] = [
+        shuffled[randomIndex],
+        shuffled[index],
+      ];
     }
 
     return shuffled.slice(0, 8);
-  }, [vendors]);
+  }, [category, department, vendors]);
   const activeHeroSlide = homepageHero.slides[activeHeroIndex] ?? null;
-  const storefrontDepartments = useMemo(
-    () => PRODUCT_DEPARTMENTS.filter((entry) => entry !== "unisex"),
-    [],
+  const activeNavGroup = useMemo<StorefrontNavGroup>(
+    () =>
+      STOREFRONT_NAV_GROUPS.find((entry) => entry.id === activeNavGroupId) ??
+      STOREFRONT_NAV_GROUPS[0],
+    [activeNavGroupId],
   );
-  const topRailDepartment =
-    hoveredDepartment ??
-    (department !== "all" && storefrontDepartments.includes(department as "men" | "women")
-      ? department
-      : storefrontDepartments[0]);
-  const topRailCategories = useMemo(
-    () => getCatalogCategoriesForDepartment(topRailDepartment),
-    [topRailDepartment],
+  const activeNavCategories = useMemo(
+    () =>
+      activeNavGroup.available && activeNavGroup.department
+        ? getCatalogCategoriesForDepartment(activeNavGroup.department)
+        : [...activeNavGroup.subcategories],
+    [activeNavGroup],
   );
-  const highlightedBrowseDepartment =
-    department !== "all" && storefrontDepartments.includes(department as "men" | "women")
-      ? department
-      : topRailDepartment;
-  const categoryHighlights = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    products.forEach((product) => {
-      if (product.department !== highlightedBrowseDepartment) {
-        return;
-      }
-
-      counts.set(product.category, (counts.get(product.category) ?? 0) + 1);
-    });
-
-    return [...counts.entries()]
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-      .slice(0, 6);
-  }, [highlightedBrowseDepartment, products]);
-
   useEffect(() => {
     if (!quickViewProduct) {
       return;
@@ -255,25 +496,64 @@ export default function HomePage() {
   }, [quickViewProduct]);
 
   useEffect(() => {
+    if (!quickViewProduct || typeof document === "undefined") {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [quickViewProduct]);
+
+  useEffect(() => {
     setActiveHeroIndex(0);
   }, [homepageHero.slides.length]);
 
   useEffect(() => {
-    if (homepageHero.slides.length <= 1) {
+    if (!homepageHero.autoRotate || homepageHero.slides.length <= 1) {
       return;
     }
 
     const intervalMs = Math.max(homepageHero.intervalSeconds, 3) * 1000;
     const timer = window.setInterval(() => {
-      setActiveHeroIndex((current) => (current + 1) % homepageHero.slides.length);
+      setActiveHeroIndex(
+        (current) => (current + 1) % homepageHero.slides.length,
+      );
     }, intervalMs);
 
     return () => window.clearInterval(timer);
-  }, [homepageHero.intervalSeconds, homepageHero.slides.length]);
+  }, [
+    homepageHero.autoRotate,
+    homepageHero.intervalSeconds,
+    homepageHero.slides.length,
+  ]);
 
-  function openQuickView(product: Product) {
-    setQuickViewProduct(product);
-    setSelectedQuickViewImage(product.images[0]);
+  useEffect(() => {
+    if (department === "men" || department === "women") {
+      setActiveNavGroupId(department);
+    }
+  }, [department]);
+
+  function previewNavGroup(groupId: string) {
+    setActiveNavGroupId(groupId);
+    setIsNavMenuOpen(true);
+  }
+
+  function closeNavGroupPreview() {
+    setIsNavMenuOpen(false);
+  }
+
+  function browseDepartmentCategory(
+    nextDepartment: string,
+    nextCategory: string,
+  ) {
+    setDepartment(nextDepartment);
+    setCategory(nextCategory);
+    setActiveNavGroupId(nextDepartment);
+    setIsNavMenuOpen(false);
   }
 
   function closeQuickView() {
@@ -282,22 +562,24 @@ export default function HomePage() {
   }
 
   function showPreviousHeroSlide() {
-    if (!homepageHero.slides.length) {
+    if (homepageHero.slides.length <= 1) {
       return;
     }
 
-    setActiveHeroIndex((current) =>
-      current === 0 ? homepageHero.slides.length - 1 : current - 1,
+    setActiveHeroIndex(
+      (current) =>
+        (current - 1 + homepageHero.slides.length) % homepageHero.slides.length,
     );
   }
 
   function showNextHeroSlide() {
-    if (!homepageHero.slides.length) {
+    if (homepageHero.slides.length <= 1) {
       return;
     }
 
     setActiveHeroIndex((current) => (current + 1) % homepageHero.slides.length);
   }
+
 
   function clearBrowseFilters() {
     setDepartment("all");
@@ -311,392 +593,402 @@ export default function HomePage() {
   return (
     <div className="storefront">
       <section className="storefront-top-layout">
-        <aside className="storefront-category-rail" onMouseLeave={() => setHoveredDepartment(null)}>
-          <div className="storefront-category-rail-head">
-            <div className="storefront-label">Categories</div>
-          </div>
-          <div className="storefront-department-tabs">
-            {storefrontDepartments.map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                className={topRailDepartment === entry ? "button" : "button-secondary"}
-                onMouseEnter={() => setHoveredDepartment(entry)}
-                onFocus={() => setHoveredDepartment(entry)}
-                onClick={() => {
-                  setHoveredDepartment(entry);
-                  setDepartment(entry);
-                  setCategory("all");
-                }}
-              >
-                {formatCatalogLabel(entry)}
-              </button>
-            ))}
-          </div>
-          <div className="storefront-category-list">
-            <button
-              type="button"
-              className={department === topRailDepartment && category === "all" ? "storefront-category-link active" : "storefront-category-link"}
-              onClick={() => {
-                setDepartment(topRailDepartment);
-                setCategory("all");
-              }}
-            >
-              <span>All {formatCatalogLabel(topRailDepartment)}</span>
-              <strong>›</strong>
-            </button>
-            {topRailCategories.map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                className={department === topRailDepartment && category === entry ? "storefront-category-link active" : "storefront-category-link"}
-                onClick={() => {
-                  setDepartment(topRailDepartment);
-                  setCategory(entry);
-                }}
-              >
-                <span>{formatCatalogLabel(entry)}</span>
-                <strong>›</strong>
-              </button>
-            ))}
-          </div>
-          <Link className="button-secondary storefront-category-jump" href="#posted-products">
-            Go to posted products
-          </Link>
-        </aside>
-
-      {activeHeroSlide ? (
-        <section className="hero-carousel-panel hero-carousel-panel-top">
-          <button
-            type="button"
-            className="hero-carousel-arrow hero-carousel-arrow-left"
-            onClick={showPreviousHeroSlide}
-            aria-label="Previous featured product"
+        <div
+          className="storefront-browse-stage"
+          onMouseLeave={closeNavGroupPreview}
+        >
+          <div
+            className="storefront-department-bar"
+            role="tablist"
+            aria-label="Browse categories"
           >
-            ‹
-          </button>
-          <div className="hero-carousel-card">
-            <div className="hero-carousel-copy">
-              <div className="storefront-label">Featured product board</div>
-              <h1 className="storefront-title">
-                {activeHeroSlide.headline || activeHeroSlide.product.title}
-              </h1>
-              <p className="storefront-copy">
-                {activeHeroSlide.subheading || activeHeroSlide.product.description}
-              </p>
-              <div className="hero-carousel-meta">
-                <span className="chip">{formatCatalogLabel(activeHeroSlide.product.category)}</span>
-                <span className="chip">{formatCatalogLabel(activeHeroSlide.product.department)}</span>
-                <strong>{formatCurrency(activeHeroSlide.product.price)}</strong>
-              </div>
-              <div className="storefront-actions">
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => openQuickView(activeHeroSlide.product)}
-                >
-                  {activeHeroSlide.ctaLabel || "View product"}
-                </button>
-                <Link className="button-secondary" href="#posted-products">
-                  View posted products
-                </Link>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="hero-carousel-media"
-              onClick={() => openQuickView(activeHeroSlide.product)}
-            >
-              <ProductMedia
-                image={assetUrl(activeHeroSlide.product.images[0])}
-                title={activeHeroSlide.product.title}
-              />
-            </button>
-          </div>
-          <button
-            type="button"
-            className="hero-carousel-arrow hero-carousel-arrow-right"
-            onClick={showNextHeroSlide}
-            aria-label="Next featured product"
-          >
-            ›
-          </button>
-          <div className="hero-carousel-dots">
-            {homepageHero.slides.map((slide, index) => (
+            {STOREFRONT_NAV_GROUPS.map((group) => (
               <button
-                key={slide.id}
+                key={group.id}
                 type="button"
-                className={index === activeHeroIndex ? "hero-carousel-dot active" : "hero-carousel-dot"}
-                onClick={() => setActiveHeroIndex(index)}
-                aria-label={`Show featured product ${index + 1}`}
-              />
-            ))}
-          </div>
-        </section>
-      ) : !authLoading && !token ? (
-        <section className="storefront-banner">
-          <div>
-            <div className="storefront-label">Everyday fashion marketplace</div>
-            <h1 className="storefront-title">Shop by gender, category, or favorite store.</h1>
-          </div>
-          <div className="storefront-actions">
-            <Link className="button" href="/register">
-              Create account
-            </Link>
-            <Link className="button-secondary" href="/shops">
-              Browse shops
-            </Link>
-          </div>
-        </section>
-      ) : null
-      }
-      </section>
-
-      {categoryHighlights.length > 0 && (
-        <section className="catalog-shortcuts-panel">
-          <div className="catalog-toolbar compact-toolbar">
-            <div>
-              <h2>Popular in {formatCatalogLabel(highlightedBrowseDepartment)}</h2>
-              <p>Start with the categories customers are most likely to browse first.</p>
-            </div>
-            <div className="catalog-meta">
-              <button
-                type="button"
-                className="table-link button-reset"
-                onClick={() => {
-                  setDepartment(highlightedBrowseDepartment);
-                  setCategory("all");
-                }}
-              >
-                View all {formatCatalogLabel(highlightedBrowseDepartment)}
-              </button>
-            </div>
-          </div>
-
-          <div className="catalog-shortcuts-grid">
-            {categoryHighlights.map(([entry, count]) => (
-              <button
-                key={entry}
-                type="button"
-                className={
-                  department === highlightedBrowseDepartment && category === entry
-                    ? "catalog-shortcut-card active"
-                    : "catalog-shortcut-card"
+                role="tab"
+                aria-selected={
+                  (group.id === "men" || group.id === "women") &&
+                  department === group.id &&
+                  category !== "all"
                 }
-                onClick={() => {
-                  setDepartment(highlightedBrowseDepartment);
-                  setCategory(entry);
-                }}
+                className={
+                  (group.id === "men" || group.id === "women") &&
+                  department === group.id &&
+                  category !== "all"
+                    ? "storefront-department-tab active"
+                    : "storefront-department-tab"
+                }
+                onMouseEnter={() => previewNavGroup(group.id)}
+                onFocus={() => previewNavGroup(group.id)}
+                onClick={() => previewNavGroup(group.id)}
               >
-                <strong>{formatCatalogLabel(entry)}</strong>
-                <span>{count} products</span>
+                <span>{formatCatalogLabel(group.label.toLowerCase())}</span>
               </button>
             ))}
           </div>
-        </section>
-      )}
-
-      <section id="posted-products" className="catalog-main">
-          <div className="catalog-toolbar compact-toolbar">
-            <div>
-              <h2>Posted products</h2>
-              <p>{filteredProducts.length} products in the current browse view</p>
-            </div>
-            <div className="catalog-meta">
-              <Link className="table-link" href="/shops">
-                Browse shops
-              </Link>
-            </div>
-          </div>
-
-          <div className="catalog-browse-summary">
-            <div className="chip-row">
-              {search.trim() ? <span className="chip">Search: {search.trim()}</span> : null}
-              {department !== "all" ? (
-                <span className="chip">{formatCatalogLabel(department)}</span>
-              ) : null}
-              {category !== "all" ? (
-                <span className="chip">{formatCatalogLabel(category)}</span>
-              ) : null}
-              {color !== "all" ? <span className="chip">Color: {formatCatalogLabel(color)}</span> : null}
-              {size !== "all" ? <span className="chip">Size: {size.toUpperCase()}</span> : null}
-            </div>
-            {(hasFocusedBrowse || minPrice || maxPrice || color !== "all" || size !== "all") && (
-              <button type="button" className="button-secondary" onClick={clearBrowseFilters}>
-                Clear browse filters
-              </button>
-            )}
-          </div>
-
-          {(department !== "all" || category !== "all") && (
-            <div className="catalog-inline-filters">
-              <label className="field">
-                <span>Min price</span>
-                <input
-                  value={minPrice}
-                  onChange={(event) => setMinPrice(event.target.value)}
-                  placeholder="Min"
-                  inputMode="decimal"
-                />
-              </label>
-              <label className="field">
-                <span>Max price</span>
-                <input
-                  value={maxPrice}
-                  onChange={(event) => setMaxPrice(event.target.value)}
-                  placeholder="Max"
-                  inputMode="decimal"
-                />
-              </label>
-              <label className="field">
-                <span>Color</span>
-                <select value={color} onChange={(event) => setColor(event.target.value)}>
-                  <option value="all">All colors</option>
-                  {availableColors.map((entry) => (
-                    <option key={entry} value={entry}>
-                      {formatCatalogLabel(entry)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Size</span>
-                <select value={size} onChange={(event) => setSize(event.target.value)}>
-                  <option value="all">All sizes</option>
-                  {availableSizes.map((entry) => (
-                    <option key={entry} value={entry}>
-                      {entry.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
-
-          {loading && <div className="message">Loading products...</div>}
-          {error && <div className="message error">{error}</div>}
-          {!loading && !error && filteredProducts.length === 0 && (
-            <div className="empty">No products match your current search.</div>
-          )}
-
-          <div className="catalog-grid">
-            {filteredProducts.map((product) => (
-              <article key={product.id} className="product-card">
-                <button
-                  type="button"
-                  className="product-thumb product-thumb-button"
-                  onClick={() => openQuickView(product)}
-                >
-                  <ProductMedia image={assetUrl(product.images[0])} title={product.title} />
-                </button>
-                <div className="product-card-body">
-                  <div className="product-head-row">
-                    <div>
-                      <div className="product-kicker">
-                        {formatCatalogLabel(product.department)} / {formatCatalogLabel(product.category)}
-                      </div>
-                      <button
-                        type="button"
-                        className="product-title-link product-title-button"
-                        onClick={() => openQuickView(product)}
-                      >
-                        {product.title}
-                      </button>
-                    </div>
-                    <div className="product-price-row">
-                      <span className="price">{formatCurrency(product.price)}</span>
-                    </div>
-                  </div>
-                  <p className="product-summary">
-                    {product.description.slice(0, 82)}
-                    {product.description.length > 82 ? "..." : ""}
-                  </p>
-                  {product.vendor && (
-                    <Link className="product-vendor-link" href={`/shops/${product.vendor.id}`}>
-                      {product.vendor.shopName}
-                    </Link>
-                  )}
-                  <div className="product-actions">
-                    <button
-                      type="button"
-                      className="button-ghost product-action-link"
-                      onClick={() => openQuickView(product)}
-                    >
-                      Details
-                    </button>
-                    <button
-                      type="button"
-                      className="button product-action-button"
-                      onClick={() =>
-                        addItem({
-                          productId: product.id,
-                          title: product.title,
-                          price: product.price,
-                          image: product.images[0],
-                          quantity: 1,
-                          stock: product.stock,
-                        })
-                      }
-                      disabled={product.stock === 0}
-                    >
-                      {product.stock === 0 ? "Sold Out" : "Add to Cart"}
-                    </button>
-                  </div>
+          <div
+            className={
+              isNavMenuOpen
+                ? "storefront-submenu-panel is-open"
+                : "storefront-submenu-panel"
+            }
+            aria-hidden={!isNavMenuOpen}
+          >
+            <div
+              className="storefront-submenu-list"
+              role="tabpanel"
+              aria-label={`${activeNavGroup.label} categories`}
+            >
+              {activeNavGroup.available && activeNavGroup.department ? null : (
+                <div className="storefront-submenu-note">
+                  Kids and babies categories are prepared for the next catalog
+                  expansion.
                 </div>
-              </article>
-            ))}
-          </div>
+              )}
+              {activeNavCategories.map((entry) => {
+                const canBrowse =
+                  activeNavGroup.available &&
+                  Boolean(activeNavGroup.department);
+                const isActive =
+                  canBrowse &&
+                  department === activeNavGroup.department &&
+                  category === entry;
 
-          <section className="vendors-strip-panel storefront-shops-section">
-            <div className="vendors-strip-head">
-              <div>
-                <h2>Shops</h2>
-                {(department !== "all" || category !== "all") && (
-                  <p className="muted">
-                    {category !== "all"
-                      ? `Shops matching ${formatCatalogLabel(category)}`
-                      : `Shops matching ${formatCatalogLabel(department)}`}
-                  </p>
-                )}
-              </div>
-              <Link
-                className="table-link"
-                href={`/shops${
-                  department !== "all" || category !== "all"
-                    ? `?${new URLSearchParams({
-                        ...(department !== "all" ? { department } : {}),
-                        ...(category !== "all" ? { category } : {}),
-                      }).toString()}`
-                    : ""
-                }`}
-              >
-                See all
-              </Link>
+                return (
+                  <button
+                    key={`${activeNavGroup.id}-${entry}`}
+                    type="button"
+                    className={
+                      isActive
+                        ? "storefront-submenu-link active"
+                        : "storefront-submenu-link"
+                    }
+                    onClick={() =>
+                      canBrowse && activeNavGroup.department
+                        ? browseDepartmentCategory(
+                            activeNavGroup.department,
+                            entry,
+                          )
+                        : undefined
+                    }
+                    disabled={!canBrowse}
+                  >
+                    <span>{formatCatalogLabel(entry)}</span>
+                    <strong>&gt;</strong>
+                  </button>
+                );
+              })}
             </div>
-            {loading && <div className="message">Loading shops...</div>}
-            {!loading && !error && featuredVendors.length === 0 && <div className="empty">No public shops yet.</div>}
-            <div className="vendors-strip-grid">
-              {featuredVendors.map((vendor) => (
-                <Link key={vendor.id} href={`/shops/${vendor.id}`} className="vendor-public-card">
-                  <div className="vendor-public-logo">
-                    {vendor.logoUrl ? (
-                      <img src={assetUrl(vendor.logoUrl)} alt={vendor.shopName} />
-                    ) : (
-                      <span>{vendor.shopName.slice(0, 1)}</span>
-                    )}
-                  </div>
-                  <strong>{vendor.shopName}</strong>
-                  <span>{vendor.productCount} products</span>
-                </Link>
+          </div>
+        </div>
+
+        <section className="storefront-hero-stage storefront-promotion-stage">
+          {homepageHero.slides.length > 1 ? (
+            <button
+              type="button"
+              className="hero-carousel-arrow hero-carousel-arrow-left"
+              onClick={showPreviousHeroSlide}
+              aria-label="Show previous promotion"
+            >
+              ‹
+            </button>
+          ) : null}
+
+          {activeHeroSlide ? (
+            <a
+              className="storefront-promotion-link"
+              href={activeHeroSlide.targetUrl || "/#posted-products"}
+            >
+              <div className="storefront-promotion-frame">
+                <picture className="storefront-promotion-picture">
+                  {activeHeroSlide.mobileImageUrl ? (
+                    <source
+                      media="(max-width: 640px)"
+                      srcSet={assetUrl(activeHeroSlide.mobileImageUrl)}
+                    />
+                  ) : null}
+                  <img
+                    src={
+                      activeHeroSlide.imageUrl
+                        ? assetUrl(activeHeroSlide.imageUrl)
+                        : ""
+                    }
+                    alt={activeHeroSlide.internalName || "Homepage promotion"}
+                  />
+                </picture>
+              </div>
+            </a>
+          ) : (
+            <div className="storefront-hero-placeholder storefront-promotion-placeholder">
+              <span>Vishu.shop</span>
+              <strong>Promotion space ready</strong>
+              <p>
+                Upload homepage banners from the admin Promotions section to
+                launch campaigns here.
+              </p>
+            </div>
+          )}
+
+          {homepageHero.slides.length > 1 ? (
+            <button
+              type="button"
+              className="hero-carousel-arrow hero-carousel-arrow-right"
+              onClick={showNextHeroSlide}
+              aria-label="Show next promotion"
+            >
+              ›
+            </button>
+          ) : null}
+
+          {homepageHero.slides.length > 1 ? (
+            <div className="storefront-hero-dots storefront-promotion-dots">
+              {homepageHero.slides.map((slide, index) => (
+                <button
+                  key={slide.id}
+                  type="button"
+                  className={
+                    index === activeHeroIndex
+                      ? "storefront-hero-dot active"
+                      : "storefront-hero-dot"
+                  }
+                  onClick={() => setActiveHeroIndex(index)}
+                  aria-label={`Show promotion ${index + 1}`}
+                />
               ))}
             </div>
-          </section>
+          ) : null}
+        </section>
+
+      </section>
+
+      <section id="posted-products" className="catalog-main">
+        <div className="catalog-browse-summary">
+          <div className="chip-row">
+            {search.trim() ? (
+              <span className="chip">Search: {search.trim()}</span>
+            ) : null}
+            {department !== "all" ? (
+              <span className="chip">{formatCatalogLabel(department)}</span>
+            ) : null}
+            {category !== "all" ? (
+              <span className="chip">{formatCatalogLabel(category)}</span>
+            ) : null}
+            {color !== "all" ? (
+              <span className="chip">Color: {formatCatalogLabel(color)}</span>
+            ) : null}
+            {size !== "all" ? (
+              <span className="chip">Size: {size.toUpperCase()}</span>
+            ) : null}
+          </div>
+          {(hasFocusedBrowse ||
+            minPrice ||
+            maxPrice ||
+            color !== "all" ||
+            size !== "all") && (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={clearBrowseFilters}
+            >
+              Clear browse filters
+            </button>
+          )}
+        </div>
+
+        {(department !== "all" || category !== "all") && (
+          <div className="catalog-inline-filters">
+            <label className="field">
+              <span>Min price</span>
+              <input
+                value={minPrice}
+                onChange={(event) => setMinPrice(event.target.value)}
+                placeholder="Min"
+                inputMode="decimal"
+              />
+            </label>
+            <label className="field">
+              <span>Max price</span>
+              <input
+                value={maxPrice}
+                onChange={(event) => setMaxPrice(event.target.value)}
+                placeholder="Max"
+                inputMode="decimal"
+              />
+            </label>
+            <label className="field">
+              <span>Color</span>
+              <select
+                value={color}
+                onChange={(event) => setColor(event.target.value)}
+              >
+                <option value="all">All colors</option>
+                {availableColors.map((entry) => (
+                  <option key={entry} value={entry}>
+                    {formatCatalogLabel(entry)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Size</span>
+              <select
+                value={size}
+                onChange={(event) => setSize(event.target.value)}
+              >
+                <option value="all">All sizes</option>
+                {availableSizes.map((entry) => (
+                  <option key={entry} value={entry}>
+                    {entry.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
+        {loading && <div className="message">Loading products...</div>}
+        {searchLoading && <div className="message">Searching marketplace...</div>}
+        {error && <div className="message error">{error}</div>}
+        {!loading &&
+          !searchLoading &&
+          !error &&
+          search.trim() &&
+          visibleSearchSections.length > 0 && (
+            <div className="catalog-search-order muted">
+              Exact matches first, then broader related results:{" "}
+              {searchSectionLabel}
+            </div>
+          )}
+        {!loading &&
+          !searchLoading &&
+          !error &&
+          showingFallbackProducts && (
+            <div className="catalog-search-order muted">
+              {searchResults?.noResultsMessage ??
+                `No exact matches found for "${search.trim()}".`}{" "}
+              Showing popular products instead.
+            </div>
+          )}
+        {!loading && !searchLoading && !error && displayProducts.length === 0 && (
+          <div className="empty">
+            {searchResults?.noResultsMessage ??
+              "No products match your current search."}
+          </div>
+        )}
+
+        <div className="catalog-grid">
+          {displayProducts.map((product) => (
+            <article key={product.id} className="product-card">
+              <Link
+                href={`/products/${product.id}`}
+                className="product-card-link"
+                aria-label={`Open ${product.title}`}
+              >
+                <div className="product-thumb">
+                  <div className="product-media-shell">
+                    <ProductMedia
+                      image={assetUrl(product.images[0])}
+                      title={product.title}
+                    />
+                  </div>
+                </div>
+                <div className="product-card-body">
+                  <div className="product-title-link">{product.title}</div>
+                  <div className="product-price-row product-price-row-stacked">
+                    <span className="price">
+                      {formatCurrency(product.price)}
+                    </span>
+                  </div>
+                  <div className="product-secondary-line">
+                    {formatCatalogLabel(product.category)}
+                    {product.color
+                      ? ` · ${formatCatalogLabel(product.color)}`
+                      : ""}
+                    {product.size
+                      ? ` · ${String(product.size).toUpperCase()}`
+                      : ""}
+                  </div>
+                  <div
+                    className={
+                      product.stock > 0
+                        ? "product-stock-line"
+                        : "product-stock-line product-stock-line-empty"
+                    }
+                  >
+                    {product.stock > 0
+                      ? `${product.stock} available now`
+                      : "Currently unavailable"}
+                  </div>
+                </div>
+              </Link>
+            </article>
+          ))}
+        </div>
+
+        <section className="vendors-strip-panel storefront-shops-section">
+          <div className="vendors-strip-head">
+            <div>
+              <h2>Shops</h2>
+              {(department !== "all" || category !== "all") && (
+                <p className="muted">
+                  {category !== "all"
+                    ? `Shops matching ${formatCatalogLabel(category)}`
+                    : `Shops matching ${formatCatalogLabel(department)}`}
+                </p>
+              )}
+            </div>
+            <Link
+              className="table-link"
+              href={`/shops${
+                department !== "all" || category !== "all"
+                  ? `?${new URLSearchParams({
+                      ...(department !== "all" ? { department } : {}),
+                      ...(category !== "all" ? { category } : {}),
+                    }).toString()}`
+                  : ""
+              }`}
+            >
+              See all
+            </Link>
+          </div>
+          {loading && <div className="message">Loading shops...</div>}
+          {!loading && !error && featuredVendors.length === 0 && (
+            <div className="empty">No public shops yet.</div>
+          )}
+          <div className="vendors-strip-grid">
+            {featuredVendors.map((vendor) => (
+              <Link
+                key={vendor.id}
+                href={`/shops/${vendor.id}`}
+                className="vendor-public-card"
+              >
+                <div className="vendor-public-logo">
+                  {vendor.logoUrl ? (
+                    <img src={assetUrl(vendor.logoUrl)} alt={vendor.shopName} />
+                  ) : (
+                    <span>{vendor.shopName.slice(0, 1)}</span>
+                  )}
+                </div>
+                <strong>{vendor.shopName}</strong>
+                <span>{vendor.productCount} products</span>
+              </Link>
+            ))}
+          </div>
+        </section>
       </section>
 
       {quickViewProduct && (
         <div className="product-quick-view-overlay" onClick={closeQuickView}>
-          <div className="product-quick-view-shell" onClick={(event) => event.stopPropagation()}>
-            <button type="button" className="product-quick-view-close" onClick={closeQuickView}>
+          <div
+            className="product-quick-view-shell"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="product-quick-view-close"
+              onClick={closeQuickView}
+            >
               Close
             </button>
             <div className="product-detail-card product-quick-view-card">
@@ -724,16 +1016,23 @@ export default function HomePage() {
 
               <div className="product-detail-info">
                 <div className="product-kicker">
-                  {formatCatalogLabel(quickViewProduct.department)} / {formatCatalogLabel(quickViewProduct.category)}
+                  {formatCatalogLabel(quickViewProduct.department)} /{" "}
+                  {formatCatalogLabel(quickViewProduct.category)}
                 </div>
-                <h2 className="product-detail-title">{quickViewProduct.title}</h2>
-                <div className="product-detail-price">{formatCurrency(quickViewProduct.price)}</div>
+                <h2 className="product-detail-title">
+                  {quickViewProduct.title}
+                </h2>
+                <div className="product-detail-price">
+                  {formatCurrency(quickViewProduct.price)}
+                </div>
                 <div className="product-stock detail-stock">
                   {quickViewProduct.stock > 0
                     ? `In stock: ${quickViewProduct.stock}`
                     : "Currently unavailable"}
                 </div>
-                <p className="product-detail-copy">{quickViewProduct.description}</p>
+                <p className="product-detail-copy">
+                  {quickViewProduct.description}
+                </p>
 
                 <div className="product-detail-actions">
                   <button
@@ -753,7 +1052,10 @@ export default function HomePage() {
                   >
                     {quickViewProduct.stock === 0 ? "Sold Out" : "Add to Cart"}
                   </button>
-                  <Link className="button-secondary" href={`/products/${quickViewProduct.id}`}>
+                  <Link
+                    className="button-secondary"
+                    href={`/products/${quickViewProduct.id}`}
+                  >
                     Open full page
                   </Link>
                   <Link className="button-secondary" href="/cart">
@@ -765,18 +1067,25 @@ export default function HomePage() {
                   {quickViewProduct.vendor && (
                     <div className="meta-row">
                       <span>Shop</span>
-                      <Link className="table-link" href={`/shops/${quickViewProduct.vendor.id}`}>
+                      <Link
+                        className="table-link"
+                        href={`/shops/${quickViewProduct.vendor.id}`}
+                      >
                         {quickViewProduct.vendor.shopName}
                       </Link>
                     </div>
                   )}
                   <div className="meta-row">
                     <span>{getCatalogGenderLabel()}</span>
-                    <strong>{formatCatalogLabel(quickViewProduct.department)}</strong>
+                    <strong>
+                      {formatCatalogLabel(quickViewProduct.department)}
+                    </strong>
                   </div>
                   <div className="meta-row">
                     <span>Category</span>
-                    <strong>{formatCatalogLabel(quickViewProduct.category)}</strong>
+                    <strong>
+                      {formatCatalogLabel(quickViewProduct.category)}
+                    </strong>
                   </div>
                 </div>
               </div>

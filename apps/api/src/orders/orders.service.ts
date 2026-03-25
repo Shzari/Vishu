@@ -91,52 +91,61 @@ export class OrdersService {
       threshold: number;
     }[] = [];
 
-    const createdOrder = await this.databaseService.withTransaction(async (client) => {
-      const paymentMethod: PaymentMethod = dto.paymentMethod ?? 'cash_on_delivery';
-      const paymentStatus: PaymentStatus =
-        paymentMethod === 'cash_on_delivery' ? 'cod_pending' : 'paid';
-      const address = await this.loadCheckoutAddress(
-        client,
-        customerId,
-        dto.addressId,
-      );
-      const savedPaymentMethod =
-        paymentMethod === 'card'
-          ? await this.loadCheckoutPaymentMethod(
-              client,
-              customerId,
-              dto.paymentMethodId,
-            )
-          : null;
-      const products = await this.loadProductsForOrder(
-        client,
-        dto.items.map((item) => item.productId),
-      );
+    const createdOrder = await this.databaseService.withTransaction(
+      async (client) => {
+        const paymentMethod: PaymentMethod =
+          dto.paymentMethod ?? 'cash_on_delivery';
+        const paymentStatus: PaymentStatus =
+          paymentMethod === 'cash_on_delivery' ? 'cod_pending' : 'paid';
+        const address = await this.loadCheckoutAddress(
+          client,
+          customerId,
+          dto.addressId,
+        );
+        const savedPaymentMethod =
+          paymentMethod === 'card'
+            ? await this.loadCheckoutPaymentMethod(
+                client,
+                customerId,
+                dto.paymentMethodId,
+              )
+            : null;
+        const products = await this.loadProductsForOrder(
+          client,
+          dto.items.map((item) => item.productId),
+        );
 
-      const items = dto.items.map((item) => {
-        const product = this.productRowGuard(products.get(item.productId), item.productId);
-        if (product.stock < item.quantity) {
-          throw new BadRequestException(`Insufficient stock for ${product.title}`);
-        }
+        const items = dto.items.map((item) => {
+          const product = this.productRowGuard(
+            products.get(item.productId),
+            item.productId,
+          );
+          if (product.stock < item.quantity) {
+            throw new BadRequestException(
+              `Insufficient stock for ${product.title}`,
+            );
+          }
 
-        const unitPrice = Number(product.price);
-        const gross = Number((unitPrice * item.quantity).toFixed(2));
-        const commissionAmount = Number((gross * COMMISSION_RATE).toFixed(2));
-        const vendorEarnings = Number((gross - commissionAmount).toFixed(2));
+          const unitPrice = Number(product.price);
+          const gross = Number((unitPrice * item.quantity).toFixed(2));
+          const commissionAmount = Number((gross * COMMISSION_RATE).toFixed(2));
+          const vendorEarnings = Number((gross - commissionAmount).toFixed(2));
 
-        return {
-          product,
-          quantity: item.quantity,
-          unitPrice,
-          commissionAmount,
-          vendorEarnings,
-          gross,
-        };
-      });
+          return {
+            product,
+            quantity: item.quantity,
+            unitPrice,
+            commissionAmount,
+            vendorEarnings,
+            gross,
+          };
+        });
 
-      const totalPrice = Number(items.reduce((sum, item) => sum + item.gross, 0).toFixed(2));
-      const order = await client.query<{ id: string }>(
-        `INSERT INTO orders (
+        const totalPrice = Number(
+          items.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
+        );
+        const order = await client.query<{ id: string }>(
+          `INSERT INTO orders (
            customer_id, total_price, special_request,
            shipping_address_id, shipping_label, shipping_full_name, shipping_phone_number,
            shipping_line1, shipping_line2, shipping_city, shipping_state_region,
@@ -147,88 +156,89 @@ export class OrdersService {
          )
          OUTPUT INSERTED.id
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'pending')`,
-        [
-          customerId,
-          totalPrice,
-          dto.specialRequest?.trim() || null,
-          address.id,
-          address.label,
-          address.full_name,
-          address.phone_number,
-          address.line1,
-          address.line2,
-          address.city,
-          address.state_region,
-          address.postal_code,
-          address.country,
-          savedPaymentMethod?.id ?? null,
-          savedPaymentMethod?.nickname ?? null,
-          savedPaymentMethod?.cardholder_name ?? null,
-          savedPaymentMethod?.brand ?? null,
-          savedPaymentMethod?.last4 ?? null,
-          paymentMethod,
-          paymentStatus,
-        ],
-      );
+          [
+            customerId,
+            totalPrice,
+            dto.specialRequest?.trim() || null,
+            address.id,
+            address.label,
+            address.full_name,
+            address.phone_number,
+            address.line1,
+            address.line2,
+            address.city,
+            address.state_region,
+            address.postal_code,
+            address.country,
+            savedPaymentMethod?.id ?? null,
+            savedPaymentMethod?.nickname ?? null,
+            savedPaymentMethod?.cardholder_name ?? null,
+            savedPaymentMethod?.brand ?? null,
+            savedPaymentMethod?.last4 ?? null,
+            paymentMethod,
+            paymentStatus,
+          ],
+        );
 
-      for (const item of items) {
-        await client.query(
-          `INSERT INTO order_items (
+        for (const item of items) {
+          await client.query(
+            `INSERT INTO order_items (
              order_id, product_id, vendor_id, quantity, unit_price,
              commission_amount, vendor_earnings, status
            )
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-          [
-            order.rows[0].id,
-            item.product.id,
-            item.product.vendor_id,
-            item.quantity,
-            item.unitPrice,
-            item.commissionAmount,
-            item.vendorEarnings,
-          ],
-        );
+            [
+              order.rows[0].id,
+              item.product.id,
+              item.product.vendor_id,
+              item.quantity,
+              item.unitPrice,
+              item.commissionAmount,
+              item.vendorEarnings,
+            ],
+          );
 
-        await client.query(
-          'UPDATE products SET stock = stock - $1, updated_at = SYSDATETIME() WHERE id = $2',
-          [item.quantity, item.product.id],
-        );
-
-        const nextStock = item.product.stock - item.quantity;
-        if (
-          item.product.low_stock_threshold > 0 &&
-          nextStock <= item.product.low_stock_threshold &&
-          !item.product.low_stock_alert_sent_at
-        ) {
           await client.query(
-            `UPDATE products
+            'UPDATE products SET stock = stock - $1, updated_at = SYSDATETIME() WHERE id = $2',
+            [item.quantity, item.product.id],
+          );
+
+          const nextStock = item.product.stock - item.quantity;
+          if (
+            item.product.low_stock_threshold > 0 &&
+            nextStock <= item.product.low_stock_threshold &&
+            !item.product.low_stock_alert_sent_at
+          ) {
+            await client.query(
+              `UPDATE products
              SET low_stock_alert_sent_at = SYSDATETIME(),
                  updated_at = SYSDATETIME()
              WHERE id = $1`,
-            [item.product.id],
-          );
+              [item.product.id],
+            );
 
-          lowStockAlerts.push({
-            email: item.product.vendor_email,
-            shopName: item.product.shop_name,
-            productTitle: item.product.title,
-            productCode: item.product.product_code,
-            stock: nextStock,
-            threshold: item.product.low_stock_threshold,
-          });
+            lowStockAlerts.push({
+              email: item.product.vendor_email,
+              shopName: item.product.shop_name,
+              productTitle: item.product.title,
+              productCode: item.product.product_code,
+              stock: nextStock,
+              threshold: item.product.low_stock_threshold,
+            });
+          }
         }
-      }
 
-      await client.query(
-        `DELETE ci
+        await client.query(
+          `DELETE ci
          FROM cart_items ci
          INNER JOIN carts c ON c.id = ci.cart_id
          WHERE c.customer_id = $1`,
-        [customerId],
-      );
+          [customerId],
+        );
 
-      return order.rows[0];
-    });
+        return order.rows[0];
+      },
+    );
 
     for (const alert of lowStockAlerts) {
       await this.mailService.sendVendorLowStockAlert(alert);
@@ -260,9 +270,14 @@ export class OrdersService {
         );
 
         for (const item of dto.items) {
-          const product = this.productRowGuard(products.get(item.productId), item.productId);
+          const product = this.productRowGuard(
+            products.get(item.productId),
+            item.productId,
+          );
           if (product.stock < item.quantity) {
-            throw new BadRequestException(`Insufficient stock for ${product.title}`);
+            throw new BadRequestException(
+              `Insufficient stock for ${product.title}`,
+            );
           }
 
           await client.query(
@@ -273,7 +288,10 @@ export class OrdersService {
         }
       }
 
-      await client.query('UPDATE carts SET updated_at = SYSDATETIME() WHERE id = $1', [cartId]);
+      await client.query(
+        'UPDATE carts SET updated_at = SYSDATETIME() WHERE id = $1',
+        [cartId],
+      );
     });
 
     return this.loadCartSnapshot(customerId);
@@ -286,7 +304,9 @@ export class OrdersService {
     );
 
     return Promise.all(
-      result.rows.map((order) => this.getCustomerOrderById(order.id, customerId)),
+      result.rows.map((order) =>
+        this.getCustomerOrderById(order.id, customerId),
+      ),
     );
   }
 
@@ -438,7 +458,10 @@ export class OrdersService {
       throw new ForbiddenException('Vendor account is not active');
     }
 
-    const ownership = await this.databaseService.query<{ id: string; status: OrderStatus }>(
+    const ownership = await this.databaseService.query<{
+      id: string;
+      status: OrderStatus;
+    }>(
       'SELECT id, status FROM order_items WHERE order_id = $1 AND vendor_id = $2',
       [orderId, vendor.id],
     );
@@ -517,7 +540,9 @@ export class OrdersService {
     }
 
     if (row.cancel_request_status === 'requested') {
-      throw new BadRequestException('A cancel request has already been submitted');
+      throw new BadRequestException(
+        'A cancel request has already been submitted',
+      );
     }
 
     await this.databaseService.query(
@@ -536,85 +561,100 @@ export class OrdersService {
   async reorderCustomerOrder(customerId: string, orderId: string) {
     await this.ensureCartExists(customerId);
 
-    const result = await this.databaseService.withTransaction(async (client) => {
-      const orderItems = await client.query<{
-        product_id: string;
-        quantity: number;
-      }>(
-        `SELECT oi.product_id, oi.quantity
+    const result = await this.databaseService.withTransaction(
+      async (client) => {
+        const orderItems = await client.query<{
+          product_id: string;
+          quantity: number;
+        }>(
+          `SELECT oi.product_id, oi.quantity
          FROM orders o
          INNER JOIN order_items oi ON oi.order_id = o.id
          WHERE o.id = $1 AND o.customer_id = $2`,
-        [orderId, customerId],
-      );
+          [orderId, customerId],
+        );
 
-      if (!orderItems.rows.length) {
-        throw new NotFoundException('Order not found');
-      }
-
-      const cart = await client.query<{ id: string }>(
-        'SELECT TOP 1 id FROM carts WHERE customer_id = $1',
-        [customerId],
-      );
-      const cartId = cart.rows[0].id;
-
-      const products = await this.loadProductsForOrder(
-        client,
-        orderItems.rows.map((item) => item.product_id),
-      );
-      const currentCartRows = await client.query<{ product_id: string; quantity: number }>(
-        'SELECT product_id, quantity FROM cart_items WHERE cart_id = $1',
-        [cartId],
-      );
-      const currentCartMap = new Map(
-        currentCartRows.rows.map((item) => [item.product_id, item.quantity]),
-      );
-
-      let addedCount = 0;
-
-      for (const item of orderItems.rows) {
-        const product = this.productRowGuard(products.get(item.product_id), item.product_id);
-        if (product.stock <= 0) {
-          continue;
+        if (!orderItems.rows.length) {
+          throw new NotFoundException('Order not found');
         }
 
-        const existingQuantity = currentCartMap.get(item.product_id) ?? 0;
-        const nextQuantity = Math.min(existingQuantity + item.quantity, product.stock);
+        const cart = await client.query<{ id: string }>(
+          'SELECT TOP 1 id FROM carts WHERE customer_id = $1',
+          [customerId],
+        );
+        const cartId = cart.rows[0].id;
 
-        if (nextQuantity <= 0 || nextQuantity === existingQuantity) {
-          continue;
-        }
+        const products = await this.loadProductsForOrder(
+          client,
+          orderItems.rows.map((item) => item.product_id),
+        );
+        const currentCartRows = await client.query<{
+          product_id: string;
+          quantity: number;
+        }>('SELECT product_id, quantity FROM cart_items WHERE cart_id = $1', [
+          cartId,
+        ]);
+        const currentCartMap = new Map(
+          currentCartRows.rows.map((item) => [item.product_id, item.quantity]),
+        );
 
-        if (existingQuantity > 0) {
-          await client.query(
-            `UPDATE cart_items
+        let addedCount = 0;
+
+        for (const item of orderItems.rows) {
+          const product = this.productRowGuard(
+            products.get(item.product_id),
+            item.product_id,
+          );
+          if (product.stock <= 0) {
+            continue;
+          }
+
+          const existingQuantity = currentCartMap.get(item.product_id) ?? 0;
+          const nextQuantity = Math.min(
+            existingQuantity + item.quantity,
+            product.stock,
+          );
+
+          if (nextQuantity <= 0 || nextQuantity === existingQuantity) {
+            continue;
+          }
+
+          if (existingQuantity > 0) {
+            await client.query(
+              `UPDATE cart_items
              SET quantity = $1,
                  updated_at = SYSDATETIME()
              WHERE cart_id = $2 AND product_id = $3`,
-            [nextQuantity, cartId, item.product_id],
-          );
-        } else {
-          await client.query(
-            `INSERT INTO cart_items (cart_id, product_id, quantity, updated_at)
+              [nextQuantity, cartId, item.product_id],
+            );
+          } else {
+            await client.query(
+              `INSERT INTO cart_items (cart_id, product_id, quantity, updated_at)
              VALUES ($1, $2, $3, SYSDATETIME())`,
-            [cartId, item.product_id, nextQuantity],
+              [cartId, item.product_id, nextQuantity],
+            );
+          }
+
+          currentCartMap.set(item.product_id, nextQuantity);
+          addedCount += nextQuantity - existingQuantity;
+        }
+
+        if (addedCount === 0) {
+          throw new BadRequestException(
+            'None of the order items are currently available to reorder',
           );
         }
 
-        currentCartMap.set(item.product_id, nextQuantity);
-        addedCount += nextQuantity - existingQuantity;
-      }
+        await client.query(
+          'UPDATE carts SET updated_at = SYSDATETIME() WHERE id = $1',
+          [cartId],
+        );
 
-      if (addedCount === 0) {
-        throw new BadRequestException('None of the order items are currently available to reorder');
-      }
-
-      await client.query('UPDATE carts SET updated_at = SYSDATETIME() WHERE id = $1', [cartId]);
-
-      return {
-        addedCount,
-      };
-    });
+        return {
+          addedCount,
+        };
+      },
+    );
 
     return {
       message: 'Items added back to cart',
@@ -866,7 +906,9 @@ export class OrdersService {
       [orderId],
     );
 
-    const imageRows = await this.getImagesForProducts(items.rows.map((item) => item.product_id));
+    const imageRows = await this.getImagesForProducts(
+      items.rows.map((item) => item.product_id),
+    );
     const imageMap = new Map<string, string[]>();
 
     for (const image of imageRows) {
@@ -959,7 +1001,10 @@ export class OrdersService {
     } else if (
       statuses.length &&
       statuses.every(
-        (status) => status === 'confirmed' || status === 'shipped' || status === 'delivered',
+        (status) =>
+          status === 'confirmed' ||
+          status === 'shipped' ||
+          status === 'delivered',
       )
     ) {
       orderStatus = 'confirmed';
@@ -991,28 +1036,36 @@ export class OrdersService {
     nextStatus: OrderStatus,
   ) {
     if (nextStatus === 'pending') {
-      throw new BadRequestException('Vendor orders cannot be moved back to pending');
+      throw new BadRequestException(
+        'Vendor orders cannot be moved back to pending',
+      );
     }
 
     if (
       nextStatus === 'confirmed' &&
       !currentStatuses.every((status) => status === 'pending')
     ) {
-      throw new BadRequestException('Only pending vendor items can be confirmed');
+      throw new BadRequestException(
+        'Only pending vendor items can be confirmed',
+      );
     }
 
     if (
       nextStatus === 'shipped' &&
       !currentStatuses.every((status) => status === 'confirmed')
     ) {
-      throw new BadRequestException('Only confirmed vendor items can be marked as shipped');
+      throw new BadRequestException(
+        'Only confirmed vendor items can be marked as shipped',
+      );
     }
 
     if (
       nextStatus === 'delivered' &&
       !currentStatuses.every((status) => status === 'shipped')
     ) {
-      throw new BadRequestException('Only shipped vendor items can be marked as delivered');
+      throw new BadRequestException(
+        'Only shipped vendor items can be marked as delivered',
+      );
     }
   }
 
@@ -1038,7 +1091,9 @@ export class OrdersService {
 
     const trackingNumber = dto.trackingNumber?.trim();
     if (!trackingNumber) {
-      throw new BadRequestException('Tracking number is required when marking an order as shipped');
+      throw new BadRequestException(
+        'Tracking number is required when marking an order as shipped',
+      );
     }
 
     return {
@@ -1070,6 +1125,7 @@ export class OrdersService {
        INNER JOIN vendors v ON v.id = p.vendor_id
        INNER JOIN users u ON u.id = v.user_id
        WHERE p.id IN (${clause})
+         AND p.is_listed = 1
          AND ${this.publicVisibilityClause('v')}`,
     );
 
@@ -1142,9 +1198,10 @@ export class OrdersService {
     );
 
     if (!existing.rows[0]) {
-      await this.databaseService.query('INSERT INTO carts (customer_id) VALUES ($1)', [
-        customerId,
-      ]);
+      await this.databaseService.query(
+        'INSERT INTO carts (customer_id) VALUES ($1)',
+        [customerId],
+      );
     }
   }
 
@@ -1190,7 +1247,9 @@ export class OrdersService {
 
     return {
       items: cart.rows
-        .filter((row) => row.product_id && row.quantity && row.title && row.category)
+        .filter(
+          (row) => row.product_id && row.quantity && row.title && row.category,
+        )
         .map((row) => ({
           productId: row.product_id as string,
           quantity: row.quantity as number,
@@ -1245,7 +1304,9 @@ export class OrdersService {
 
     const address = result.rows[0];
     if (!address) {
-      throw new BadRequestException('Please save a delivery address before checkout');
+      throw new BadRequestException(
+        'Please save a delivery address before checkout',
+      );
     }
 
     return address;
@@ -1272,7 +1333,9 @@ export class OrdersService {
 
     const paymentMethod = result.rows[0];
     if (!paymentMethod) {
-      throw new BadRequestException('Please save a card before placing a prepaid order');
+      throw new BadRequestException(
+        'Please save a card before placing a prepaid order',
+      );
     }
 
     return paymentMethod;

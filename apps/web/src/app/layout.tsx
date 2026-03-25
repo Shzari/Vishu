@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Space_Grotesk } from "next/font/google";
+import { Suspense } from "react";
 import { Providers } from "@/components/providers";
 import { SiteShell } from "@/components/site-shell";
 import "./globals.css";
@@ -36,7 +37,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${displayFont.variable} ${bodyFont.variable}`}>
         <Providers>
-          <SiteShell>{children}</SiteShell>
+          <Suspense fallback={<div className="page" />}>
+            <SiteShell>{children}</SiteShell>
+          </Suspense>
         </Providers>
       </body>
     </html>

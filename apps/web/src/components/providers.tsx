@@ -15,6 +15,8 @@ interface AuthContextValue {
   token: string | null;
   user: SessionUser | null;
   profile: ProfileResponse | null;
+  currentRole: SessionUser["role"] | null;
+  isAuthenticated: boolean;
   loading: boolean;
   setSession: (token: string, user: SessionUser) => void;
   clearSession: () => void;
@@ -58,6 +60,18 @@ const defaultBranding: BrandingSettings = {
   logoDataUrl: null,
 };
 
+function parseStoredValue<T>(value: string | null, fallback: T) {
+  if (!value) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function usePersistentState<T>(key: string, fallback: T) {
   const [state, setState] = useState<T>(() => {
     if (typeof window === "undefined") {
@@ -93,11 +107,16 @@ export function Providers({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = usePersistentState<CartItem[]>("vishu-cart", []);
   const [cartReady, setCartReady] = useState(false);
+  const currentRole = profile?.role ?? user?.role ?? null;
+  const isAuthenticated = !loading && Boolean(token && currentRole);
 
   const clearSession = () => {
     setToken(null);
     setUser(null);
     setProfile(null);
+    setItems([]);
+    setCartReady(false);
+    setLoading(false);
   };
 
   const refreshProfile = async () => {
@@ -108,8 +127,14 @@ export function Providers({ children }: { children: ReactNode }) {
     }
 
     try {
+      setLoading(true);
       const nextProfile = await apiRequest<ProfileResponse>("/auth/me", undefined, token);
       setProfile(nextProfile);
+      setUser({
+        sub: nextProfile.id,
+        email: nextProfile.email,
+        role: nextProfile.role,
+      });
     } catch {
       clearSession();
     } finally {
@@ -120,6 +145,33 @@ export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshProfile();
   }, [token]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const syncSession = (event: StorageEvent) => {
+      if (!event.key) {
+        return;
+      }
+
+      if (event.key === "vishu-token") {
+        setToken(parseStoredValue<string | null>(event.newValue, null));
+      }
+
+      if (event.key === "vishu-user") {
+        setUser(parseStoredValue<SessionUser | null>(event.newValue, null));
+      }
+
+      if (event.key === "vishu-cart") {
+        setItems(parseStoredValue<CartItem[]>(event.newValue, []));
+      }
+    };
+
+    window.addEventListener("storage", syncSession);
+    return () => window.removeEventListener("storage", syncSession);
+  }, [setItems, setToken, setUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,7 +197,7 @@ export function Providers({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!token || user?.role !== "customer") {
+    if (!token || currentRole !== "customer") {
       setCartReady(true);
       return;
     }
@@ -198,10 +250,10 @@ export function Providers({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user, setItems]);
+  }, [currentRole, token, setItems]);
 
   useEffect(() => {
-    if (!token || user?.role !== "customer" || !cartReady) {
+    if (!token || currentRole !== "customer" || !cartReady) {
       return;
     }
 
@@ -224,22 +276,27 @@ export function Providers({ children }: { children: ReactNode }) {
     }, 250);
 
     return () => window.clearTimeout(timeout);
-  }, [cartReady, items, token, user]);
+  }, [cartReady, currentRole, items, token, user]);
 
   const authValue = useMemo<AuthContextValue>(
     () => ({
       token,
       user,
       profile,
+      currentRole,
+      isAuthenticated,
       loading,
       setSession: (nextToken, nextUser) => {
+        setLoading(true);
+        setProfile(null);
+        setCartReady(false);
         setToken(nextToken);
         setUser(nextUser);
       },
       clearSession,
       refreshProfile,
     }),
-    [loading, profile, token, user],
+    [currentRole, isAuthenticated, loading, profile, token, user],
   );
 
   const cartValue = useMemo<CartContextValue>(

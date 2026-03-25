@@ -30,7 +30,7 @@ const emptyPaymentForm = {
 };
 
 export default function AccountPage() {
-  const { token, user, refreshProfile } = useAuth();
+  const { token, currentRole, refreshProfile } = useAuth();
   const [account, setAccount] = useState<CustomerAccount | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -64,10 +64,10 @@ export default function AccountPage() {
   }
 
   useEffect(() => {
-    if (token && user?.role === "customer") {
+    if (token && currentRole === "customer") {
       void loadAccount();
     }
-  }, [token, user]);
+  }, [currentRole, token]);
 
   function resetAddressForm() {
     setAddressForm(emptyAddress);

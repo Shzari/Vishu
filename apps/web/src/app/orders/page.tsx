@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/status-badge";
 import type { CustomerOrder } from "@/lib/types";
 
 export default function OrdersPage() {
-  const { token, user } = useAuth();
+  const { token, currentRole } = useAuth();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [cancelNotes, setCancelNotes] = useState<Record<string, string>>({});
   const [activeAction, setActiveAction] = useState<string | null>(null);
@@ -18,7 +18,7 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function loadOrders() {
-    if (!token || user?.role !== "customer") {
+    if (!token || currentRole !== "customer") {
       return;
     }
 
@@ -32,7 +32,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     void loadOrders();
-  }, [token, user]);
+  }, [currentRole, token]);
 
   const totalSpent = useMemo(
     () => orders.reduce((sum, order) => sum + order.totalPrice, 0),

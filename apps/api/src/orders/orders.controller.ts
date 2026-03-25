@@ -27,7 +27,10 @@ export class OrdersController {
 
   @Roles('customer')
   @Post('orders')
-  createOrder(@Req() req: { user: AuthenticatedUser }, @Body() dto: CreateOrderDto) {
+  createOrder(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: CreateOrderDto,
+  ) {
     return this.ordersService.createOrder(req.user.sub, dto);
   }
 
@@ -39,7 +42,10 @@ export class OrdersController {
 
   @Roles('customer')
   @Post('cart/my')
-  syncMyCart(@Req() req: { user: AuthenticatedUser }, @Body() dto: SyncCartDto) {
+  syncMyCart(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: SyncCartDto,
+  ) {
     return this.ordersService.syncCustomerCart(req.user.sub, dto);
   }
 
@@ -61,10 +67,7 @@ export class OrdersController {
 
   @Roles('customer')
   @Post('orders/:id/reorder')
-  reorder(
-    @Req() req: { user: AuthenticatedUser },
-    @Param('id') id: string,
-  ) {
+  reorder(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
     return this.ordersService.reorderCustomerOrder(req.user.sub, id);
   }
 

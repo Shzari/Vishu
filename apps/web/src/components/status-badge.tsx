@@ -1,7 +1,7 @@
 export function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const className =
-    normalized === "active" || normalized === "delivered"
+    normalized === "delivered"
       ? "badge"
       : normalized === "shipped"
         ? "chip"

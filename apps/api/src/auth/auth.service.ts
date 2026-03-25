@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Injectable,
-  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -23,8 +22,6 @@ import {
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
@@ -67,125 +64,123 @@ export class AuthService {
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
-    const vendorUser = await this.databaseService.withTransaction(async (client) => {
-      const createdUser = await client.query<{
-        id: string;
-        email: string;
-        role: string;
-      }>(
-        `INSERT INTO users (email, full_name, phone_number, password_hash, role)
+    const vendorUser = await this.databaseService.withTransaction(
+      async (client) => {
+        const createdUser = await client.query<{
+          id: string;
+          email: string;
+          role: string;
+        }>(
+          `INSERT INTO users (email, full_name, phone_number, password_hash, role, email_verified_at)
          OUTPUT INSERTED.id, INSERTED.email, INSERTED.role
-         VALUES ($1, $2, $3, $4, 'vendor')`,
-        [email, fullName, phoneNumber, passwordHash],
-      );
+         VALUES ($1, $2, $3, $4, 'vendor', NULL)`,
+          [email, fullName, phoneNumber, passwordHash],
+        );
 
-      await client.query(
-        `INSERT INTO vendors (user_id, shop_name, is_active, is_verified)
+        await client.query(
+          `INSERT INTO vendors (user_id, shop_name, is_active, is_verified)
          VALUES ($1, $2, 0, 0)`,
-        [createdUser.rows[0].id, shopName],
-      );
+          [createdUser.rows[0].id, shopName],
+        );
 
-      await client.query(
-        `INSERT INTO email_verifications (user_id, token, expires_at)
+        await client.query(
+          `INSERT INTO email_verifications (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-        [createdUser.rows[0].id, token, expiresAt],
-      );
+          [createdUser.rows[0].id, token, expiresAt],
+        );
 
-      return createdUser.rows[0];
-    });
+        return createdUser.rows[0];
+      },
+    );
 
-    try {
-      await this.mailService.sendVerificationEmail(vendorUser.email, token);
+    await this.mailService.sendVerificationEmail(vendorUser.email, token);
 
-      return {
-        message:
-          'Vendor account created. Verify your email and wait for admin approval.',
-      };
-    } catch (error) {
-      this.logger.error(
-        `Vendor verification email failed for ${vendorUser.email}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-
-      return {
-        message:
-          'Vendor account created, but the verification email could not be sent right now. Please use resend verification later or ask the admin to check mail settings.',
-      };
-    }
+    return {
+      message:
+        'Vendor account created. Verify your email and wait for admin approval.',
+    };
   }
 
   async verifyEmail(dto: VerifyEmailDto) {
-    const result = await this.databaseService.withTransaction(async (client) => {
-      const verification = await client.query<{
-        user_id: string;
-        expires_at: Date;
-        used_at: Date | null;
-        role: 'vendor' | 'customer';
-        email: string;
-      }>(
-        `SELECT ev.user_id, ev.expires_at, ev.used_at, u.role, u.email
+    const result = await this.databaseService.withTransaction(
+      async (client) => {
+        const verification = await client.query<{
+          user_id: string;
+          expires_at: Date;
+          used_at: Date | null;
+          role: 'vendor' | 'customer';
+          email: string;
+        }>(
+          `SELECT ev.user_id, ev.expires_at, ev.used_at, u.role, u.email
          FROM email_verifications ev
          INNER JOIN users u ON u.id = ev.user_id
          WHERE token = $1`,
-        [dto.token],
-      );
+          [dto.token],
+        );
 
-      const record = verification.rows[0];
-      if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
-        throw new BadRequestException('Invalid or expired verification token');
-      }
+        const record = verification.rows[0];
+        if (
+          !record ||
+          record.used_at ||
+          new Date(record.expires_at) < new Date()
+        ) {
+          throw new BadRequestException(
+            'Invalid or expired verification token',
+          );
+        }
 
-      await client.query(
-        'UPDATE email_verifications SET used_at = SYSDATETIME() WHERE token = $1',
-        [dto.token],
-      );
-      await client.query(
-        'UPDATE users SET email_verified_at = ISNULL(email_verified_at, SYSDATETIME()), updated_at = SYSDATETIME() WHERE id = $1',
-        [record.user_id],
-      );
+        await client.query(
+          'UPDATE email_verifications SET used_at = SYSDATETIME() WHERE token = $1',
+          [dto.token],
+        );
+        await client.query(
+          'UPDATE users SET email_verified_at = ISNULL(email_verified_at, SYSDATETIME()), updated_at = SYSDATETIME() WHERE id = $1',
+          [record.user_id],
+        );
 
-      if (record.role === 'customer') {
-        return {
-          role: record.role,
-          message: 'Email verified. You can now sign in.',
-          adminEmails: [] as string[],
-          vendorId: null as string | null,
-          shopName: '',
-          vendorEmail: record.email,
-        };
-      }
+        if (record.role === 'customer') {
+          return {
+            role: record.role,
+            message: 'Email verified. You can now sign in.',
+            adminEmails: [] as string[],
+            vendorId: null as string | null,
+            shopName: '',
+            vendorEmail: record.email,
+          };
+        }
 
-      await client.query(
-        'UPDATE vendors SET is_verified = 1, updated_at = SYSDATETIME() WHERE user_id = $1',
-        [record.user_id],
-      );
+        await client.query(
+          'UPDATE vendors SET is_verified = 1, updated_at = SYSDATETIME() WHERE user_id = $1',
+          [record.user_id],
+        );
 
-      const vendor = await client.query<{
-        id: string;
-        shop_name: string;
-        email: string;
-      }>(
-        `SELECT TOP 1 v.id, v.shop_name, u.email
+        const vendor = await client.query<{
+          id: string;
+          shop_name: string;
+          email: string;
+        }>(
+          `SELECT TOP 1 v.id, v.shop_name, u.email
          FROM vendors v
          INNER JOIN users u ON u.id = v.user_id
          WHERE v.user_id = $1`,
-        [record.user_id],
-      );
+          [record.user_id],
+        );
 
-      const vendorRecord = vendor.rows[0];
-      const admins = await client.query<{
-        id: string;
-        email: string;
-      }>(
-        `SELECT id, email
+        const vendorRecord = vendor.rows[0];
+        const admins = await client.query<{
+          id: string;
+          email: string;
+        }>(
+          `SELECT id, email
          FROM users
          WHERE role = 'admin'
            AND is_active = 1`,
-      );
+        );
 
-      if (vendorRecord) {
-        for (const admin of admins.rows) {
-          await client.query(
-            `INSERT INTO admin_notifications (
+        if (vendorRecord) {
+          for (const admin of admins.rows) {
+            await client.query(
+              `INSERT INTO admin_notifications (
                admin_user_id,
                vendor_id,
                notification_type,
@@ -194,26 +189,27 @@ export class AuthService {
                action_url
              )
              VALUES ($1, $2, 'vendor_pending_approval', $3, $4, $5)`,
-            [
-              admin.id,
-              vendorRecord.id,
-              'Vendor waiting for approval',
-              `${vendorRecord.shop_name} has verified their email and is waiting for approval.`,
-              `/admin/vendors/${vendorRecord.id}`,
-            ],
-          );
+              [
+                admin.id,
+                vendorRecord.id,
+                'Vendor waiting for approval',
+                `${vendorRecord.shop_name} has verified their email and is waiting for approval.`,
+                `/admin/vendors/${vendorRecord.id}`,
+              ],
+            );
+          }
         }
-      }
 
-      return {
-        role: record.role,
-        message: 'Email verified. Awaiting admin approval.',
-        adminEmails: admins.rows.map((admin) => admin.email),
-        vendorId: vendorRecord?.id ?? null,
-        shopName: vendorRecord?.shop_name ?? 'Vendor shop',
-        vendorEmail: vendorRecord?.email ?? '',
-      };
-    });
+        return {
+          role: record.role,
+          message: 'Email verified. Awaiting admin approval.',
+          adminEmails: admins.rows.map((admin) => admin.email),
+          vendorId: vendorRecord?.id ?? null,
+          shopName: vendorRecord?.shop_name ?? 'Vendor shop',
+          vendorEmail: vendorRecord?.email ?? '',
+        };
+      },
+    );
 
     if (result.vendorId) {
       await this.mailService.sendAdminVendorApprovalAlert(result.adminEmails, {
@@ -238,10 +234,19 @@ export class AuthService {
       password_hash: string;
       is_active: boolean;
       email_verified_at: Date | null;
+      vendor_is_verified: boolean | null;
     }>(
-      `SELECT TOP 1 id, email, role, password_hash, is_active, email_verified_at
-       FROM users
-       WHERE email = $1`,
+      `SELECT TOP 1
+         u.id,
+         u.email,
+         u.role,
+         u.password_hash,
+         u.is_active,
+         u.email_verified_at,
+         v.is_verified AS vendor_is_verified
+       FROM users u
+       LEFT JOIN vendors v ON v.user_id = u.id
+       WHERE u.email = $1`,
       [dto.email.toLowerCase()],
     );
 
@@ -254,7 +259,7 @@ export class AuthService {
       throw new UnauthorizedException('User account is disabled');
     }
 
-    if (user.role === 'vendor' && !user.email_verified_at) {
+    if (user.role === 'vendor' && !user.vendor_is_verified) {
       throw new UnauthorizedException('Verify your email before signing in');
     }
 
@@ -268,10 +273,17 @@ export class AuthService {
       email: string;
       role: 'admin' | 'vendor' | 'customer';
       email_verified_at: Date | null;
+      vendor_is_verified: boolean | null;
     }>(
-      `SELECT TOP 1 id, email, role, email_verified_at
-       FROM users
-       WHERE email = $1`,
+      `SELECT TOP 1
+         u.id,
+         u.email,
+         u.role,
+         u.email_verified_at,
+         v.is_verified AS vendor_is_verified
+       FROM users u
+       LEFT JOIN vendors v ON v.user_id = u.id
+       WHERE u.email = $1`,
       [email],
     );
 
@@ -280,33 +292,47 @@ export class AuthService {
       !user ||
       user.role === 'admin' ||
       user.role === 'customer' ||
-      user.email_verified_at
+      user.vendor_is_verified
     ) {
       return {
-        message: 'If the account exists and still needs verification, a new email has been sent.',
+        message:
+          'If the account exists and still needs verification, a new email has been sent.',
       };
     }
 
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
-    await this.databaseService.query(
-      `INSERT INTO email_verifications (user_id, token, expires_at)
-       VALUES ($1, $2, $3)`,
-      [user.id, token, expiresAt],
-    );
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE email_verifications
+         SET used_at = COALESCE(used_at, SYSDATETIME())
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [user.id],
+      );
+
+      await client.query(
+        `INSERT INTO email_verifications (user_id, token, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, token, expiresAt],
+      );
+    });
 
     await this.mailService.sendVerificationEmail(user.email, token, user.role);
 
     return {
-      message: 'If the account exists and still needs verification, a new email has been sent.',
+      message:
+        'If the account exists and still needs verification, a new email has been sent.',
     };
   }
 
   async requestPasswordReset(dto: PasswordResetRequestDto) {
-    const result = await this.databaseService.query<{ id: string; email: string }>(
-      'SELECT TOP 1 id, email FROM users WHERE email = $1',
-      [dto.email.toLowerCase()],
-    );
+    const result = await this.databaseService.query<{
+      id: string;
+      email: string;
+    }>('SELECT TOP 1 id, email FROM users WHERE email = $1', [
+      dto.email.toLowerCase(),
+    ]);
 
     const user = result.rows[0];
     if (!user) {
@@ -340,7 +366,11 @@ export class AuthService {
       );
 
       const record = reset.rows[0];
-      if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
+      if (
+        !record ||
+        record.used_at ||
+        new Date(record.expires_at) < new Date()
+      ) {
         throw new BadRequestException('Invalid or expired reset token');
       }
 
@@ -359,10 +389,10 @@ export class AuthService {
   }
 
   async issueAdminPasswordReset(userId: string) {
-    const result = await this.databaseService.query<{ id: string; email: string }>(
-      'SELECT TOP 1 id, email FROM users WHERE id = $1',
-      [userId],
-    );
+    const result = await this.databaseService.query<{
+      id: string;
+      email: string;
+    }>('SELECT TOP 1 id, email FROM users WHERE id = $1', [userId]);
 
     const user = result.rows[0];
     if (!user) {
@@ -456,7 +486,10 @@ export class AuthService {
     return {
       accessToken: this.jwtService.sign(payload, {
         secret: this.configService.get<string>('JWT_SECRET', 'change-me'),
-        expiresIn: this.configService.get<string>('JWT_EXPIRES_IN', '7d') as any,
+        expiresIn: this.configService.get<string>(
+          'JWT_EXPIRES_IN',
+          '7d',
+        ) as any,
       }),
       user: payload,
     };

@@ -56,6 +56,19 @@ export default function ShopDetailPage() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [quickViewProduct]);
 
+  useEffect(() => {
+    if (!quickViewProduct || typeof document === "undefined") {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [quickViewProduct]);
+
   function openQuickView(product: Product) {
     setQuickViewProduct(product);
     setSelectedQuickViewImage(product.images[0]);
@@ -231,36 +244,43 @@ export default function ShopDetailPage() {
                   className="product-thumb product-thumb-button"
                   onClick={() => openQuickView(product)}
                 >
-                  <ProductMedia image={assetUrl(product.images[0])} title={product.title} />
+                  <div className="product-media-shell">
+                    <ProductMedia image={assetUrl(product.images[0])} title={product.title} />
+                  </div>
                 </button>
                 <div className="product-card-body">
-                  <div className="product-head-row">
-                    <div>
-                      <div className="product-kicker">{formatCatalogLabel(product.category)}</div>
-                      <div className="muted">{formatCatalogLabel(product.department)}</div>
-                      <button
-                        type="button"
-                        className="product-title-link product-title-button"
-                        onClick={() => openQuickView(product)}
-                      >
-                        {product.title}
-                      </button>
-                    </div>
-                    <div className="product-price-row">
-                      <span className="price">{formatCurrency(product.price)}</span>
-                    </div>
+                  <button
+                    type="button"
+                    className="product-title-link product-title-button"
+                    onClick={() => openQuickView(product)}
+                  >
+                    {product.title}
+                  </button>
+                  <div className="product-card-foot">
+                    <span className="product-vendor-link">{shop.shopName}</span>
                   </div>
-                  <p className="product-summary">
-                    {product.description.slice(0, 82)}
-                    {product.description.length > 82 ? "..." : ""}
-                  </p>
+                  <div className="product-price-row product-price-row-stacked">
+                    <span className="price">{formatCurrency(product.price)}</span>
+                  </div>
+                  <div className="product-subline">
+                    {formatCatalogLabel(product.department)}
+                    {product.color ? ` · ${formatCatalogLabel(product.color)}` : ""}
+                    {product.size ? ` · ${String(product.size).toUpperCase()}` : ""}
+                  </div>
+                  <div
+                    className={
+                      product.stock > 0 ? "product-stock-line" : "product-stock-line product-stock-line-empty"
+                    }
+                  >
+                    {product.stock > 0 ? `${product.stock} available now` : "Currently unavailable"}
+                  </div>
                   <div className="product-actions">
                     <button
                       type="button"
                       className="button-ghost product-action-link"
                       onClick={() => openQuickView(product)}
                     >
-                      Details
+                      See options
                     </button>
                     <button
                       type="button"
@@ -277,7 +297,7 @@ export default function ShopDetailPage() {
                       }
                       disabled={product.stock === 0}
                     >
-                      {product.stock === 0 ? "Sold Out" : "Add to Cart"}
+                      {product.stock === 0 ? "Sold out" : "Add to cart"}
                     </button>
                   </div>
                 </div>
