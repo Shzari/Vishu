@@ -2,14 +2,14 @@ const EXPLICIT_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
 
 export function getApiBaseUrl() {
   if (EXPLICIT_API_BASE_URL) {
-    return EXPLICIT_API_BASE_URL;
+    return EXPLICIT_API_BASE_URL.replace(/\/$/, "");
   }
 
   if (typeof window !== "undefined") {
     const host = window.location.hostname.toLowerCase();
 
     if (host === "vishu.shop" || host === "www.vishu.shop") {
-      return "https://api.vishu.shop";
+      return "/api";
     }
 
     if (host === "localhost" || host === "127.0.0.1") {
@@ -29,7 +29,9 @@ export function assetUrl(path?: string) {
     return path;
   }
 
-  return `${getApiBaseUrl().replace(/\/$/, "")}${path}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const baseUrl = getApiBaseUrl().replace(/\/$/, "");
+  return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
 }
 
 export async function apiRequest<T>(
@@ -53,13 +55,21 @@ export async function apiRequest<T>(
   });
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  const payload = text ? tryParseJson(text) : null;
 
   if (!response.ok) {
     throw new Error(payload?.message || "Request failed");
   }
 
   return payload as T;
+}
+
+function tryParseJson(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("API returned a non-JSON response");
+  }
 }
 
 export function formatCurrency(value: number) {

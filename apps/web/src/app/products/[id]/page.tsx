@@ -209,7 +209,12 @@ export default function ProductDetailPage() {
             {relatedProducts.map((entry) => (
               <article key={entry.id} className="product-card compact-product-card">
                 <Link href={`/products/${entry.id}`} className="product-thumb">
-                  <ProductMedia image={assetUrl(entry.images[0])} title={entry.title} />
+                  <div className="product-media-shell">
+                    <ProductMedia
+                      image={assetUrl(entry.images[0])}
+                      title={entry.title}
+                    />
+                  </div>
                 </Link>
                 <div className="product-card-body">
                   <div className="product-head-row">
@@ -223,30 +228,14 @@ export default function ProductDetailPage() {
                       <span className="price">{formatCurrency(entry.price)}</span>
                     </div>
                   </div>
-                  <div className="product-actions">
-                    <Link className="button-ghost product-action-link" href={`/products/${entry.id}`}>
-                      Details
-                    </Link>
-                    <button
-                      type="button"
-                      className="button product-action-button"
-                      onClick={() =>
-                        addItem({
-                          productId: entry.id,
-                          title: entry.title,
-                          price: entry.price,
-                          image: entry.images[0],
-                          color: entry.color ?? entry.colors[0]?.name ?? null,
-                          size:
-                            entry.size ?? entry.sizeVariants[0]?.label ?? null,
-                          quantity: 1,
-                          stock: entry.stock,
-                        })
-                      }
-                      disabled={entry.stock === 0}
-                    >
-                      {entry.stock === 0 ? "Sold Out" : "Add to Cart"}
-                    </button>
+                  <div className="product-secondary-line">
+                    {[
+                      getCatalogDepartmentDisplayLabel(entry.department),
+                      entry.color ? formatProductAttributeLabel(entry.color) : null,
+                      entry.size ? formatProductAttributeLabel(entry.size) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </div>
                 </div>
               </article>

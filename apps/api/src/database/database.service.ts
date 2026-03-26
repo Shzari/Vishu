@@ -83,17 +83,17 @@ export class DatabaseService
 
   private async createPool(database: string) {
     const server = this.configService.get<string>('DB_SERVER', 'localhost');
-    const instanceName = this.configService.get<string>(
-      'DB_INSTANCE',
-      'MARKET',
-    );
+    const instanceName = this.configService
+      .get<string>('DB_INSTANCE', '')
+      .trim();
     const trusted =
       this.configService.get<string>('DB_TRUSTED_CONNECTION', 'true') ===
       'true';
+    const serverTarget = instanceName ? `${server}\\${instanceName}` : server;
 
     const connectionString = trusted
-      ? `Driver={ODBC Driver 18 for SQL Server};Server=${server}\\${instanceName};Database=${database};Trusted_Connection=Yes;TrustServerCertificate=Yes;`
-      : `Driver={ODBC Driver 18 for SQL Server};Server=${server}\\${instanceName};Database=${database};Uid=${this.configService.get<string>('DB_USER', '')};Pwd=${this.configService.get<string>('DB_PASSWORD', '')};TrustServerCertificate=Yes;`;
+      ? `Driver={ODBC Driver 17 for SQL Server};Server=${serverTarget};Database=${database};Trusted_Connection=Yes;TrustServerCertificate=Yes;`
+      : `Driver={ODBC Driver 17 for SQL Server};Server=${serverTarget};Database=${database};Uid=${this.configService.get<string>('DB_USER', '')};Pwd=${this.configService.get<string>('DB_PASSWORD', '')};TrustServerCertificate=Yes;`;
 
     return new sql.ConnectionPool({
       connectionString,
