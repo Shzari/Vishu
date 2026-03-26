@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
-import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
-import type { AccountSettingsProfile } from "@/lib/types";
+import { VendorWorkspaceShell } from "@/components/vendor-workspace-shell";
+import { apiRequest, assetUrl } from "@/lib/api";
+import type { AccountSettingsProfile, VendorTeamAccessResponse, VendorAccessRole } from "@/lib/types";
 
 export default function VendorSettingsPage() {
-  const { token, currentRole, refreshProfile } = useAuth();
+  const { token, currentRole, refreshProfile, profile } = useAuth();
   const [settings, setSettings] = useState<AccountSettingsProfile | null>(null);
+  const [teamAccess, setTeamAccess] = useState<VendorTeamAccessResponse | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -26,27 +28,31 @@ export default function VendorSettingsPage() {
   const [lowStockThreshold, setLowStockThreshold] = useState("5");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [subscriptionAction, setSubscriptionAction] = useState<"monthly" | "yearly" | null>(null);
-  const [subscribeModalOpen, setSubscribeModalOpen] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<"monthly" | "yearly">("monthly");
-  const [cardType, setCardType] = useState<"debit" | "credit">("debit");
-  const [cardholderName, setCardholderName] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [teamSaving, setTeamSaving] = useState<string | null>(null);
   const [resendingVerification, setResendingVerification] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<VendorAccessRole>("employee");
+  const [inviteNote, setInviteNote] = useState("");
+  const vendorAccessRole = profile?.vendor?.access_role ?? "shop_holder";
+  const canManageSettings = profile?.vendor?.access_role === "shop_holder";
 
   async function loadSettings() {
     if (!token) return;
     try {
       setLoading(true);
       setError(null);
-      const data = await apiRequest<AccountSettingsProfile>("/account/settings", undefined, token);
+      const [data, nextTeamAccess] = await Promise.all([
+        apiRequest<AccountSettingsProfile>("/account/settings", undefined, token),
+        canManageSettings
+          ? apiRequest<VendorTeamAccessResponse>("/account/vendor-team", undefined, token)
+          : Promise.resolve(null),
+      ]);
       setSettings(data);
+      setTeamAccess(nextTeamAccess);
       setFullName(data.fullName ?? "");
       setEmail(data.email);
       setPhoneNumber(data.phoneNumber ?? "");
@@ -69,10 +75,16 @@ export default function VendorSettingsPage() {
   }
 
   useEffect(() => {
-    if (token && currentRole === "vendor") {
+    if (token && currentRole === "vendor" && canManageSettings) {
       void loadSettings();
     }
-  }, [currentRole, token]);
+  }, [canManageSettings, currentRole, token]);
+
+  async function refreshTeamAccess() {
+    if (!token || !canManageSettings) return;
+    const nextTeamAccess = await apiRequest<VendorTeamAccessResponse>("/account/vendor-team", undefined, token);
+    setTeamAccess(nextTeamAccess);
+  }
 
   const logoPreviewUrl = useMemo(() => {
     if (!logoFile) {
@@ -183,64 +195,6 @@ export default function VendorSettingsPage() {
     }
   }
 
-  async function activateSubscription(planType: "monthly" | "yearly") {
-    if (!token) return;
-
-    try {
-      setSubscriptionAction(planType);
-      setMessage(null);
-      setError(null);
-      const next = await apiRequest<AccountSettingsProfile>(
-        "/account/vendor-subscription",
-        {
-          method: "POST",
-          body: JSON.stringify({ planType }),
-        },
-        token,
-      );
-      setSettings(next);
-      setMessage(
-        planType === "yearly"
-          ? "Yearly subscription activated. Your products stay visible for the next year."
-          : "Monthly subscription activated. Your products stay visible for the next month.",
-      );
-    } catch (subscriptionError) {
-      setError(subscriptionError instanceof Error ? subscriptionError.message : "Failed to activate subscription.");
-    } finally {
-      setSubscriptionAction(null);
-    }
-  }
-
-  async function confirmSubscription() {
-    const cleanedCardNumber = cardNumber.replace(/\s+/g, "");
-    if (!cardholderName.trim()) {
-      setError("Cardholder name is required.");
-      return;
-    }
-
-    if (!/^\d{12,19}$/.test(cleanedCardNumber)) {
-      setError("Enter a valid card number.");
-      return;
-    }
-
-    if (!/^\d{2}\/\d{2}$/.test(cardExpiry.trim())) {
-      setError("Use expiry in MM/YY format.");
-      return;
-    }
-
-    if (!/^\d{3,4}$/.test(cardCvv.trim())) {
-      setError("Enter a valid card security code.");
-      return;
-    }
-
-    await activateSubscription(selectedPlan);
-    setSubscribeModalOpen(false);
-    setCardholderName("");
-    setCardNumber("");
-    setCardExpiry("");
-    setCardCvv("");
-  }
-
   async function changePassword() {
     if (!token) return;
     try {
@@ -265,6 +219,114 @@ export default function VendorSettingsPage() {
     }
   }
 
+  async function inviteTeamMember() {
+    if (!token) return;
+    try {
+      setTeamSaving("invite");
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string } & VendorTeamAccessResponse>(
+        "/account/vendor-team/invitations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: inviteEmail,
+            role: inviteRole,
+            note: inviteNote || undefined,
+          }),
+        },
+        token,
+      );
+      setTeamAccess(response);
+      setInviteEmail("");
+      setInviteRole("employee");
+      setInviteNote("");
+      setMessage(response.message);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to send invite.");
+    } finally {
+      setTeamSaving(null);
+    }
+  }
+
+  async function resendInvite(inviteId: string) {
+    if (!token) return;
+    try {
+      setTeamSaving(`resend-${inviteId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string } & VendorTeamAccessResponse>(
+        `/account/vendor-team/invitations/${inviteId}/resend`,
+        { method: "POST" },
+        token,
+      );
+      setTeamAccess(response);
+      setMessage(response.message);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to resend invite.");
+    } finally {
+      setTeamSaving(null);
+    }
+  }
+
+  async function changeMemberRole(memberId: string, role: VendorAccessRole) {
+    if (!token) return;
+    try {
+      setTeamSaving(`role-${memberId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string } & VendorTeamAccessResponse>(
+        `/account/vendor-team/members/${memberId}/role`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ role }),
+        },
+        token,
+      );
+      setTeamAccess(response);
+      setMessage(response.message);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to update role.");
+    } finally {
+      setTeamSaving(null);
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (!token || !window.confirm("Remove this person from the shop workspace?")) return;
+    try {
+      setTeamSaving(`remove-${memberId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string } & VendorTeamAccessResponse>(
+        `/account/vendor-team/members/${memberId}`,
+        { method: "DELETE" },
+        token,
+      );
+      setTeamAccess(response);
+      setMessage(response.message);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to remove access.");
+    } finally {
+      setTeamSaving(null);
+    }
+  }
+
+  if (currentRole === "vendor" && vendorAccessRole === "employee") {
+    return (
+      <RequireRole requiredRole="vendor">
+        <VendorWorkspaceShell
+          section="settings"
+          eyebrow="Restricted"
+          title="Settings access is limited"
+          description="Employees can manage products, inventory, and orders, but only a Shop Holder can open shop settings, finance, or team access."
+        >
+          <div className="message">Only a Shop Holder can manage vendor settings.</div>
+        </VendorWorkspaceShell>
+      </RequireRole>
+    );
+  }
+
   if (loading || !settings) {
     return (
       <RequireRole requiredRole="vendor">
@@ -273,83 +335,25 @@ export default function VendorSettingsPage() {
     );
   }
 
-  const subscription = settings.vendor?.subscription ?? {
-    planType: null,
-    status: "inactive" as const,
-    startedAt: null,
-    endsAt: null,
-    source: "automatic" as const,
-    monthlyPrice: 29,
-    yearlyPrice: 290,
-  };
-  const subscriptionStatusLabel =
-    subscription?.status === "active"
-      ? "Active"
-      : subscription?.status === "expired"
-        ? "Expired"
-        : "Not subscribed";
-  const subscriptionEndsLabel = subscription?.endsAt
-    ? new Date(subscription.endsAt).toLocaleDateString()
-    : "Not scheduled";
-  const automaticSubscription = settings.vendor?.automaticSubscription ?? {
-    planType: null,
-    status: "inactive" as const,
-    startedAt: null,
-    endsAt: null,
-  };
-  const manualOverride = settings.vendor?.manualOverride ?? null;
-  const subscriptionHistory = settings.vendor?.subscriptionHistory ?? [];
-  const subscriptionEndsAt = subscription.endsAt;
-  const subscriptionLocked =
-    subscription.status === "active" && subscriptionEndsAt !== null && new Date(subscriptionEndsAt) > new Date();
-  const subscribeButtonLabel = subscriptionLocked ? "Subscription active" : "Subscribe";
-  const selectedPlanPrice =
-    selectedPlan === "yearly"
-      ? subscription.yearlyPrice ?? 290
-      : subscription.monthlyPrice ?? 29;
-  const onboardingSteps = [
-    {
-      label: "Verify vendor email",
-      done: Boolean(settings.vendor?.isVerified && settings.emailVerifiedAt),
-      hint: settings.vendor?.isVerified
-        ? "Done"
-        : "Verify your vendor email before the shop can move forward.",
-    },
-    {
-      label: "Wait for admin approval",
-      done: Boolean(settings.vendor?.isActive),
-      hint: settings.vendor?.isActive
-        ? "Done"
-        : "Admin must activate your vendor account before the shop can go live.",
-    },
-    {
-      label: "Activate subscription",
-      done: subscription.status === "active",
-      hint:
-        subscription.status === "active"
-          ? "Done"
-          : "Activate a monthly or yearly listing plan to make products public.",
-    },
-  ];
-  const nextOnboardingStep = onboardingSteps.find((step) => !step.done) ?? null;
-  const vendorCanGoPublic = onboardingSteps.every((step) => step.done);
-
   return (
     <RequireRole requiredRole="vendor">
+      <VendorWorkspaceShell
+        section="settings"
+        eyebrow="Configuration"
+        title={`${shopName || settings.vendor?.shopName || "Your Shop"} Settings`}
+        description="Manage shop information, working hours, low-stock alerts, and seller account configuration."
+      >
       <div className="stack account-page">
       <section className="panel hero-panel">
         <span className="chip">Vendor Settings</span>
-        <h1 className="hero-title account-hero-title">Manage vendor profile and marketplace subscription.</h1>
+        <h1 className="hero-title account-hero-title">Manage vendor profile and shop settings.</h1>
         <p className="hero-copy">
-          Choose a monthly or yearly vendor subscription to keep your products visible on the marketplace, then manage shop details separately from customer buying flows.
+          Update your seller account, shop information, branding, policies, and operating details in one place.
         </p>
       </section>
 
       {message && <div className="message success">{message}</div>}
       {error && <div className="message error">{error}</div>}
-      <div className={settings.emailVerifiedAt ? "message success" : "message error"}>
-        Email status: {settings.emailVerifiedAt ? "Verified" : "Not verified"}
-      </div>
 
       {!settings.emailVerifiedAt && (
         <div className="inline-actions">
@@ -361,319 +365,6 @@ export default function VendorSettingsPage() {
           >
             {resendingVerification ? "Sending..." : "Resend verification email"}
           </button>
-        </div>
-      )}
-
-      <section className="form-card stack">
-        <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <h2 className="section-title">Vendor Onboarding</h2>
-            <p className="muted">
-              This is the checklist that decides whether your products can be shown publicly.
-            </p>
-          </div>
-          <span className={vendorCanGoPublic ? "badge" : "badge warn"}>
-            {vendorCanGoPublic ? "Public-ready" : "Still blocked"}
-          </span>
-        </div>
-        <div className="mini-stats">
-          {onboardingSteps.map((step) => (
-            <div key={step.label} className="mini-stat">
-              <strong>{step.done ? "Done" : "Pending"}</strong>
-              <span className="muted">{step.label}</span>
-            </div>
-          ))}
-        </div>
-        <div className="card">
-          <strong>
-            {vendorCanGoPublic
-              ? "Your shop can be shown publicly."
-              : `Next step: ${nextOnboardingStep?.label ?? "Review your setup"}`}
-          </strong>
-          <p className="muted">
-            {vendorCanGoPublic
-              ? "Email verification, admin activation, and subscription are all complete."
-              : nextOnboardingStep?.hint ?? "Complete the remaining onboarding steps to go public."}
-          </p>
-        </div>
-      </section>
-
-      <section className="mini-stats">
-        <div className="mini-stat">
-          <strong>{subscriptionStatusLabel}</strong>
-          <span className="muted">Marketplace visibility</span>
-        </div>
-        <div className="mini-stat">
-          <strong>{subscription?.planType ? subscription.planType : "No plan"}</strong>
-          <span className="muted">Current plan</span>
-        </div>
-        <div className="mini-stat">
-          <strong>{subscriptionEndsLabel}</strong>
-          <span className="muted">Visible until</span>
-        </div>
-        <div className="mini-stat">
-          <strong>{subscription?.source === "manual_override" ? "Manual override" : "Automatic"}</strong>
-          <span className="muted">Control mode</span>
-        </div>
-        <div className="mini-stat">
-          <strong>{formatCurrency(subscription?.monthlyPrice ?? 29)}</strong>
-          <span className="muted">Monthly plan</span>
-        </div>
-        <div className="mini-stat">
-          <strong>{formatCurrency(subscription?.yearlyPrice ?? 290)}</strong>
-          <span className="muted">Yearly plan</span>
-        </div>
-      </section>
-
-      <section className="form-card stack">
-        <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <h2 className="section-title">Marketplace Subscription</h2>
-            <p className="muted">
-              Keep your shop visible with one smooth subscription flow. Your normal plan stays automatic, and admin can still help manually if needed.
-            </p>
-          </div>
-          <span className={subscription?.status === "active" ? "badge" : subscription?.status === "expired" ? "badge warn" : "badge"}>
-            {subscriptionStatusLabel}
-          </span>
-        </div>
-        <div className="subscription-compact-shell">
-          <div className="subscription-compact-copy">
-            <strong>{subscription.status === "active" ? "Subscription is active" : "Start your marketplace subscription"}</strong>
-            <p className="muted">
-              {subscriptionLocked
-                ? `Your shop is already visible until ${subscriptionEndsLabel}. You can subscribe again after that date.`
-                : subscription.status === "active"
-                  ? `Your last subscription is marked active until ${subscriptionEndsLabel}.`
-                : "Open the popup, choose monthly or yearly, and activate with a debit or credit card."}
-            </p>
-          </div>
-          <button
-            className="button subscription-compact-button"
-            type="button"
-            disabled={subscriptionAction !== null || subscriptionLocked}
-            onClick={() => {
-              setSelectedPlan(subscription.planType ?? "monthly");
-              setError(null);
-              setSubscribeModalOpen(true);
-            }}
-          >
-            {subscribeButtonLabel}
-          </button>
-        </div>
-        <div className="card">
-          <strong>Current visibility window</strong>
-          <p className="muted">
-            {subscriptionLocked
-              ? `Your products are visible until ${subscriptionEndsLabel}.`
-              : "Your products stay hidden from the public shop until a subscription is activated."}
-          </p>
-          {subscription?.startedAt && (
-            <p className="muted">Started: {new Date(subscription.startedAt).toLocaleDateString()}</p>
-          )}
-        </div>
-        <div className="form-grid two">
-          <div className="card">
-            <strong>Automatic plan</strong>
-            <p className="muted">
-              {automaticSubscription?.planType ?? "No plan"} | {automaticSubscription?.status ?? "inactive"}
-            </p>
-            <p className="muted">
-              {automaticSubscription?.endsAt
-                ? `Base plan until ${new Date(automaticSubscription.endsAt).toLocaleDateString()}`
-                : "No automatic end date"}
-            </p>
-          </div>
-          <div className="card">
-            <strong>Manual admin override</strong>
-            <p className="muted">
-              {manualOverride
-                ? `${manualOverride.planType ?? "No plan"} | ${manualOverride.status}`
-                : "No manual override applied"}
-            </p>
-            <p className="muted">
-              {manualOverride?.endsAt
-                ? `Override until ${new Date(manualOverride.endsAt).toLocaleDateString()}`
-                : "Automatic plan is controlling visibility"}
-            </p>
-            {manualOverride?.note && <p className="muted">{manualOverride.note}</p>}
-          </div>
-        </div>
-        <div className="stack">
-          <h3 className="section-title" style={{ fontSize: "0.96rem" }}>Subscription history</h3>
-          {subscriptionHistory.length ? (
-            subscriptionHistory.map((entry) => (
-              <div key={entry.id} className="card">
-                <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <strong>{entry.planType} plan</strong>
-                  <span className={entry.status === "active" ? "badge" : "badge warn"}>{entry.status}</span>
-                </div>
-                <p className="muted">
-                  {formatCurrency(entry.amount)} | {new Date(entry.startsAt).toLocaleDateString()} to {new Date(entry.endsAt).toLocaleDateString()}
-                </p>
-                {(entry.adminNote || entry.adminEmail) && (
-                  <p className="muted">
-                    {entry.adminNote ?? "Manual admin change"}
-                    {entry.adminEmail ? ` | ${entry.adminEmail}` : ""}
-                  </p>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="empty">No subscription history yet.</div>
-          )}
-        </div>
-      </section>
-
-      {subscribeModalOpen && (
-        <div className="product-quick-view-overlay" onClick={() => setSubscribeModalOpen(false)}>
-          <div className="subscription-modal-shell" onClick={(event) => event.stopPropagation()}>
-            <button
-              className="product-quick-view-close"
-              type="button"
-              onClick={() => setSubscribeModalOpen(false)}
-            >
-              Close
-            </button>
-            <section className="subscription-modal-card">
-              <div className="subscription-modal-head">
-                <div>
-                  <span className="chip">Vendor subscription</span>
-                  <h2 className="section-title">Choose your plan and pay by card</h2>
-                  <p className="muted">
-                    Select monthly or yearly, then continue with a debit or credit card to keep your shop listed.
-                  </p>
-                </div>
-                <div className="subscription-modal-price">
-                  <strong>{formatCurrency(selectedPlanPrice)}</strong>
-                  <span className="muted">{selectedPlan === "yearly" ? "per year" : "per month"}</span>
-                </div>
-              </div>
-              {subscriptionLocked && (
-                <div className="message">
-                  Your subscription is already active until {subscriptionEndsLabel}. You can buy a new plan after it ends.
-                </div>
-              )}
-
-              <div className="subscription-choice-grid">
-                <label className={`subscription-choice-card ${selectedPlan === "monthly" ? "active" : ""}`}>
-                  <input
-                    type="radio"
-                    name="planType"
-                    checked={selectedPlan === "monthly"}
-                    disabled={subscriptionLocked}
-                    onChange={() => setSelectedPlan("monthly")}
-                  />
-                  <strong>Monthly</strong>
-                  <span>{formatCurrency(subscription.monthlyPrice ?? 29)} every month</span>
-                  <p>Flexible option if you want a lighter start.</p>
-                </label>
-
-                <label className={`subscription-choice-card ${selectedPlan === "yearly" ? "active" : ""}`}>
-                  <input
-                    type="radio"
-                    name="planType"
-                    checked={selectedPlan === "yearly"}
-                    disabled={subscriptionLocked}
-                    onChange={() => setSelectedPlan("yearly")}
-                  />
-                  <strong>Yearly</strong>
-                  <span>{formatCurrency(subscription.yearlyPrice ?? 290)} every year</span>
-                  <p>Best for long uninterrupted storefront visibility.</p>
-                </label>
-              </div>
-
-              <div className="subscription-choice-grid subscription-choice-grid-compact">
-                <label className={`subscription-choice-card ${cardType === "debit" ? "active" : ""}`}>
-                  <input
-                    type="radio"
-                    name="cardType"
-                    checked={cardType === "debit"}
-                    disabled={subscriptionLocked}
-                    onChange={() => setCardType("debit")}
-                  />
-                  <strong>Debit card</strong>
-                  <span>Pay directly from your bank card</span>
-                </label>
-
-                <label className={`subscription-choice-card ${cardType === "credit" ? "active" : ""}`}>
-                  <input
-                    type="radio"
-                    name="cardType"
-                    checked={cardType === "credit"}
-                    disabled={subscriptionLocked}
-                    onChange={() => setCardType("credit")}
-                  />
-                  <strong>Credit card</strong>
-                  <span>Pay with your credit line</span>
-                </label>
-              </div>
-
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Cardholder name</label>
-                  <input
-                    value={cardholderName}
-                    disabled={subscriptionLocked}
-                    onChange={(event) => setCardholderName(event.target.value)}
-                    placeholder="Name on card"
-                  />
-                </div>
-                <div className="field">
-                  <label>Card number</label>
-                  <input
-                    inputMode="numeric"
-                    value={cardNumber}
-                    disabled={subscriptionLocked}
-                    onChange={(event) => setCardNumber(event.target.value)}
-                    placeholder="1234 5678 9012 3456"
-                  />
-                </div>
-              </div>
-
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Expiry</label>
-                  <input
-                    inputMode="numeric"
-                    value={cardExpiry}
-                    disabled={subscriptionLocked}
-                    onChange={(event) => setCardExpiry(event.target.value)}
-                    placeholder="MM/YY"
-                  />
-                </div>
-                <div className="field">
-                  <label>Security code</label>
-                  <input
-                    inputMode="numeric"
-                    value={cardCvv}
-                    disabled={subscriptionLocked}
-                    onChange={(event) => setCardCvv(event.target.value)}
-                    placeholder="CVV"
-                  />
-                </div>
-              </div>
-
-              <div className="subscription-modal-actions">
-                <button
-                  className="button-ghost"
-                  type="button"
-                  disabled={subscriptionAction !== null}
-                  onClick={() => setSubscribeModalOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="button"
-                  type="button"
-                  disabled={subscriptionAction !== null || subscriptionLocked}
-                  onClick={() => void confirmSubscription()}
-                >
-                  {subscriptionAction ? "Processing..." : `Pay ${formatCurrency(selectedPlanPrice)} and activate`}
-                </button>
-              </div>
-            </section>
-          </div>
         </div>
       )}
 
@@ -870,7 +561,129 @@ export default function VendorSettingsPage() {
         </button>
       </section>
 
+      <section className="form-card stack">
+        <div>
+          <h2 className="section-title">Team Access</h2>
+          <p className="muted">
+            Invite Shop Holders or Employees, review active access, and manage pending invites for this shop.
+          </p>
+        </div>
+
+        <div className="form-grid three">
+          <div className="field">
+            <label>Email</label>
+            <input
+              value={inviteEmail}
+              onChange={(event) => setInviteEmail(event.target.value)}
+              placeholder="employee@shop.com"
+            />
+          </div>
+          <div className="field">
+            <label>Role</label>
+            <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as VendorAccessRole)}>
+              <option value="employee">Employee</option>
+              <option value="shop_holder">Shop Holder</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Note</label>
+            <input
+              value={inviteNote}
+              onChange={(event) => setInviteNote(event.target.value)}
+              placeholder="Optional internal note"
+            />
+          </div>
+        </div>
+        <div className="inline-actions">
+          <button className="button" type="button" disabled={teamSaving !== null} onClick={inviteTeamMember}>
+            {teamSaving === "invite" ? "Sending..." : "Invite member"}
+          </button>
+          <button className="button-ghost" type="button" disabled={teamSaving !== null} onClick={() => void refreshTeamAccess()}>
+            Refresh team
+          </button>
+        </div>
+
+        <div className="stack">
+          <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 className="section-title">People with access</h3>
+            <span className="chip">{teamAccess?.members.length ?? 0}</span>
+          </div>
+          {teamAccess?.members.length ? teamAccess.members.map((member) => (
+            <div key={member.id} className="vendor-team-row">
+              <div className="vendor-team-copy">
+                <strong>{member.name || member.email}</strong>
+                <p className="muted">{member.email}</p>
+              </div>
+              <div className="vendor-team-meta">
+                <span className="chip">{member.role === "shop_holder" ? "Shop Holder" : "Employee"}</span>
+                <span className={member.status === "active" ? "badge" : "badge warn"}>
+                  {member.status === "active" ? "Active" : "Pending"}
+                </span>
+                {member.isPrimaryOwner ? <span className="badge">Primary owner</span> : null}
+              </div>
+              <div className="vendor-team-actions">
+                {!member.isPrimaryOwner ? (
+                  <>
+                    <select
+                      value={member.role}
+                      onChange={(event) => void changeMemberRole(member.id, event.target.value as VendorAccessRole)}
+                      disabled={teamSaving !== null}
+                    >
+                      <option value="employee">Employee</option>
+                      <option value="shop_holder">Shop Holder</option>
+                    </select>
+                    <button
+                      className="button-ghost"
+                      type="button"
+                      disabled={teamSaving !== null}
+                      onClick={() => void removeMember(member.id)}
+                    >
+                      {teamSaving === `remove-${member.id}` ? "Removing..." : "Remove"}
+                    </button>
+                  </>
+                ) : (
+                  <span className="muted">Owner access stays fixed.</span>
+                )}
+              </div>
+            </div>
+          )) : <div className="empty">Only the primary shop holder has access right now.</div>}
+        </div>
+
+        <div className="stack">
+          <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 className="section-title">Pending invites</h3>
+            <span className="chip">{teamAccess?.invites.length ?? 0}</span>
+          </div>
+          {teamAccess?.invites.length ? teamAccess.invites.map((invite) => (
+            <div key={invite.id} className="vendor-team-row">
+              <div className="vendor-team-copy">
+                <strong>{invite.email}</strong>
+                <p className="muted">
+                  {invite.role === "shop_holder" ? "Shop Holder" : "Employee"}
+                  {invite.note ? ` · ${invite.note}` : ""}
+                </p>
+              </div>
+              <div className="vendor-team-meta">
+                <span className="badge warn">Pending</span>
+                <span className="muted">Sent {new Date(invite.lastSentAt).toLocaleString()}</span>
+              </div>
+              <div className="vendor-team-actions">
+                <button
+                  className="button-ghost"
+                  type="button"
+                  disabled={teamSaving !== null}
+                  onClick={() => void resendInvite(invite.id)}
+                >
+                  {teamSaving === `resend-${invite.id}` ? "Sending..." : "Resend"}
+                </button>
+              </div>
+            </div>
+          )) : <div className="empty">No pending invites.</div>}
+        </div>
+      </section>
+
       </div>
+      </VendorWorkspaceShell>
     </RequireRole>
   );
 }

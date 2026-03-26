@@ -23,13 +23,18 @@ import { AccountService } from './account.service';
 import {
   ActivateVendorSubscriptionDto,
   ChangePasswordDto,
+  CreateVendorTeamInviteDto,
   CreatePaymentMethodDto,
+  RequestGuestOrderClaimDto,
   UpdateAccountProfileDto,
   UpdatePaymentMethodDto,
+  UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
   UpdateVendorProfileDto,
   UpsertAddressDto,
+  VerifyGuestOrderClaimDto,
 } from './dto';
+import { Public } from '../common/decorators/public.decorator';
 
 function vendorLogoUploadInterceptor() {
   return FileInterceptor('logoImage', {
@@ -86,6 +91,24 @@ export class AccountController {
     return this.accountService.getAccount(req.user.sub);
   }
 
+  @Post('guest-orders/claim-request')
+  @Roles('customer')
+  requestGuestOrderClaim(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: RequestGuestOrderClaimDto,
+  ) {
+    return this.accountService.requestGuestOrderClaim(
+      req.user.sub,
+      dto.phoneNumber,
+    );
+  }
+
+  @Public()
+  @Post('guest-orders/claim-verify')
+  verifyGuestOrderClaim(@Body() dto: VerifyGuestOrderClaimDto) {
+    return this.accountService.verifyGuestOrderClaim(dto.token);
+  }
+
   @Patch('profile')
   @Roles('admin', 'vendor', 'customer')
   updateProfile(
@@ -135,6 +158,53 @@ export class AccountController {
     @Body() dto: ActivateVendorSubscriptionDto,
   ) {
     return this.accountService.activateVendorSubscription(req.user.sub, dto);
+  }
+
+  @Get('vendor-team')
+  @Roles('vendor')
+  getVendorTeam(@Req() req: { user: AuthenticatedUser }) {
+    return this.accountService.getVendorTeamAccess(req.user.sub);
+  }
+
+  @Post('vendor-team/invitations')
+  @Roles('vendor')
+  createVendorTeamInvite(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: CreateVendorTeamInviteDto,
+  ) {
+    return this.accountService.createVendorTeamInvite(req.user.sub, dto);
+  }
+
+  @Post('vendor-team/invitations/:id/resend')
+  @Roles('vendor')
+  resendVendorTeamInvite(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.accountService.resendVendorTeamInvite(req.user.sub, id);
+  }
+
+  @Patch('vendor-team/members/:id/role')
+  @Roles('vendor')
+  updateVendorTeamMemberRole(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: UpdateVendorTeamMemberRoleDto,
+  ) {
+    return this.accountService.updateVendorTeamMemberRole(
+      req.user.sub,
+      id,
+      dto,
+    );
+  }
+
+  @Delete('vendor-team/members/:id')
+  @Roles('vendor')
+  removeVendorTeamMember(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.accountService.removeVendorTeamMember(req.user.sub, id);
   }
 
   @Post('addresses')

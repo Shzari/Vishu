@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -30,6 +31,29 @@ export class CreateOrderDto {
   @Type(() => OrderItemInputDto)
   items!: OrderItemInputDto[];
 
+  @IsString()
+  @IsNotEmpty()
+  fullName!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @Matches(/^[0-9+\-\s()]{6,40}$/)
+  phoneNumber!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  addressLine1!: string;
+
+  @IsOptional()
+  @IsString()
+  apartmentOrNote?: string;
+
   @IsOptional()
   @IsString()
   specialRequest?: string;
@@ -42,12 +66,20 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  addressId?: string;
+  paymentMethodId?: string;
+}
 
+export class GuestOrderClaimRequestDto {
   @IsOptional()
   @IsString()
+  @Matches(/^[0-9+\-\s()]{6,40}$/)
+  phoneNumber?: string;
+}
+
+export class GuestOrderClaimVerifyDto {
+  @IsString()
   @IsNotEmpty()
-  paymentMethodId?: string;
+  token!: string;
 }
 
 export class VendorOrderStatusDto {

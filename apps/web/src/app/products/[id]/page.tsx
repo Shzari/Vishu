@@ -8,6 +8,8 @@ import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
   formatProductAttributeLabel,
+  getCatalogDepartmentDisplayLabel,
+  isCatalogDepartmentVisible,
 } from "@/lib/catalog";
 import { ProductMedia } from "@/components/product-media";
 import type { Product } from "@/lib/types";
@@ -64,22 +66,20 @@ export default function ProductDetailPage() {
     return <div className="message">Loading product...</div>;
   }
 
-  const genderLabel =
-    product.department === "men"
-      ? "Male"
-      : product.department === "women"
-        ? "Female"
-        : "Unisex";
+  const departmentLabel = getCatalogDepartmentDisplayLabel(product.department);
+  const categoryBrowseHref = isCatalogDepartmentVisible(product.department)
+    ? `/?department=${encodeURIComponent(product.department)}&category=${encodeURIComponent(
+        product.category,
+      )}`
+    : `/?category=${encodeURIComponent(product.category)}`;
+  const departmentBrowseHref = isCatalogDepartmentVisible(product.department)
+    ? `/?department=${encodeURIComponent(product.department)}`
+    : null;
 
   return (
     <div className="product-detail-shell stack">
       <div className="product-detail-top-links">
-        <Link
-          className="table-link"
-          href={`/?department=${encodeURIComponent(product.department)}&category=${encodeURIComponent(
-            product.category,
-          )}`}
-        >
+        <Link className="table-link" href={categoryBrowseHref}>
           Back to {formatCatalogLabel(product.category)}
         </Link>
         <Link className="table-link" href="/shops">
@@ -93,7 +93,11 @@ export default function ProductDetailPage() {
             <ProductMedia
               image={assetUrl(selectedImage)}
               title={product.title}
-              subtitle={`${formatCatalogLabel(product.department)} ${formatCatalogLabel(product.category)}`}
+              subtitle={
+                departmentLabel
+                  ? `${departmentLabel} ${formatCatalogLabel(product.category)}`
+                  : formatCatalogLabel(product.category)
+              }
             />
           </div>
           <div className="product-detail-thumbs">
@@ -112,7 +116,9 @@ export default function ProductDetailPage() {
 
         <div className="product-detail-info">
           <div className="product-kicker">
-            {formatCatalogLabel(product.department)} / {formatCatalogLabel(product.category)}
+            {departmentLabel
+              ? `${departmentLabel} / ${formatCatalogLabel(product.category)}`
+              : formatCatalogLabel(product.category)}
           </div>
           <h1 className="product-detail-title">{product.title}</h1>
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
@@ -131,6 +137,8 @@ export default function ProductDetailPage() {
                   title: product.title,
                   price: product.price,
                   image: product.images[0],
+                  color: product.color ?? product.colors[0]?.name ?? null,
+                  size: product.size ?? product.sizeVariants[0]?.label ?? null,
                   quantity: 1,
                   stock: product.stock,
                 })
@@ -145,24 +153,26 @@ export default function ProductDetailPage() {
           </div>
 
           <div className="product-detail-browse-row">
-            <Link className="chip" href={`/?department=${encodeURIComponent(product.department)}`}>
-              {formatCatalogLabel(product.department)}
-            </Link>
+            {departmentBrowseHref ? (
+              <Link className="chip" href={departmentBrowseHref}>
+                {departmentLabel}
+              </Link>
+            ) : null}
             <Link
               className="chip"
-              href={`/?department=${encodeURIComponent(product.department)}&category=${encodeURIComponent(
-                product.category,
-              )}`}
+              href={categoryBrowseHref}
             >
               {formatCatalogLabel(product.category)}
             </Link>
           </div>
 
           <div className="product-detail-meta">
-            <div className="meta-row">
-              <span>Gender</span>
-              <strong>{genderLabel}</strong>
-            </div>
+            {departmentLabel ? (
+              <div className="meta-row">
+                <span>Gender</span>
+                <strong>{departmentLabel === "Men" ? "Male" : "Female"}</strong>
+              </div>
+            ) : null}
             <div className="meta-row">
               <span>Category</span>
               <strong>{formatCatalogLabel(product.category)}</strong>
@@ -226,6 +236,9 @@ export default function ProductDetailPage() {
                           title: entry.title,
                           price: entry.price,
                           image: entry.images[0],
+                          color: entry.color ?? entry.colors[0]?.name ?? null,
+                          size:
+                            entry.size ?? entry.sizeVariants[0]?.label ?? null,
                           quantity: 1,
                           stock: entry.stock,
                         })

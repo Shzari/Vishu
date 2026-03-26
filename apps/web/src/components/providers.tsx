@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -25,6 +26,10 @@ interface AuthContextValue {
 
 interface CartContextValue {
   items: CartItem[];
+  isCartOpen: boolean;
+  openCart: () => void;
+  closeCart: () => void;
+  toggleCart: () => void;
   addItem: (item: CartItem) => void;
   updateItemQuantity: (productId: string, quantity: number) => void;
   removeItem: (productId: string) => void;
@@ -106,6 +111,7 @@ export function Providers({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState<BrandingSettings>(defaultBranding);
   const [loading, setLoading] = useState(true);
   const [items, setItems] = usePersistentState<CartItem[]>("vishu-cart", []);
+  const [isCartOpen, setCartOpen] = useState(false);
   const [cartReady, setCartReady] = useState(false);
   const currentRole = profile?.role ?? user?.role ?? null;
   const isAuthenticated = !loading && Boolean(token && currentRole);
@@ -115,6 +121,7 @@ export function Providers({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setItems([]);
+    setCartOpen(false);
     setCartReady(false);
     setLoading(false);
   };
@@ -218,6 +225,8 @@ export function Providers({ children }: { children: ReactNode }) {
               title: item.product.title,
               price: item.product.price,
               image: item.product.images[0],
+              color: current.find((entry) => entry.productId === item.productId)?.color ?? null,
+              size: current.find((entry) => entry.productId === item.productId)?.size ?? null,
               quantity: item.quantity,
               stock: item.product.stock,
             });
@@ -278,6 +287,18 @@ export function Providers({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [cartReady, currentRole, items, token, user]);
 
+  const openCart = useCallback(() => {
+    setCartOpen(true);
+  }, []);
+
+  const closeCart = useCallback(() => {
+    setCartOpen(false);
+  }, []);
+
+  const toggleCart = useCallback(() => {
+    setCartOpen((current) => !current);
+  }, []);
+
   const authValue = useMemo<AuthContextValue>(
     () => ({
       token,
@@ -302,6 +323,10 @@ export function Providers({ children }: { children: ReactNode }) {
   const cartValue = useMemo<CartContextValue>(
     () => ({
       items,
+      isCartOpen,
+      openCart,
+      closeCart,
+      toggleCart,
       addItem: (item) => {
         setItems((current) => {
           const existing = current.find((entry) => entry.productId === item.productId);
@@ -313,11 +338,14 @@ export function Providers({ children }: { children: ReactNode }) {
             entry.productId === item.productId
               ? {
                   ...entry,
+                  color: item.color ?? entry.color ?? null,
+                  size: item.size ?? entry.size ?? null,
                   quantity: Math.min(entry.quantity + item.quantity, entry.stock),
                 }
               : entry,
           );
         });
+        openCart();
       },
       updateItemQuantity: (productId, quantity) => {
         setItems((current) =>
@@ -335,7 +363,7 @@ export function Providers({ children }: { children: ReactNode }) {
       },
       clearCart: () => setItems([]),
     }),
-    [items, setItems],
+    [closeCart, isCartOpen, items, openCart, setItems, toggleCart],
   );
 
   const brandingValue = useMemo<BrandingContextValue>(

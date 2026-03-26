@@ -2,14 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
-import type { SessionUser } from "@/lib/types";
 type RegisterRole = "customer" | "vendor";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { setSession } = useAuth();
   const [role, setRole] = useState<RegisterRole>("customer");
   const [shopName, setShopName] = useState("");
   const [fullName, setFullName] = useState("");
@@ -56,7 +53,7 @@ export default function RegisterPage() {
         return;
       }
 
-      const response = await apiRequest<{ message: string; accessToken: string; user: SessionUser }>(
+      const response = await apiRequest<{ message: string }>(
         "/auth/register",
         {
           method: "POST",
@@ -65,12 +62,11 @@ export default function RegisterPage() {
       );
 
       setMessage(response.message);
-      setSession(response.accessToken, response.user);
       setFullName("");
       setEmail("");
       setPhoneNumber("");
       setPassword("");
-      window.setTimeout(() => router.push("/"), 700);
+      window.setTimeout(() => router.push("/login"), 1400);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Registration failed.");
     } finally {
@@ -88,7 +84,7 @@ export default function RegisterPage() {
         <p className="hero-copy">
           {role === "vendor"
             ? "Create a vendor account, verify your email, and wait for admin approval before listing products."
-            : "Create a customer account and start placing unified orders across multiple vendors right away."}
+            : "Create a customer account, then activate it from your email to track orders and manage future purchases."}
         </p>
       </section>
 

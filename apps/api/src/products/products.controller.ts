@@ -26,6 +26,7 @@ import {
   ProductListingDto,
   ProductMutationDto,
   ProductUpdateDto,
+  VendorCatalogRequestDto,
 } from './dto';
 import { ProductsService } from './products.service';
 
@@ -109,6 +110,27 @@ export class ProductsController {
   @Get('vendor/me')
   getVendorProducts(@Req() req: { user: AuthenticatedUser }) {
     return this.productsService.getVendorProducts(req.user);
+  }
+
+  @Roles('vendor')
+  @Get('vendor/catalog-options')
+  getVendorCatalogOptions(@Req() req: { user: AuthenticatedUser }) {
+    return this.productsService.getVendorCatalogOptions(req.user);
+  }
+
+  @Roles('vendor')
+  @Get('vendor/catalog-requests')
+  getVendorCatalogRequests(@Req() req: { user: AuthenticatedUser }) {
+    return this.productsService.getVendorCatalogRequests(req.user);
+  }
+
+  @Roles('vendor')
+  @Post('vendor/catalog-requests')
+  createVendorCatalogRequest(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: VendorCatalogRequestDto,
+  ) {
+    return this.productsService.createVendorCatalogRequest(req.user, dto);
   }
 
   @Public()

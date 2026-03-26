@@ -68,6 +68,11 @@ function ResetPasswordInner() {
     <div className="form-card form-grid">
       <h1 className="section-title">{token ? "Set a new password" : "Request a password reset"}</h1>
       {token ? (
+        <p className="muted">
+          This page also activates customer accounts created after checkout once you set your password.
+        </p>
+      ) : null}
+      {token ? (
         <form className="form-grid" onSubmit={confirmReset}>
           <div className="field">
             <label>New password</label>

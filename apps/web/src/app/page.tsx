@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/components/providers";
+import { StorefrontCategoryNav } from "@/components/storefront-category-nav";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
+  getCatalogDepartmentDisplayLabel,
   getCatalogCategoriesForDepartment,
   getCatalogGenderLabel,
 } from "@/lib/catalog";
@@ -17,80 +19,15 @@ import type {
   PublicVendorSummary,
 } from "@/lib/types";
 
-const STOREFRONT_NAV_GROUPS = [
-  {
-    id: "men",
-    label: "MEN",
-    department: "men",
-    available: true,
-    note: "Refined daily staples, tailoring, and outerwear.",
-    subcategories: [
-      "tshirts",
-      "shirts",
-      "hoodies",
-      "jackets",
-      "jeans",
-      "pants",
-      "outerwear",
-      "sportswear",
-    ],
-  },
-  {
-    id: "women",
-    label: "WOMEN",
-    department: "women",
-    available: true,
-    note: "Dresses, elevated essentials, and seasonal layers.",
-    subcategories: [
-      "dresses",
-      "tops",
-      "jackets",
-      "shirts",
-      "jeans",
-      "skirts",
-      "leggings",
-      "accessories",
-    ],
-  },
-  {
-    id: "kids",
-    label: "KIDS",
-    available: false,
-    note: "Structured kidswear navigation is prepared for the next catalog expansion.",
-    subcategories: [
-      "tshirts",
-      "hoodies",
-      "jackets",
-      "sets",
-      "jeans",
-      "pants",
-      "schoolwear",
-      "sleepwear",
-    ],
-  },
-  {
-    id: "babies",
-    label: "BABIES",
-    available: false,
-    note: "Soft essentials, newborn sets, and nursery basics are coming into the catalog.",
-    subcategories: [
-      "bodysuits",
-      "rompers",
-      "sets",
-      "outerwear",
-      "sleepwear",
-      "blankets",
-      "accessories",
-      "gift sets",
-    ],
-  },
-] as const;
+const NEW_ARRIVAL_LIMIT = 24;
 
-type StorefrontNavGroup = (typeof STOREFRONT_NAV_GROUPS)[number];
+type BrowseMode = "catalog" | "new";
 
 function applyCatalogFilters(
   items: Product[],
   filters: {
+    browseMode: BrowseMode;
+    newArrivalIds: Set<string>;
     department: string;
     category: string;
     minPrice: string;
@@ -100,6 +37,8 @@ function applyCatalogFilters(
   },
 ) {
   return items.filter((product) => {
+    const matchesBrowseMode =
+      filters.browseMode !== "new" || filters.newArrivalIds.has(product.id);
     const matchesDepartment =
       filters.department === "all" || product.department === filters.department;
     const matchesCategory =
@@ -114,6 +53,7 @@ function applyCatalogFilters(
     const matchesSize = filters.size === "all" || product.size === filters.size;
 
     return (
+      matchesBrowseMode &&
       matchesDepartment &&
       matchesCategory &&
       matchesMinPrice &&
@@ -146,10 +86,9 @@ export default function HomePage() {
     null,
   );
   const [search, setSearch] = useState("");
+  const [browseMode, setBrowseMode] = useState<BrowseMode>("catalog");
   const [department, setDepartment] = useState("all");
   const [category, setCategory] = useState("all");
-  const [activeNavGroupId, setActiveNavGroupId] = useState<string>("men");
-  const [isNavMenuOpen, setIsNavMenuOpen] = useState(false);
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [color, setColor] = useState("all");
@@ -190,6 +129,7 @@ export default function HomePage() {
     const syncFromLocation = () => {
       const params = new URLSearchParams(window.location.search);
       setSearch(params.get("search") ?? "");
+      setBrowseMode(params.get("browse") === "new" ? "new" : "catalog");
       setDepartment(params.get("department") ?? "all");
       setCategory(params.get("category") ?? "all");
       setMinPrice(params.get("minPrice") ?? "");
@@ -216,6 +156,7 @@ export default function HomePage() {
 
     const params = new URLSearchParams();
     if (search.trim()) params.set("search", search.trim());
+    if (browseMode === "new") params.set("browse", "new");
     if (department !== "all") params.set("department", department);
     if (category !== "all") params.set("category", category);
     if (minPrice.trim()) params.set("minPrice", minPrice.trim());
@@ -234,6 +175,7 @@ export default function HomePage() {
       );
     }
   }, [
+    browseMode,
     category,
     color,
     department,
@@ -304,17 +246,33 @@ export default function HomePage() {
     () => ["all", ...getCatalogCategoriesForDepartment(department)],
     [department],
   );
+  const newArrivalIds = useMemo(
+    () =>
+      new Set(
+        [...products]
+          .sort(
+            (left, right) =>
+              new Date(right.createdAt).getTime() -
+              new Date(left.createdAt).getTime(),
+          )
+          .slice(0, NEW_ARRIVAL_LIMIT)
+          .map((product) => product.id),
+      ),
+    [products],
+  );
   const categoryScopedProducts = useMemo(
     () =>
       products.filter((product) => {
+        const matchesBrowseMode =
+          browseMode !== "new" || newArrivalIds.has(product.id);
         const matchesDepartment =
           department === "all" || product.department === department;
         const matchesCategory =
           category === "all" || product.category === category;
 
-        return matchesDepartment && matchesCategory;
+        return matchesBrowseMode && matchesDepartment && matchesCategory;
       }),
-    [category, department, products],
+    [browseMode, category, department, newArrivalIds, products],
   );
   const availableColors = useMemo(
     () =>
@@ -356,16 +314,39 @@ export default function HomePage() {
   }, [availableSizes, size]);
 
   const filteredProducts = useMemo(
-    () =>
-      applyCatalogFilters(products, {
+    () => {
+      const visibleProducts = applyCatalogFilters(products, {
+        browseMode,
+        newArrivalIds,
         department,
         category,
         minPrice,
         maxPrice,
         color,
         size,
-      }),
-    [category, color, department, maxPrice, minPrice, products, size],
+      });
+
+      if (browseMode !== "new") {
+        return visibleProducts;
+      }
+
+      return [...visibleProducts].sort(
+        (left, right) =>
+          new Date(right.createdAt).getTime() -
+          new Date(left.createdAt).getTime(),
+      );
+    },
+    [
+      browseMode,
+      category,
+      color,
+      department,
+      maxPrice,
+      minPrice,
+      newArrivalIds,
+      products,
+      size,
+    ],
   );
   const visibleSearchSections = useMemo(
     () =>
@@ -373,6 +354,8 @@ export default function HomePage() {
         .map((section) => ({
           ...section,
           products: applyCatalogFilters(section.products, {
+            browseMode,
+            newArrivalIds,
             department,
             category,
             minPrice,
@@ -383,11 +366,13 @@ export default function HomePage() {
         }))
         .filter((section) => section.products.length > 0),
     [
+      browseMode,
       category,
       color,
       department,
       maxPrice,
       minPrice,
+      newArrivalIds,
       searchResults,
       size,
     ],
@@ -400,6 +385,8 @@ export default function HomePage() {
     );
 
     return applyCatalogFilters(searchResults?.fallbackProducts ?? [], {
+      browseMode,
+      newArrivalIds,
       department,
       category,
       minPrice,
@@ -408,11 +395,13 @@ export default function HomePage() {
       size,
     }).filter((product) => !visibleIds.has(product.id));
   }, [
+    browseMode,
     category,
     color,
     department,
     maxPrice,
     minPrice,
+    newArrivalIds,
     searchResults,
     size,
     visibleSearchSections,
@@ -440,7 +429,10 @@ export default function HomePage() {
     visibleSearchSections.length === 0 &&
     fallbackSearchProducts.length > 0;
   const hasFocusedBrowse =
-    department !== "all" || category !== "all" || search.trim().length > 0;
+    browseMode === "new" ||
+    department !== "all" ||
+    category !== "all" ||
+    search.trim().length > 0;
 
   const featuredVendors = useMemo(() => {
     const relevantVendors = vendors.filter((vendor) => {
@@ -466,19 +458,6 @@ export default function HomePage() {
     return shuffled.slice(0, 8);
   }, [category, department, vendors]);
   const activeHeroSlide = homepageHero.slides[activeHeroIndex] ?? null;
-  const activeNavGroup = useMemo<StorefrontNavGroup>(
-    () =>
-      STOREFRONT_NAV_GROUPS.find((entry) => entry.id === activeNavGroupId) ??
-      STOREFRONT_NAV_GROUPS[0],
-    [activeNavGroupId],
-  );
-  const activeNavCategories = useMemo(
-    () =>
-      activeNavGroup.available && activeNavGroup.department
-        ? getCatalogCategoriesForDepartment(activeNavGroup.department)
-        : [...activeNavGroup.subcategories],
-    [activeNavGroup],
-  );
   useEffect(() => {
     if (!quickViewProduct) {
       return;
@@ -531,31 +510,6 @@ export default function HomePage() {
     homepageHero.slides.length,
   ]);
 
-  useEffect(() => {
-    if (department === "men" || department === "women") {
-      setActiveNavGroupId(department);
-    }
-  }, [department]);
-
-  function previewNavGroup(groupId: string) {
-    setActiveNavGroupId(groupId);
-    setIsNavMenuOpen(true);
-  }
-
-  function closeNavGroupPreview() {
-    setIsNavMenuOpen(false);
-  }
-
-  function browseDepartmentCategory(
-    nextDepartment: string,
-    nextCategory: string,
-  ) {
-    setDepartment(nextDepartment);
-    setCategory(nextCategory);
-    setActiveNavGroupId(nextDepartment);
-    setIsNavMenuOpen(false);
-  }
-
   function closeQuickView() {
     setQuickViewProduct(null);
     setSelectedQuickViewImage(undefined);
@@ -582,6 +536,7 @@ export default function HomePage() {
 
 
   function clearBrowseFilters() {
+    setBrowseMode("catalog");
     setDepartment("all");
     setCategory("all");
     setMinPrice("");
@@ -593,95 +548,12 @@ export default function HomePage() {
   return (
     <div className="storefront">
       <section className="storefront-top-layout">
-        <div
-          className="storefront-browse-stage"
-          onMouseLeave={closeNavGroupPreview}
-        >
-          <div
-            className="storefront-department-bar"
-            role="tablist"
-            aria-label="Browse categories"
-          >
-            {STOREFRONT_NAV_GROUPS.map((group) => (
-              <button
-                key={group.id}
-                type="button"
-                role="tab"
-                aria-selected={
-                  (group.id === "men" || group.id === "women") &&
-                  department === group.id &&
-                  category !== "all"
-                }
-                className={
-                  (group.id === "men" || group.id === "women") &&
-                  department === group.id &&
-                  category !== "all"
-                    ? "storefront-department-tab active"
-                    : "storefront-department-tab"
-                }
-                onMouseEnter={() => previewNavGroup(group.id)}
-                onFocus={() => previewNavGroup(group.id)}
-                onClick={() => previewNavGroup(group.id)}
-              >
-                <span>{formatCatalogLabel(group.label.toLowerCase())}</span>
-              </button>
-            ))}
-          </div>
-          <div
-            className={
-              isNavMenuOpen
-                ? "storefront-submenu-panel is-open"
-                : "storefront-submenu-panel"
-            }
-            aria-hidden={!isNavMenuOpen}
-          >
-            <div
-              className="storefront-submenu-list"
-              role="tabpanel"
-              aria-label={`${activeNavGroup.label} categories`}
-            >
-              {activeNavGroup.available && activeNavGroup.department ? null : (
-                <div className="storefront-submenu-note">
-                  Kids and babies categories are prepared for the next catalog
-                  expansion.
-                </div>
-              )}
-              {activeNavCategories.map((entry) => {
-                const canBrowse =
-                  activeNavGroup.available &&
-                  Boolean(activeNavGroup.department);
-                const isActive =
-                  canBrowse &&
-                  department === activeNavGroup.department &&
-                  category === entry;
-
-                return (
-                  <button
-                    key={`${activeNavGroup.id}-${entry}`}
-                    type="button"
-                    className={
-                      isActive
-                        ? "storefront-submenu-link active"
-                        : "storefront-submenu-link"
-                    }
-                    onClick={() =>
-                      canBrowse && activeNavGroup.department
-                        ? browseDepartmentCategory(
-                            activeNavGroup.department,
-                            entry,
-                          )
-                        : undefined
-                    }
-                    disabled={!canBrowse}
-                  >
-                    <span>{formatCatalogLabel(entry)}</span>
-                    <strong>&gt;</strong>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <StorefrontCategoryNav
+          mode={browseMode}
+          currentDepartment={department}
+          currentCategory={category}
+          vendors={vendors}
+        />
 
         <section className="storefront-hero-stage storefront-promotion-stage">
           {homepageHero.slides.length > 1 ? (
@@ -768,6 +640,9 @@ export default function HomePage() {
             {search.trim() ? (
               <span className="chip">Search: {search.trim()}</span>
             ) : null}
+            {browseMode === "new" ? (
+              <span className="chip">New arrivals</span>
+            ) : null}
             {department !== "all" ? (
               <span className="chip">{formatCatalogLabel(department)}</span>
             ) : null}
@@ -796,7 +671,7 @@ export default function HomePage() {
           )}
         </div>
 
-        {(department !== "all" || category !== "all") && (
+        {(browseMode === "new" || department !== "all" || category !== "all") && (
           <div className="catalog-inline-filters">
             <label className="field">
               <span>Min price</span>
@@ -895,19 +770,21 @@ export default function HomePage() {
                 </div>
                 <div className="product-card-body">
                   <div className="product-title-link">{product.title}</div>
+                  <div className="product-secondary-line">
+                    {browseMode === "new"
+                      ? `New arrival \u00b7 ${formatCatalogLabel(product.category)}`
+                      : formatCatalogLabel(product.category)}
+                    {product.color
+                      ? ` \u00b7 ${formatCatalogLabel(product.color)}`
+                      : ""}
+                    {product.size
+                      ? ` \u00b7 ${String(product.size).toUpperCase()}`
+                      : ""}
+                  </div>
                   <div className="product-price-row product-price-row-stacked">
                     <span className="price">
                       {formatCurrency(product.price)}
                     </span>
-                  </div>
-                  <div className="product-secondary-line">
-                    {formatCatalogLabel(product.category)}
-                    {product.color
-                      ? ` · ${formatCatalogLabel(product.color)}`
-                      : ""}
-                    {product.size
-                      ? ` · ${String(product.size).toUpperCase()}`
-                      : ""}
                   </div>
                   <div
                     className={
@@ -1044,6 +921,14 @@ export default function HomePage() {
                         title: quickViewProduct.title,
                         price: quickViewProduct.price,
                         image: quickViewProduct.images[0],
+                        color:
+                          quickViewProduct.color ??
+                          quickViewProduct.colors[0]?.name ??
+                          null,
+                        size:
+                          quickViewProduct.size ??
+                          quickViewProduct.sizeVariants[0]?.label ??
+                          null,
                         quantity: 1,
                         stock: quickViewProduct.stock,
                       })
@@ -1075,12 +960,18 @@ export default function HomePage() {
                       </Link>
                     </div>
                   )}
-                  <div className="meta-row">
-                    <span>{getCatalogGenderLabel()}</span>
-                    <strong>
-                      {formatCatalogLabel(quickViewProduct.department)}
-                    </strong>
-                  </div>
+                  {getCatalogDepartmentDisplayLabel(
+                    quickViewProduct.department,
+                  ) ? (
+                    <div className="meta-row">
+                      <span>{getCatalogGenderLabel()}</span>
+                      <strong>
+                        {getCatalogDepartmentDisplayLabel(
+                          quickViewProduct.department,
+                        )}
+                      </strong>
+                    </div>
+                  ) : null}
                   <div className="meta-row">
                     <span>Category</span>
                     <strong>

@@ -1,5 +1,6 @@
 import {
   ArrayNotEmpty,
+  ArrayMinSize,
   IsBoolean,
   IsArray,
   IsInt,
@@ -30,25 +31,17 @@ export class ProductMutationDto {
   @Min(0)
   stock!: number;
 
-  @IsOptional()
-  @Transform(({ value }) =>
-    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
-  )
   @IsString()
   @IsNotEmpty()
-  department?: string;
+  brandId!: string;
 
   @IsString()
   @IsNotEmpty()
-  category!: string;
+  categoryId!: string;
 
-  @IsOptional()
-  @Transform(({ value }) =>
-    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
-  )
   @IsString()
   @IsNotEmpty()
-  color?: string;
+  subcategoryId!: string;
 
   @IsOptional()
   @Transform(({ value }) =>
@@ -56,7 +49,44 @@ export class ProductMutationDto {
   )
   @IsString()
   @IsNotEmpty()
-  size?: string;
+  genderGroupId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  sizeTypeId?: string;
+
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  colorIds!: string[];
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  sizeVariants?: Array<{ sizeId: string; stock: number }>;
 
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
@@ -81,6 +111,21 @@ export class ProductUpdateDto {
   price?: number;
 
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  brandId?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  categoryId?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  subcategoryId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -92,12 +137,7 @@ export class ProductUpdateDto {
   )
   @IsString()
   @IsNotEmpty()
-  department?: string;
-
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  category?: string;
+  genderGroupId?: string;
 
   @IsOptional()
   @Transform(({ value }) =>
@@ -105,15 +145,42 @@ export class ProductUpdateDto {
   )
   @IsString()
   @IsNotEmpty()
-  color?: string;
+  sizeTypeId?: string;
 
   @IsOptional()
-  @Transform(({ value }) =>
-    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
-  )
-  @IsString()
-  @IsNotEmpty()
-  size?: string;
+  @Transform(({ value }) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsString({ each: true })
+  colorIds?: string[];
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  sizeVariants?: Array<{ sizeId: string; stock: number }>;
 
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
@@ -136,4 +203,42 @@ export class ProductBulkStockDto {
   @IsInt()
   @Min(0)
   stock!: number;
+}
+
+export class VendorCatalogRequestDto {
+  @IsString()
+  @IsNotEmpty()
+  requestType!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  requestedValue!: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  categoryId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  subcategoryId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  sizeTypeId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  note?: string;
 }

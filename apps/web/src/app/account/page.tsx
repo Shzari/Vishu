@@ -43,6 +43,7 @@ export default function AccountPage() {
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [claimingGuestOrders, setClaimingGuestOrders] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -292,6 +293,34 @@ export default function AccountPage() {
     }
   }
 
+  async function requestGuestOrderClaim() {
+    if (!token) return;
+
+    try {
+      setClaimingGuestOrders(true);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        "/account/guest-orders/claim-request",
+        {
+          method: "POST",
+          body: JSON.stringify({ phoneNumber }),
+        },
+        token,
+      );
+      setMessage(response.message);
+      await loadAccount();
+    } catch (claimError) {
+      setError(
+        claimError instanceof Error
+          ? claimError.message
+          : "Failed to start guest order claim.",
+      );
+    } finally {
+      setClaimingGuestOrders(false);
+    }
+  }
+
   if (loading || !account) {
     return (
       <RequireRole requiredRole="customer">
@@ -331,6 +360,34 @@ export default function AccountPage() {
           <strong>{account.recentOrders.length}</strong>
           <span className="muted">Recent orders</span>
         </div>
+      </section>
+
+      <section className="form-card stack">
+        <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+          <div>
+            <h2 className="section-title">Guest Order Recovery</h2>
+            <p className="muted">
+              Connect older guest orders only after verifying ownership through your
+              account email.
+            </p>
+          </div>
+          <span className="chip">
+            {account.guestOrderRecovery.claimableCount} pending
+          </span>
+        </div>
+        <p className="muted">
+          If you placed orders before creating this account, we can email you a
+          secure verification link and attach matching guest orders only after that
+          verification step is completed.
+        </p>
+        <button
+          className="button"
+          type="button"
+          disabled={claimingGuestOrders}
+          onClick={requestGuestOrderClaim}
+        >
+          {claimingGuestOrders ? "Sending link..." : "Email me the claim link"}
+        </button>
       </section>
 
       <section className="account-top-grid">

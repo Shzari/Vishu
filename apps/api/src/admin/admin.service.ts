@@ -13,7 +13,16 @@ import { MailService } from '../mail/mail.service';
 import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import {
+  BrandMutationDto,
+  CatalogMasterDataMutationDto,
+  CategoryMutationDto,
+  ColorMutationDto,
   CreateAdminUserDto,
+  GenderGroupMutationDto,
+  ReviewCatalogRequestDto,
+  SizeMutationDto,
+  SizeTypeMutationDto,
+  SubcategoryMutationDto,
   UpdatePlatformSettingsDto,
   UpdateVendorSubscriptionDto,
 } from './dto';
@@ -177,9 +186,9 @@ export class AdminService {
         created_at: Date;
         customer_email: string;
       }>(
-        `SELECT TOP 6 o.id, o.total_price, o.payment_method, o.payment_status, o.cod_status_note, o.cod_updated_at, o.status, o.created_at, u.email AS customer_email
+        `SELECT TOP 6 o.id, o.total_price, o.payment_method, o.payment_status, o.cod_status_note, o.cod_updated_at, o.status, o.created_at, COALESCE(u.email, o.guest_email) AS customer_email
          FROM orders o
-         INNER JOIN users u ON u.id = o.customer_id
+         LEFT JOIN users u ON u.id = o.customer_id
          ORDER BY o.created_at DESC`,
       ),
       this.databaseService.query<{
@@ -639,6 +648,831 @@ export class AdminService {
     });
 
     return this.getPlatformSettings();
+  }
+
+  async getCatalogRequests(typeInput?: string, statusInput?: string) {
+    const type = this.normalizeCatalogOptionTypeFilter(typeInput);
+    const status = this.normalizeCatalogRequestStatusFilter(statusInput);
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+
+    if (type) {
+      values.push(type);
+      conditions.push(`r.request_type = $${values.length}`);
+    }
+
+    if (status) {
+      values.push(status);
+      conditions.push(`r.status = $${values.length}`);
+    }
+
+    const result = await this.databaseService.query<{
+      id: string;
+      vendor_id: string;
+      shop_name: string;
+      vendor_email: string;
+      request_type: string;
+      requested_value: string;
+      note: string | null;
+      status: string;
+      admin_note: string | null;
+      reviewed_at: Date | null;
+      created_at: Date;
+      category_id: string | null;
+      category_name: string | null;
+      subcategory_id: string | null;
+      subcategory_name: string | null;
+      size_type_id: string | null;
+      size_type_name: string | null;
+    }>(
+      `SELECT
+         r.id,
+         r.vendor_id,
+         v.shop_name,
+         u.email AS vendor_email,
+         r.request_type,
+         r.requested_value,
+         r.note,
+         r.status,
+         r.admin_note,
+         r.reviewed_at,
+         r.created_at,
+         r.category_id,
+         c.name AS category_name,
+         r.subcategory_id,
+         sc.name AS subcategory_name,
+         r.size_type_id,
+         st.name AS size_type_name
+       FROM vendor_requests r
+       INNER JOIN vendors v ON v.id = r.vendor_id
+       INNER JOIN users u ON u.id = v.user_id
+       LEFT JOIN categories c ON c.id = r.category_id
+       LEFT JOIN subcategories sc ON sc.id = r.subcategory_id
+       LEFT JOIN size_types st ON st.id = r.size_type_id
+       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+       ORDER BY
+         CASE r.status
+           WHEN 'pending' THEN 0
+           WHEN 'approved' THEN 1
+           ELSE 2
+         END,
+         r.created_at DESC`,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      requestType: row.request_type,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      subcategoryId: row.subcategory_id,
+      subcategoryName: row.subcategory_name,
+      sizeTypeId: row.size_type_id,
+      sizeTypeName: row.size_type_name,
+      requestedValue: row.requested_value,
+      note: row.note,
+      status: row.status,
+      adminNote: row.admin_note,
+      reviewedAt: row.reviewed_at,
+      createdAt: row.created_at,
+      vendor: {
+        id: row.vendor_id,
+        shopName: row.shop_name,
+        email: row.vendor_email,
+      },
+    }));
+  }
+
+  async reviewCatalogRequest(
+    adminUserId: string,
+    requestId: string,
+    dto: ReviewCatalogRequestDto,
+  ) {
+    const current = await this.databaseService.query<{
+      id: string;
+      request_type: string;
+      requested_value: string;
+      status: string;
+      admin_note: string | null;
+      vendor_id: string;
+      shop_name: string;
+    }>(
+      `SELECT TOP 1
+         r.id,
+         r.request_type,
+         r.requested_value,
+         r.status,
+         r.admin_note,
+         r.vendor_id,
+         v.shop_name
+       FROM vendor_requests r
+       INNER JOIN vendors v ON v.id = r.vendor_id
+       WHERE r.id = $1`,
+      [requestId],
+    );
+
+    const row = current.rows[0];
+    if (!row) {
+      throw new NotFoundException('Catalog request not found');
+    }
+
+    const nextStatus = this.normalizeCatalogRequestStatus(dto.status);
+    const adminNote = this.normalizeOptionalCatalogText(dto.adminNote, 500);
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE vendor_requests
+         SET status = $1,
+             admin_note = $2,
+             reviewed_by_admin_id = $3,
+             reviewed_at = SYSDATETIME(),
+             updated_at = SYSDATETIME()
+         WHERE id = $4`,
+        [nextStatus, adminNote, adminUserId, requestId],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'catalog_request_reviewed',
+          entityType: 'catalog_request',
+          entityId: requestId,
+          entityLabel: row.requested_value,
+          description: `${nextStatus === 'approved' ? 'Approved' : 'Rejected'} ${row.request_type} request "${row.requested_value}" from ${row.shop_name}.`,
+          metadata: {
+            vendorId: row.vendor_id,
+            vendorName: row.shop_name,
+            requestType: row.request_type,
+            previousStatus: row.status,
+            nextStatus,
+            adminNote,
+          },
+        },
+        client,
+      );
+    });
+
+    return this.getCatalogRequests();
+  }
+
+  async getCatalogStructure() {
+    const [
+      categories,
+      subcategories,
+      brands,
+      colors,
+      sizeTypes,
+      sizes,
+      genderGroups,
+    ] = await Promise.all([
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT id, name, is_active, sort_order
+         FROM categories
+         ORDER BY sort_order ASC, name ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        category_id: string;
+        category_name: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT sc.id, sc.category_id, c.name AS category_name, sc.name, sc.is_active, sc.sort_order
+         FROM subcategories sc
+         INNER JOIN categories c ON c.id = sc.category_id
+         ORDER BY c.sort_order ASC, c.name ASC, sc.sort_order ASC, sc.name ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT id, name, is_active, sort_order
+         FROM brands
+         ORDER BY sort_order ASC, name ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT id, name, is_active, sort_order
+         FROM colors
+         ORDER BY sort_order ASC, name ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT id, name, is_active, sort_order
+         FROM size_types
+         ORDER BY sort_order ASC, name ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        size_type_id: string;
+        size_type_name: string;
+        label: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT s.id, s.size_type_id, st.name AS size_type_name, s.label, s.is_active, s.sort_order
+         FROM sizes s
+         INNER JOIN size_types st ON st.id = s.size_type_id
+         ORDER BY st.sort_order ASC, st.name ASC, s.sort_order ASC, s.label ASC`,
+      ),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        sort_order: number;
+      }>(
+        `SELECT id, name, is_active, sort_order
+         FROM gender_groups
+         ORDER BY sort_order ASC, name ASC`,
+      ),
+    ]);
+
+    return {
+      categories: categories.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      subcategories: subcategories.rows.map((row) => ({
+        id: row.id,
+        categoryId: row.category_id,
+        categoryName: row.category_name,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      brands: brands.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      colors: colors.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      sizeTypes: sizeTypes.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      sizes: sizes.rows.map((row) => ({
+        id: row.id,
+        sizeTypeId: row.size_type_id,
+        sizeTypeName: row.size_type_name,
+        label: row.label,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+      genderGroups: genderGroups.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        isActive: row.is_active,
+        sortOrder: row.sort_order,
+      })),
+    };
+  }
+
+  async createCategory(adminUserId: string, dto: CategoryMutationDto) {
+    await this.createNamedCatalogEntity(adminUserId, {
+      table: 'categories',
+      labelField: 'name',
+      entityType: 'category',
+      value: dto.name,
+      isActive: dto.isActive ?? true,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateCategory(adminUserId: string, id: string, dto: CategoryMutationDto) {
+    await this.updateNamedCatalogEntity(adminUserId, id, {
+      table: 'categories',
+      labelField: 'name',
+      entityType: 'category',
+      value: dto.name,
+      isActive: dto.isActive,
+      sortOrder: dto.sortOrder,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteCategory(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'categories',
+      labelField: 'name',
+      entityType: 'category',
+      inUseQuery: `SELECT
+        (SELECT COUNT(*) FROM subcategories WHERE category_id = $1) +
+        (SELECT COUNT(*) FROM products WHERE category_id = $1) +
+        (SELECT COUNT(*) FROM vendor_requests WHERE category_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createSubcategory(adminUserId: string, dto: SubcategoryMutationDto) {
+    await this.assertCategoryExists(dto.categoryId);
+    const normalized = this.normalizeNamedCatalogValue(dto.name, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO subcategories (category_id, name, is_active, sort_order, updated_at)
+         OUTPUT INSERTED.id
+         VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+        [dto.categoryId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999))],
+      );
+      await this.recordAdminActivity(adminUserId, {
+        actionType: 'subcategory_created',
+        entityType: 'subcategory',
+        entityId: created.rows[0]?.id ?? null,
+        entityLabel: normalized,
+        description: `Created subcategory "${normalized}".`,
+        metadata: { categoryId: dto.categoryId },
+      }, client);
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateSubcategory(adminUserId: string, id: string, dto: SubcategoryMutationDto) {
+    await this.assertCategoryExists(dto.categoryId);
+    const current = await this.databaseService.query<{ id: string; name: string }>(
+      `SELECT TOP 1 id, name FROM subcategories WHERE id = $1`,
+      [id],
+    );
+    if (!current.rows[0]) {
+      throw new NotFoundException('Subcategory not found');
+    }
+    const normalized = this.normalizeNamedCatalogValue(dto.name, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE subcategories
+         SET category_id = $1,
+             name = $2,
+             is_active = $3,
+             sort_order = $4,
+             updated_at = SYSDATETIME()
+         WHERE id = $5`,
+        [dto.categoryId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999)), id],
+      );
+      await this.recordAdminActivity(adminUserId, {
+        actionType: 'subcategory_updated',
+        entityType: 'subcategory',
+        entityId: id,
+        entityLabel: normalized,
+        description: `Updated subcategory "${normalized}".`,
+        metadata: { categoryId: dto.categoryId },
+      }, client);
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteSubcategory(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'subcategories',
+      labelField: 'name',
+      entityType: 'subcategory',
+      inUseQuery: `SELECT
+        (SELECT COUNT(*) FROM products WHERE subcategory_id = $1) +
+        (SELECT COUNT(*) FROM vendor_requests WHERE subcategory_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createBrand(adminUserId: string, dto: BrandMutationDto) {
+    await this.createNamedCatalogEntity(adminUserId, {
+      table: 'brands',
+      labelField: 'name',
+      entityType: 'brand',
+      value: dto.name,
+      isActive: dto.isActive ?? true,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateBrand(adminUserId: string, id: string, dto: BrandMutationDto) {
+    await this.updateNamedCatalogEntity(adminUserId, id, {
+      table: 'brands',
+      labelField: 'name',
+      entityType: 'brand',
+      value: dto.name,
+      isActive: dto.isActive,
+      sortOrder: dto.sortOrder,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteBrand(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'brands',
+      labelField: 'name',
+      entityType: 'brand',
+      inUseQuery: `SELECT (SELECT COUNT(*) FROM products WHERE brand_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createColor(adminUserId: string, dto: ColorMutationDto) {
+    await this.createNamedCatalogEntity(adminUserId, {
+      table: 'colors',
+      labelField: 'name',
+      entityType: 'color',
+      value: dto.name,
+      isActive: dto.isActive ?? true,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateColor(adminUserId: string, id: string, dto: ColorMutationDto) {
+    await this.updateNamedCatalogEntity(adminUserId, id, {
+      table: 'colors',
+      labelField: 'name',
+      entityType: 'color',
+      value: dto.name,
+      isActive: dto.isActive,
+      sortOrder: dto.sortOrder,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteColor(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'colors',
+      labelField: 'name',
+      entityType: 'color',
+      inUseQuery: `SELECT (SELECT COUNT(*) FROM product_colors WHERE color_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createSizeType(adminUserId: string, dto: SizeTypeMutationDto) {
+    await this.createNamedCatalogEntity(adminUserId, {
+      table: 'size_types',
+      labelField: 'name',
+      entityType: 'size_type',
+      value: dto.name,
+      isActive: dto.isActive ?? true,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateSizeType(adminUserId: string, id: string, dto: SizeTypeMutationDto) {
+    await this.updateNamedCatalogEntity(adminUserId, id, {
+      table: 'size_types',
+      labelField: 'name',
+      entityType: 'size_type',
+      value: dto.name,
+      isActive: dto.isActive,
+      sortOrder: dto.sortOrder,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteSizeType(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'size_types',
+      labelField: 'name',
+      entityType: 'size_type',
+      inUseQuery: `SELECT
+        (SELECT COUNT(*) FROM sizes WHERE size_type_id = $1) +
+        (SELECT COUNT(*) FROM vendor_requests WHERE size_type_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createSize(adminUserId: string, dto: SizeMutationDto) {
+    await this.assertSizeTypeExists(dto.sizeTypeId);
+    const normalized = this.normalizeNamedCatalogValue(dto.label, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO sizes (size_type_id, label, is_active, sort_order, updated_at)
+         OUTPUT INSERTED.id
+         VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+        [dto.sizeTypeId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999))],
+      );
+      await this.recordAdminActivity(adminUserId, {
+        actionType: 'size_created',
+        entityType: 'size',
+        entityId: created.rows[0]?.id ?? null,
+        entityLabel: normalized,
+        description: `Created size "${normalized}".`,
+        metadata: { sizeTypeId: dto.sizeTypeId },
+      }, client);
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateSize(adminUserId: string, id: string, dto: SizeMutationDto) {
+    await this.assertSizeTypeExists(dto.sizeTypeId);
+    const current = await this.databaseService.query<{ id: string }>(
+      `SELECT TOP 1 id FROM sizes WHERE id = $1`,
+      [id],
+    );
+    if (!current.rows[0]) {
+      throw new NotFoundException('Size not found');
+    }
+    const normalized = this.normalizeNamedCatalogValue(dto.label, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE sizes
+         SET size_type_id = $1,
+             label = $2,
+             is_active = $3,
+             sort_order = $4,
+             updated_at = SYSDATETIME()
+         WHERE id = $5`,
+        [dto.sizeTypeId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999)), id],
+      );
+      await this.recordAdminActivity(adminUserId, {
+        actionType: 'size_updated',
+        entityType: 'size',
+        entityId: id,
+        entityLabel: normalized,
+        description: `Updated size "${normalized}".`,
+        metadata: { sizeTypeId: dto.sizeTypeId },
+      }, client);
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteSize(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'sizes',
+      labelField: 'label',
+      entityType: 'size',
+      inUseQuery: `SELECT (SELECT COUNT(*) FROM product_sizes WHERE size_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async createGenderGroup(adminUserId: string, dto: GenderGroupMutationDto) {
+    await this.createNamedCatalogEntity(adminUserId, {
+      table: 'gender_groups',
+      labelField: 'name',
+      entityType: 'gender_group',
+      value: dto.name,
+      isActive: dto.isActive ?? true,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async updateGenderGroup(adminUserId: string, id: string, dto: GenderGroupMutationDto) {
+    await this.updateNamedCatalogEntity(adminUserId, id, {
+      table: 'gender_groups',
+      labelField: 'name',
+      entityType: 'gender_group',
+      value: dto.name,
+      isActive: dto.isActive,
+      sortOrder: dto.sortOrder,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async deleteGenderGroup(adminUserId: string, id: string) {
+    await this.deleteCatalogEntity(adminUserId, {
+      id,
+      table: 'gender_groups',
+      labelField: 'name',
+      entityType: 'gender_group',
+      inUseQuery: `SELECT (SELECT COUNT(*) FROM products WHERE gender_group_id = $1) AS usage_count`,
+    });
+    return this.getCatalogStructure();
+  }
+
+  async getCatalogMasterData() {
+    const result = await this.databaseService.query<{
+      id: string;
+      option_type: string;
+      department: string | null;
+      parent_value: string | null;
+      value: string;
+      is_active: boolean;
+      sort_order: number;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT
+         id,
+         option_type,
+         department,
+         parent_value,
+         value,
+         is_active,
+         sort_order,
+         created_at,
+         updated_at
+       FROM catalog_master_values
+       ORDER BY
+         option_type ASC,
+         CASE WHEN department IS NULL OR LTRIM(RTRIM(department)) = '' THEN 1 ELSE 0 END,
+         department ASC,
+         sort_order ASC,
+         value ASC`,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      optionType: row.option_type,
+      department: row.department,
+      parentValue: row.parent_value,
+      value: row.value,
+      isActive: row.is_active,
+      sortOrder: row.sort_order,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async createCatalogMasterData(
+    adminUserId: string,
+    dto: CatalogMasterDataMutationDto,
+  ) {
+    const normalized = this.normalizeCatalogMasterDataPayload(dto);
+
+    await this.databaseService.withTransaction(async (client) => {
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO catalog_master_values (
+           option_type,
+           department,
+           parent_value,
+           value,
+           is_active,
+           sort_order,
+           updated_at
+         )
+         OUTPUT INSERTED.id
+         VALUES ($1, $2, $3, $4, $5, $6, SYSDATETIME())`,
+        [
+          normalized.optionType,
+          normalized.department,
+          normalized.parentValue,
+          normalized.value,
+          normalized.isActive,
+          normalized.sortOrder,
+        ],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'catalog_master_data_created',
+          entityType: 'catalog_master_value',
+          entityId: created.rows[0]?.id ?? null,
+          entityLabel: normalized.value,
+          description: `Created ${normalized.optionType} value "${normalized.value}".`,
+          metadata: normalized,
+        },
+        client,
+      );
+    });
+
+    return this.getCatalogMasterData();
+  }
+
+  async updateCatalogMasterData(
+    adminUserId: string,
+    masterDataId: string,
+    dto: CatalogMasterDataMutationDto,
+  ) {
+    const current = await this.databaseService.query<{
+      id: string;
+      option_type: string;
+      department: string | null;
+      parent_value: string | null;
+      value: string;
+      is_active: boolean;
+      sort_order: number;
+    }>(
+      `SELECT TOP 1
+         id,
+         option_type,
+         department,
+         parent_value,
+         value,
+         is_active,
+         sort_order
+       FROM catalog_master_values
+       WHERE id = $1`,
+      [masterDataId],
+    );
+
+    const row = current.rows[0];
+    if (!row) {
+      throw new NotFoundException('Catalog value not found');
+    }
+
+    const normalized = this.normalizeCatalogMasterDataPayload({
+      optionType: dto.optionType ?? row.option_type,
+      department: dto.department ?? row.department ?? undefined,
+      parentValue: dto.parentValue ?? row.parent_value ?? undefined,
+      value: dto.value ?? row.value,
+      isActive: dto.isActive ?? row.is_active,
+      sortOrder: dto.sortOrder ?? row.sort_order,
+    });
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE catalog_master_values
+         SET option_type = $1,
+             department = $2,
+             parent_value = $3,
+             value = $4,
+             is_active = $5,
+             sort_order = $6,
+             updated_at = SYSDATETIME()
+         WHERE id = $7`,
+        [
+          normalized.optionType,
+          normalized.department,
+          normalized.parentValue,
+          normalized.value,
+          normalized.isActive,
+          normalized.sortOrder,
+          masterDataId,
+        ],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'catalog_master_data_updated',
+          entityType: 'catalog_master_value',
+          entityId: masterDataId,
+          entityLabel: normalized.value,
+          description: `Updated ${normalized.optionType} value "${normalized.value}".`,
+          metadata: normalized,
+        },
+        client,
+      );
+    });
+
+    return this.getCatalogMasterData();
+  }
+
+  async deleteCatalogMasterData(adminUserId: string, masterDataId: string) {
+    const current = await this.databaseService.query<{
+      id: string;
+      option_type: string;
+      value: string;
+    }>(
+      `SELECT TOP 1 id, option_type, value
+       FROM catalog_master_values
+       WHERE id = $1`,
+      [masterDataId],
+    );
+
+    const row = current.rows[0];
+    if (!row) {
+      throw new NotFoundException('Catalog value not found');
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query('DELETE FROM catalog_master_values WHERE id = $1', [
+        masterDataId,
+      ]);
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'catalog_master_data_deleted',
+          entityType: 'catalog_master_value',
+          entityId: masterDataId,
+          entityLabel: row.value,
+          description: `Deleted ${row.option_type} value "${row.value}".`,
+        },
+        client,
+      );
+    });
+
+    return this.getCatalogMasterData();
   }
 
   async getPromotionSettings() {
@@ -1274,9 +2108,6 @@ export class AdminService {
       vendor_id: string;
       shop_name: string;
       vendor_email: string;
-      bank_account_name: string | null;
-      bank_name: string | null;
-      bank_iban: string | null;
       gross_sales: number | string;
       total_commission: number | string;
       payable_now: number | string;
@@ -1290,9 +2121,6 @@ export class AdminService {
          v.id AS vendor_id,
          v.shop_name,
          u.email AS vendor_email,
-         v.bank_account_name,
-         v.bank_name,
-         v.bank_iban,
          ISNULL(SUM(oi.unit_price * oi.quantity), 0) AS gross_sales,
          ISNULL(SUM(oi.commission_amount), 0) AS total_commission,
          ISNULL(SUM(CASE WHEN oi.status IN ('pending', 'confirmed') THEN oi.vendor_earnings ELSE 0 END), 0) AS payable_now,
@@ -1317,10 +2145,7 @@ export class AdminService {
        GROUP BY
          v.id,
          v.shop_name,
-         u.email,
-         v.bank_account_name,
-         v.bank_name,
-         v.bank_iban
+         u.email
        ORDER BY payable_now DESC, total_vendor_earnings DESC, v.shop_name ASC`,
     );
 
@@ -1328,9 +2153,6 @@ export class AdminService {
       vendorId: row.vendor_id,
       shopName: row.shop_name,
       vendorEmail: row.vendor_email,
-      bankAccountName: row.bank_account_name,
-      bankName: row.bank_name,
-      bankIban: row.bank_iban,
       grossSales: Number(row.gross_sales),
       totalCommission: Number(row.total_commission),
       payableNow: Number(row.payable_now),
@@ -1342,9 +2164,6 @@ export class AdminService {
         Number(row.outstanding_shipped_balance),
       ),
       orderCount: row.order_count,
-      bankReady: Boolean(
-        row.bank_account_name && row.bank_name && row.bank_iban,
-      ),
     }));
   }
 
@@ -2359,14 +3178,14 @@ export class AdminService {
     }>(
       `SELECT
          o.id,
-         u.email AS customer_email,
+         COALESCE(u.email, o.guest_email) AS customer_email,
          o.status,
          o.payment_method,
          o.payment_status,
          o.total_price,
          o.created_at
        FROM orders o
-       INNER JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users u ON u.id = o.customer_id
        ORDER BY o.created_at DESC, o.id DESC`,
     );
 
@@ -2654,6 +3473,270 @@ export class AdminService {
     }
 
     return true;
+  }
+
+  private normalizeCatalogOptionType(
+    value: string,
+  ): 'category' | 'subcategory' | 'brand' | 'size' | 'color' {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === 'category' ||
+      normalized === 'subcategory' ||
+      normalized === 'brand' ||
+      normalized === 'size' ||
+      normalized === 'color'
+    ) {
+      return normalized;
+    }
+
+    throw new BadRequestException('Unsupported catalog option type');
+  }
+
+  private normalizeCatalogOptionTypeFilter(value?: string | null) {
+    if (!value || value.trim().length === 0 || value === 'all') {
+      return null;
+    }
+
+    return this.normalizeCatalogOptionType(value);
+  }
+
+  private normalizeCatalogRequestStatus(
+    value: string,
+  ): 'pending' | 'approved' | 'rejected' {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === 'pending' ||
+      normalized === 'approved' ||
+      normalized === 'rejected'
+    ) {
+      return normalized;
+    }
+
+    throw new BadRequestException('Unsupported catalog request status');
+  }
+
+  private normalizeCatalogRequestStatusFilter(value?: string | null) {
+    if (!value || value.trim().length === 0 || value === 'all') {
+      return null;
+    }
+
+    return this.normalizeCatalogRequestStatus(value);
+  }
+
+  private normalizeOptionalCatalogText(
+    value: string | null | undefined,
+    maxLength: number,
+  ) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const normalized = value.trim();
+    if (normalized.length === 0) {
+      return null;
+    }
+
+    return normalized.slice(0, maxLength);
+  }
+
+  private normalizeCatalogMasterDataPayload(dto: {
+    optionType: string;
+    department?: string;
+    parentValue?: string;
+    value: string;
+    isActive?: boolean;
+    sortOrder?: number;
+  }) {
+    const value = dto.value.trim();
+    if (!value) {
+      throw new BadRequestException('Catalog value is required');
+    }
+
+    return {
+      optionType: this.normalizeCatalogOptionType(dto.optionType),
+      department: this.normalizeOptionalCatalogText(dto.department, 80),
+      parentValue: this.normalizeOptionalCatalogText(dto.parentValue, 120),
+      value: value.slice(0, 120),
+      isActive: dto.isActive ?? true,
+      sortOrder: Math.max(0, Math.min(dto.sortOrder ?? 0, 999)),
+    };
+  }
+
+  private normalizeNamedCatalogValue(value: string, maxLength: number) {
+    const normalized = value.trim();
+    if (!normalized) {
+      throw new BadRequestException('A value is required');
+    }
+
+    return normalized.slice(0, maxLength);
+  }
+
+  private async assertCategoryExists(categoryId: string) {
+    const result = await this.databaseService.query<{ id: string }>(
+      `SELECT TOP 1 id FROM categories WHERE id = $1`,
+      [categoryId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Category not found');
+    }
+  }
+
+  private async assertSizeTypeExists(sizeTypeId: string) {
+    const result = await this.databaseService.query<{ id: string }>(
+      `SELECT TOP 1 id FROM size_types WHERE id = $1`,
+      [sizeTypeId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Size type not found');
+    }
+  }
+
+  private async createNamedCatalogEntity(
+    adminUserId: string,
+    input: {
+      table: string;
+      labelField: string;
+      entityType: string;
+      value: string;
+      isActive: boolean;
+      sortOrder: number;
+    },
+  ) {
+    const normalized = this.normalizeNamedCatalogValue(input.value, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO ${input.table} (${input.labelField}, is_active, sort_order, updated_at)
+         OUTPUT INSERTED.id
+         VALUES ($1, $2, $3, SYSDATETIME())`,
+        [normalized, input.isActive, Math.max(0, Math.min(input.sortOrder, 999))],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: `${input.entityType}_created`,
+          entityType: input.entityType,
+          entityId: created.rows[0]?.id ?? null,
+          entityLabel: normalized,
+          description: `Created ${input.entityType.replace(/_/g, ' ')} "${normalized}".`,
+        },
+        client,
+      );
+    });
+  }
+
+  private async updateNamedCatalogEntity(
+    adminUserId: string,
+    id: string,
+    input: {
+      table: string;
+      labelField: string;
+      entityType: string;
+      value: string;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    const current = await this.databaseService.query<{ id: string; label: string; is_active: boolean; sort_order: number }>(
+      `SELECT TOP 1 id, ${input.labelField} AS label, is_active, sort_order
+       FROM ${input.table}
+       WHERE id = $1`,
+      [id],
+    );
+
+    if (!current.rows[0]) {
+      throw new NotFoundException(`${input.entityType.replace(/_/g, ' ')} not found`);
+    }
+
+    const normalized = this.normalizeNamedCatalogValue(input.value, 120);
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE ${input.table}
+         SET ${input.labelField} = $1,
+             is_active = $2,
+             sort_order = $3,
+             updated_at = SYSDATETIME()
+         WHERE id = $4`,
+        [
+          normalized,
+          input.isActive ?? current.rows[0].is_active,
+          Math.max(0, Math.min(input.sortOrder ?? current.rows[0].sort_order, 999)),
+          id,
+        ],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: `${input.entityType}_updated`,
+          entityType: input.entityType,
+          entityId: id,
+          entityLabel: normalized,
+          description: `Updated ${input.entityType.replace(/_/g, ' ')} "${normalized}".`,
+        },
+        client,
+      );
+    });
+  }
+
+  private async deleteCatalogEntity(
+    adminUserId: string,
+    input: {
+      id: string;
+      table: string;
+      labelField: string;
+      entityType: string;
+      inUseQuery: string;
+    },
+  ) {
+    const current = await this.databaseService.query<{ id: string; label: string; is_active: boolean }>(
+      `SELECT TOP 1 id, ${input.labelField} AS label, is_active
+       FROM ${input.table}
+       WHERE id = $1`,
+      [input.id],
+    );
+
+    if (!current.rows[0]) {
+      throw new NotFoundException(`${input.entityType.replace(/_/g, ' ')} not found`);
+    }
+
+    const usage = await this.databaseService.query<{ usage_count: number | string }>(
+      input.inUseQuery,
+      [input.id],
+    );
+    const usageCount = Number(usage.rows[0]?.usage_count ?? 0);
+
+    await this.databaseService.withTransaction(async (client) => {
+      if (usageCount > 0) {
+        await client.query(
+          `UPDATE ${input.table}
+           SET is_active = 0,
+               updated_at = SYSDATETIME()
+           WHERE id = $1`,
+          [input.id],
+        );
+      } else {
+        await client.query(`DELETE FROM ${input.table} WHERE id = $1`, [input.id]);
+      }
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: usageCount > 0 ? `${input.entityType}_deactivated` : `${input.entityType}_deleted`,
+          entityType: input.entityType,
+          entityId: input.id,
+          entityLabel: current.rows[0].label,
+          description:
+            usageCount > 0
+              ? `Deactivated ${input.entityType.replace(/_/g, ' ')} "${current.rows[0].label}" because it is in use.`
+              : `Deleted ${input.entityType.replace(/_/g, ' ')} "${current.rows[0].label}".`,
+          metadata: { usageCount },
+        },
+        client,
+      );
+    });
   }
 
   private cleanupTemporaryFile(file?: UploadedFile) {

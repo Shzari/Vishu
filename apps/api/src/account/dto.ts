@@ -122,6 +122,26 @@ export class ActivateVendorSubscriptionDto {
   planType!: 'monthly' | 'yearly';
 }
 
+export class CreateVendorTeamInviteDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsIn(['shop_holder', 'employee'])
+  role!: 'shop_holder' | 'employee';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class UpdateVendorTeamMemberRoleDto {
+  @IsString()
+  @IsIn(['shop_holder', 'employee'])
+  role!: 'shop_holder' | 'employee';
+}
+
 export class UpsertAddressDto {
   @IsString()
   @IsNotEmpty()
@@ -206,4 +226,17 @@ export class UpdatePaymentMethodDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+}
+
+export class RequestGuestOrderClaimDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9+\-\s()]{6,40}$/)
+  phoneNumber?: string;
+}
+
+export class VerifyGuestOrderClaimDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
 }

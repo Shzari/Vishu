@@ -98,12 +98,26 @@ In `Admin > Settings`, confirm:
 - `App base URL` = `https://vishu.shop`
 - SMTP / Mailtrap or production mail provider is configured
 
-## 9. Demo-ready checklist
+## 9. Guest checkout activation flow
+
+Guest checkout now depends on mail and app URL being correct:
+
+- first guest order with a new email creates an unactivated customer account
+- the customer should receive:
+  - order confirmation email
+  - separate activation email
+- the activation link should open the password setup page on `https://vishu.shop`
+- if the email already belongs to an active customer, only the order confirmation email should be sent
+
+## 10. Demo-ready checklist
 
 - homepage loads from `vishu.shop`
 - API health works on `api.vishu.shop/health`
 - logo and favicon show correctly
 - registration and login work
 - vendor verification emails point to `https://vishu.shop`
+- guest checkout sends correct emails and activation links
 - admin login works
 - uploaded images load through the public domain
+
+For the fuller production checklist, also read `AWS-DEPLOY-CHECKLIST.md`.

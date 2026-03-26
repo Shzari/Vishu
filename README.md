@@ -78,3 +78,19 @@ npm --workspace apps/api run create-admin -- admin@example.com strongpassword
 For current phase progress, completed work, and remaining tasks, see:
 
 - `PROJECT-STATUS.md`
+- `DATABASE-STRUCTURE.md`
+- `AWS-DEPLOY-CHECKLIST.md`
+
+## AWS deploy reminder
+
+When moving this project to AWS:
+
+- do not use the local PowerShell helper scripts there
+- set the real production env values in both workspaces
+- verify SQL bootstrap on API startup
+- verify SMTP and `APP_BASE_URL`
+- test guest checkout email behavior after deploy:
+  - order confirmation email
+  - account activation email for new or still-unactivated guest customers
+
+Use `AWS-DEPLOY-CHECKLIST.md` as the real production handoff file.

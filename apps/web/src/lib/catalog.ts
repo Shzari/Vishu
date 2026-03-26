@@ -1,4 +1,4 @@
-export const PRODUCT_DEPARTMENTS = ["men", "women", "unisex"] as const;
+export const PRODUCT_DEPARTMENTS = ["men", "women", "kids", "babies"] as const;
 
 export const PRODUCT_CATEGORY_GROUPS = {
   men: [
@@ -35,19 +35,23 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "sportswear",
     "accessories",
   ],
-  unisex: [
+  kids: [
     "tshirts",
-    "tops",
-    "shirts",
     "hoodies",
-    "sweatshirts",
-    "sweaters",
     "jackets",
-    "outerwear",
     "pants",
     "jeans",
-    "shorts",
+    "sets",
+    "schoolwear",
     "sportswear",
+  ],
+  babies: [
+    "bodysuits",
+    "rompers",
+    "sets",
+    "outerwear",
+    "sleepwear",
+    "blankets",
     "accessories",
   ],
 } as const;
@@ -116,11 +120,33 @@ export function getDepartmentsForCategory(category: string): string[] {
 }
 
 export function formatCatalogLabel(value: string) {
-  return value
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "tshirt") return "T-Shirt";
+  if (normalized === "tshirts") return "T-Shirts";
+  if (normalized === "sweatshirt") return "Sweatshirt";
+  if (normalized === "sweatshirts") return "Sweatshirts";
+
+  return normalized
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+export function getCatalogDepartmentDisplayLabel(department?: string | null) {
+  const normalized = department?.trim().toLowerCase();
+
+  if (normalized === "men") return "Men";
+  if (normalized === "women") return "Women";
+  if (normalized === "kids") return "Kids";
+  if (normalized === "babies") return "Babies";
+
+  return "";
+}
+
+export function isCatalogDepartmentVisible(department?: string | null) {
+  return getCatalogDepartmentDisplayLabel(department).length > 0;
 }
 
 export function getCatalogGenderLabel(plural = false) {

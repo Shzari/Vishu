@@ -168,13 +168,6 @@ EXEC sp_executesql N'
     AND role = ''admin'';
 ';
 
-EXEC sp_executesql N'
-  UPDATE dbo.users
-  SET email_verified_at = created_at
-  WHERE email_verified_at IS NULL
-    AND role = ''customer'';
-';
-
 IF OBJECT_ID('dbo.vendors', 'U') IS NOT NULL
 BEGIN
   EXEC sp_executesql N'
@@ -240,6 +233,273 @@ BEGIN
   );
 END;
 
+IF OBJECT_ID('dbo.vendor_team_members', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_team_members (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
+    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'employee')),
+    status NVARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'removed')),
+    invited_by_user_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
+    joined_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_team_invites', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_team_invites (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    user_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
+    email NVARCHAR(255) NOT NULL,
+    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'employee')),
+    note NVARCHAR(500) NULL,
+    token NVARCHAR(255) NOT NULL UNIQUE,
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'revoked', 'expired')),
+    invited_by_user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
+    invited_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    last_sent_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    expires_at DATETIME2 NOT NULL,
+    responded_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.indexes
+  WHERE name = 'ux_vendor_team_members_vendor_user'
+    AND object_id = OBJECT_ID('dbo.vendor_team_members')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_vendor_team_members_vendor_user
+    ON dbo.vendor_team_members (vendor_id, user_id);
+END;
+
+INSERT INTO dbo.vendor_team_members (vendor_id, user_id, role, status, invited_by_user_id, joined_at)
+SELECT
+  v.id,
+  v.user_id,
+  'shop_holder',
+  'active',
+  v.user_id,
+  COALESCE(v.approved_at, v.created_at, SYSDATETIME())
+FROM dbo.vendors v
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.vendor_team_members tm
+  WHERE tm.vendor_id = v.id
+    AND tm.user_id = v.user_id
+);
+
+IF OBJECT_ID('dbo.gender_groups', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.gender_groups (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.categories', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.categories (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.subcategories', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.subcategories (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    category_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.categories(id),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.brands', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.brands (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.colors', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.colors (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.size_types', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.size_types (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    name NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.sizes', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.sizes (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    size_type_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.size_types(id),
+    label NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_gender_groups_name'
+    AND object_id = OBJECT_ID('dbo.gender_groups')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_gender_groups_name ON dbo.gender_groups(name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_categories_name'
+    AND object_id = OBJECT_ID('dbo.categories')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_categories_name ON dbo.categories(name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_subcategories_category_name'
+    AND object_id = OBJECT_ID('dbo.subcategories')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_subcategories_category_name
+    ON dbo.subcategories(category_id, name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_brands_name'
+    AND object_id = OBJECT_ID('dbo.brands')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_brands_name ON dbo.brands(name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_colors_name'
+    AND object_id = OBJECT_ID('dbo.colors')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_colors_name ON dbo.colors(name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_size_types_name'
+    AND object_id = OBJECT_ID('dbo.size_types')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_size_types_name ON dbo.size_types(name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_sizes_type_label'
+    AND object_id = OBJECT_ID('dbo.sizes')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_sizes_type_label ON dbo.sizes(size_type_id, label);
+END;
+
+IF OBJECT_ID('dbo.vendor_requests', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_requests (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    request_type NVARCHAR(30) NOT NULL CHECK (request_type IN ('category', 'subcategory', 'brand', 'size', 'color')),
+    requested_value NVARCHAR(120) NOT NULL,
+    note NVARCHAR(500) NULL,
+    category_id UNIQUEIDENTIFIER NULL REFERENCES dbo.categories(id),
+    subcategory_id UNIQUEIDENTIFIER NULL REFERENCES dbo.subcategories(id),
+    size_type_id UNIQUEIDENTIFIER NULL REFERENCES dbo.size_types(id),
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    admin_note NVARCHAR(500) NULL,
+    reviewed_by_admin_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
+    reviewed_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.catalog_master_values', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.catalog_master_values (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    option_type NVARCHAR(30) NOT NULL CHECK (option_type IN ('category', 'subcategory', 'brand', 'size', 'color')),
+    department NVARCHAR(40) NULL,
+    parent_value NVARCHAR(120) NULL,
+    value NVARCHAR(120) NOT NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_catalog_requests', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_catalog_requests (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    request_type NVARCHAR(30) NOT NULL CHECK (request_type IN ('category', 'subcategory', 'brand', 'size', 'color')),
+    department NVARCHAR(40) NULL,
+    parent_value NVARCHAR(120) NULL,
+    requested_value NVARCHAR(120) NOT NULL,
+    note NVARCHAR(500) NULL,
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    admin_note NVARCHAR(500) NULL,
+    reviewed_by_admin_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
+    reviewed_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
 IF OBJECT_ID('dbo.products', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.products (
@@ -250,8 +510,12 @@ BEGIN
     price DECIMAL(10, 2) NOT NULL CHECK (price >= 0),
     stock INT NOT NULL CHECK (stock >= 0),
     is_listed BIT NOT NULL DEFAULT 1,
-    department NVARCHAR(40) NOT NULL DEFAULT 'unisex',
+    department NVARCHAR(40) NOT NULL DEFAULT 'men',
     category NVARCHAR(120) NOT NULL,
+    brand_id UNIQUEIDENTIFIER NULL REFERENCES dbo.brands(id),
+    category_id UNIQUEIDENTIFIER NULL REFERENCES dbo.categories(id),
+    subcategory_id UNIQUEIDENTIFIER NULL REFERENCES dbo.subcategories(id),
+    gender_group_id UNIQUEIDENTIFIER NULL REFERENCES dbo.gender_groups(id),
     color NVARCHAR(80) NULL,
     size NVARCHAR(80) NULL,
     product_code NVARCHAR(80) NULL,
@@ -270,7 +534,7 @@ IF COL_LENGTH('dbo.products', 'department') IS NULL
 BEGIN
   EXEC sp_executesql N'
     ALTER TABLE dbo.products
-    ADD department NVARCHAR(40) NOT NULL CONSTRAINT df_products_department DEFAULT ''unisex'';
+    ADD department NVARCHAR(40) NOT NULL CONSTRAINT df_products_department DEFAULT ''men'';
   ';
 END;
 
@@ -279,9 +543,73 @@ BEGIN
   ALTER TABLE dbo.products ADD low_stock_alert_sent_at DATETIME2 NULL;
 END;
 
+IF COL_LENGTH('dbo.products', 'brand_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD brand_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'category_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD category_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'subcategory_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD subcategory_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'gender_group_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD gender_group_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_products_brand'
+    AND parent_object_id = OBJECT_ID('dbo.products')
+)
+BEGIN
+  ALTER TABLE dbo.products
+  ADD CONSTRAINT fk_products_brand FOREIGN KEY (brand_id) REFERENCES dbo.brands(id);
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_products_category'
+    AND parent_object_id = OBJECT_ID('dbo.products')
+)
+BEGIN
+  ALTER TABLE dbo.products
+  ADD CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES dbo.categories(id);
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_products_subcategory'
+    AND parent_object_id = OBJECT_ID('dbo.products')
+)
+BEGIN
+  ALTER TABLE dbo.products
+  ADD CONSTRAINT fk_products_subcategory FOREIGN KEY (subcategory_id) REFERENCES dbo.subcategories(id);
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_products_gender_group'
+    AND parent_object_id = OBJECT_ID('dbo.products')
+)
+BEGIN
+  ALTER TABLE dbo.products
+  ADD CONSTRAINT fk_products_gender_group FOREIGN KEY (gender_group_id) REFERENCES dbo.gender_groups(id);
+END;
+
 EXEC sp_executesql N'
   UPDATE dbo.products
-  SET department = ''unisex''
+  SET department = ''men''
   WHERE department IS NULL OR LTRIM(RTRIM(department)) = '''';
 ';
 
@@ -294,6 +622,272 @@ BEGIN
     sort_order INT NOT NULL DEFAULT 0
   );
 END;
+
+IF OBJECT_ID('dbo.product_colors', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.product_colors (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    color_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.colors(id),
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.product_sizes', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.product_sizes (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    size_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.sizes(id),
+    stock INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    sku NVARCHAR(80) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_product_colors_product_color'
+    AND object_id = OBJECT_ID('dbo.product_colors')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_product_colors_product_color
+    ON dbo.product_colors(product_id, color_id);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_product_sizes_product_size'
+    AND object_id = OBJECT_ID('dbo.product_sizes')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_product_sizes_product_size
+    ON dbo.product_sizes(product_id, size_id);
+END;
+
+INSERT INTO dbo.gender_groups (name, is_active, sort_order)
+SELECT seed.name, 1, seed.sort_order
+FROM (
+  VALUES
+    ('Men', 0),
+    ('Women', 1),
+    ('Kids', 2),
+    ('Babies', 3)
+) AS seed(name, sort_order)
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.gender_groups gg WHERE gg.name = seed.name
+);
+
+INSERT INTO dbo.size_types (name, is_active, sort_order)
+SELECT 'Apparel', 1, 0
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.size_types st WHERE st.name = 'Apparel'
+);
+
+INSERT INTO dbo.categories (name, is_active, sort_order)
+SELECT DISTINCT source.name, 1, 0
+FROM (
+  SELECT value AS name
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'category'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT category
+  FROM dbo.products
+  WHERE NULLIF(LTRIM(RTRIM(category)), '') IS NOT NULL
+) AS source
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.categories c WHERE c.name = source.name
+);
+
+INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
+SELECT DISTINCT c.id, source.name, 1, 0
+FROM (
+  SELECT
+    COALESCE(NULLIF(LTRIM(RTRIM(parent_value)), ''), value) AS category_name,
+    value AS name
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'subcategory'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT
+    category AS category_name,
+    category AS name
+  FROM dbo.products
+  WHERE NULLIF(LTRIM(RTRIM(category)), '') IS NOT NULL
+) AS source
+INNER JOIN dbo.categories c ON c.name = source.category_name
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.subcategories sc
+  WHERE sc.category_id = c.id
+    AND sc.name = source.name
+);
+
+INSERT INTO dbo.brands (name, is_active, sort_order)
+SELECT DISTINCT source.name, 1, 0
+FROM (
+  SELECT value AS name
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'brand'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT shop_name
+  FROM dbo.vendors
+  WHERE NULLIF(LTRIM(RTRIM(shop_name)), '') IS NOT NULL
+) AS source
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.brands b WHERE b.name = source.name
+);
+
+INSERT INTO dbo.colors (name, is_active, sort_order)
+SELECT DISTINCT source.name, 1, 0
+FROM (
+  SELECT value AS name
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'color'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT color
+  FROM dbo.products
+  WHERE NULLIF(LTRIM(RTRIM(color)), '') IS NOT NULL
+) AS source
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.colors c WHERE c.name = source.name
+);
+
+INSERT INTO dbo.sizes (size_type_id, label, is_active, sort_order)
+SELECT DISTINCT st.id, source.label, 1, 0
+FROM (
+  SELECT value AS label
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'size'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT size AS label
+  FROM dbo.products
+  WHERE NULLIF(LTRIM(RTRIM(size)), '') IS NOT NULL
+) AS source
+INNER JOIN dbo.size_types st ON st.name = 'Apparel'
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.sizes s
+  WHERE s.size_type_id = st.id
+    AND s.label = source.label
+);
+
+INSERT INTO dbo.vendor_requests (
+  vendor_id,
+  request_type,
+  requested_value,
+  note,
+  category_id,
+  subcategory_id,
+  size_type_id,
+  status,
+  admin_note,
+  reviewed_by_admin_id,
+  reviewed_at,
+  created_at,
+  updated_at
+)
+SELECT
+  legacy.vendor_id,
+  legacy.request_type,
+  legacy.requested_value,
+  legacy.note,
+  categories.id,
+  subcategories.id,
+  size_types.id,
+  legacy.status,
+  legacy.admin_note,
+  legacy.reviewed_by_admin_id,
+  legacy.reviewed_at,
+  legacy.created_at,
+  legacy.updated_at
+FROM dbo.vendor_catalog_requests legacy
+LEFT JOIN dbo.categories categories
+  ON categories.name = COALESCE(NULLIF(LTRIM(RTRIM(legacy.parent_value)), ''), NULLIF(LTRIM(RTRIM(legacy.department)), ''))
+LEFT JOIN dbo.subcategories subcategories
+  ON legacy.request_type = 'subcategory'
+ AND subcategories.name = legacy.parent_value
+LEFT JOIN dbo.size_types size_types
+  ON legacy.request_type = 'size'
+ AND size_types.name = 'Apparel'
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.vendor_requests vr
+  WHERE vr.vendor_id = legacy.vendor_id
+    AND vr.request_type = legacy.request_type
+    AND vr.requested_value = legacy.requested_value
+    AND vr.created_at = legacy.created_at
+);
+
+UPDATE p
+SET gender_group_id = gg.id
+FROM dbo.products p
+INNER JOIN dbo.gender_groups gg
+  ON LOWER(gg.name) = LOWER(
+    CASE
+      WHEN NULLIF(LTRIM(RTRIM(p.department)), '') IS NULL THEN 'men'
+      ELSE p.department
+    END
+  )
+WHERE p.gender_group_id IS NULL;
+
+UPDATE p
+SET category_id = c.id
+FROM dbo.products p
+INNER JOIN dbo.categories c ON c.name = p.category
+WHERE p.category_id IS NULL
+  AND NULLIF(LTRIM(RTRIM(p.category)), '') IS NOT NULL;
+
+UPDATE p
+SET subcategory_id = sc.id
+FROM dbo.products p
+INNER JOIN dbo.categories c ON c.id = p.category_id
+INNER JOIN dbo.subcategories sc
+  ON sc.category_id = c.id
+ AND sc.name = p.category
+WHERE p.subcategory_id IS NULL
+  AND p.category_id IS NOT NULL
+  AND NULLIF(LTRIM(RTRIM(p.category)), '') IS NOT NULL;
+
+UPDATE p
+SET brand_id = b.id
+FROM dbo.products p
+INNER JOIN dbo.vendors v ON v.id = p.vendor_id
+INNER JOIN dbo.brands b ON b.name = v.shop_name
+WHERE p.brand_id IS NULL;
+
+INSERT INTO dbo.product_colors (product_id, color_id, sort_order)
+SELECT p.id, c.id, 0
+FROM dbo.products p
+INNER JOIN dbo.colors c ON c.name = p.color
+WHERE NULLIF(LTRIM(RTRIM(p.color)), '') IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.product_colors pc
+    WHERE pc.product_id = p.id
+      AND pc.color_id = c.id
+  );
+
+INSERT INTO dbo.product_sizes (product_id, size_id, stock, sku)
+SELECT p.id, s.id, p.stock, p.product_code
+FROM dbo.products p
+INNER JOIN dbo.size_types st ON st.name = 'Apparel'
+INNER JOIN dbo.sizes s
+  ON s.size_type_id = st.id
+ AND s.label = p.size
+WHERE NULLIF(LTRIM(RTRIM(p.size)), '') IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.product_sizes ps
+    WHERE ps.product_id = p.id
+      AND ps.size_id = s.id
+  );
 
 IF OBJECT_ID('dbo.homepage_hero_slides', 'U') IS NULL
 BEGIN
@@ -399,7 +993,11 @@ IF OBJECT_ID('dbo.orders', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.orders (
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
-    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    customer_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    guest_email NVARCHAR(255) NULL,
+    guest_phone_number NVARCHAR(40) NULL,
+    guest_claimed_at DATETIME2 NULL,
+    guest_claimed_by_user_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
     total_price DECIMAL(10, 2) NOT NULL CHECK (total_price >= 0),
     special_request NVARCHAR(MAX) NULL,
     shipping_address_id UNIQUEIDENTIFIER NULL,
@@ -431,6 +1029,43 @@ BEGIN
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF COL_LENGTH('dbo.orders', 'customer_id') IS NOT NULL
+BEGIN
+  ALTER TABLE dbo.orders ALTER COLUMN customer_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'guest_email') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD guest_email NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'guest_phone_number') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD guest_phone_number NVARCHAR(40) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'guest_claimed_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD guest_claimed_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'guest_claimed_by_user_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD guest_claimed_by_user_id UNIQUEIDENTIFIER NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.foreign_keys
+  WHERE name = 'fk_orders_guest_claimed_by_user'
+    AND parent_object_id = OBJECT_ID('dbo.orders')
+)
+BEGIN
+  ALTER TABLE dbo.orders
+  ADD CONSTRAINT fk_orders_guest_claimed_by_user
+    FOREIGN KEY (guest_claimed_by_user_id) REFERENCES dbo.users(id);
 END;
 
 IF COL_LENGTH('dbo.orders', 'shipping_address_id') IS NULL
@@ -542,6 +1177,19 @@ BEGIN
   CREATE TABLE dbo.password_resets (
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    token NVARCHAR(255) NOT NULL UNIQUE,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.guest_order_claim_tokens', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.guest_order_claim_tokens (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    email NVARCHAR(255) NOT NULL,
     token NVARCHAR(255) NOT NULL UNIQUE,
     expires_at DATETIME2 NOT NULL,
     used_at DATETIME2 NULL,
@@ -1069,6 +1717,11 @@ BEGIN
   CREATE INDEX idx_orders_customer_id ON dbo.orders(customer_id);
 END;
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_orders_guest_email' AND object_id = OBJECT_ID('dbo.orders'))
+BEGIN
+  CREATE INDEX idx_orders_guest_email ON dbo.orders(guest_email);
+END;
+
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_order_items_order_id' AND object_id = OBJECT_ID('dbo.order_items'))
 BEGIN
   CREATE INDEX idx_order_items_order_id ON dbo.order_items(order_id);
@@ -1102,5 +1755,10 @@ END;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_customer_payment_methods_customer_id' AND object_id = OBJECT_ID('dbo.customer_payment_methods'))
 BEGIN
   CREATE INDEX idx_customer_payment_methods_customer_id ON dbo.customer_payment_methods(customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_guest_order_claim_tokens_user_id' AND object_id = OBJECT_ID('dbo.guest_order_claim_tokens'))
+BEGIN
+  CREATE INDEX idx_guest_order_claim_tokens_user_id ON dbo.guest_order_claim_tokens(user_id);
 END;
 `;

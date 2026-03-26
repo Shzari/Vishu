@@ -9,11 +9,14 @@ import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { DatabaseService } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
+import { VendorAccessService } from '../vendor-access/vendor-access.service';
 import {
   ChangePasswordDto,
+  CreateVendorTeamInviteDto,
   CreatePaymentMethodDto,
   UpdateAccountProfileDto,
   UpdatePaymentMethodDto,
+  UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
   UpdateVendorProfileDto,
   UpsertAddressDto,
@@ -29,146 +32,156 @@ export class AccountService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
+    private readonly vendorAccessService: VendorAccessService,
   ) {}
 
   async getSettings(userId: string) {
-    const [result, vendorDetails, vendorSubscriptionHistory] =
-      await Promise.all([
-        this.databaseService.query<{
-          id: string;
-          email: string;
-          full_name: string | null;
-          phone_number: string | null;
-          role: string;
-          email_verified_at: Date | null;
-          created_at: Date;
-          updated_at: Date;
-        }>(
-          `SELECT TOP 1 id, email, full_name, phone_number, role, email_verified_at, created_at, updated_at
-         FROM users
-         WHERE id = $1`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          id: string;
-          shop_name: string;
-          is_active: boolean;
-          is_verified: boolean;
-          support_email: string | null;
-          support_phone: string | null;
-          shop_description: string | null;
-          logo_url: string | null;
-          banner_url: string | null;
-          business_address: string | null;
-          return_policy: string | null;
-          business_hours: string | null;
-          shipping_notes: string | null;
-          low_stock_threshold: number;
-          subscription_plan: 'monthly' | 'yearly' | null;
-          subscription_status: 'inactive' | 'active' | 'expired';
-          subscription_started_at: Date | null;
-          subscription_ends_at: Date | null;
-          subscription_override_plan: 'monthly' | 'yearly' | null;
-          subscription_override_status: 'active' | 'expired' | null;
-          subscription_override_started_at: Date | null;
-          subscription_override_ends_at: Date | null;
-          subscription_override_note: string | null;
-          subscription_override_updated_at: Date | null;
-          bank_account_name: string | null;
-          bank_name: string | null;
-          bank_iban: string | null;
-          pending_balance: number | string;
-          shipped_balance: number | string;
-          total_earnings: number | string;
-          paid_out: number | string;
-          outstanding_shipped_balance: number | string;
-        }>(
-          `SELECT TOP 1
-           v.id,
-           v.shop_name,
-           v.is_active,
-           v.is_verified,
-           v.support_email,
-           v.support_phone,
-           v.shop_description,
-           v.logo_url,
-           v.banner_url,
-           v.business_address,
-           v.return_policy,
-           v.business_hours,
-           v.shipping_notes,
-           v.low_stock_threshold,
-           v.subscription_plan,
-           v.subscription_status,
-           v.subscription_started_at,
-           v.subscription_ends_at,
-           v.subscription_override_plan,
-           v.subscription_override_status,
-           v.subscription_override_started_at,
-           v.subscription_override_ends_at,
-           v.subscription_override_note,
-           v.subscription_override_updated_at,
-           v.bank_account_name,
-           v.bank_name,
-           v.bank_iban,
-           ISNULL((SELECT SUM(vendor_earnings) FROM order_items WHERE vendor_id = v.id AND status IN ('pending', 'confirmed')), 0) AS pending_balance,
-           ISNULL((
-             SELECT SUM(oi.vendor_earnings)
-             FROM order_items oi
-             INNER JOIN orders o ON o.id = oi.order_id
-             WHERE oi.vendor_id = v.id
-               AND oi.status = 'delivered'
-               AND (o.payment_method = 'card' OR o.payment_status = 'cod_collected')
-           ), 0) AS shipped_balance,
-           ISNULL((SELECT SUM(vendor_earnings) FROM order_items WHERE vendor_id = v.id), 0) AS total_earnings,
-           ISNULL((SELECT SUM(amount) FROM vendor_payouts WHERE vendor_id = v.id), 0) AS paid_out,
-           ISNULL((
-             SELECT SUM(oi.vendor_earnings)
-             FROM order_items oi
-             INNER JOIN orders o ON o.id = oi.order_id
-             WHERE oi.vendor_id = v.id
-               AND oi.status = 'delivered'
-               AND (o.payment_method = 'card' OR o.payment_status = 'cod_collected')
-           ), 0)
-             - ISNULL((SELECT SUM(amount) FROM vendor_payouts WHERE vendor_id = v.id), 0) AS outstanding_shipped_balance
-         FROM vendors v
-         WHERE v.user_id = $1`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          id: string;
-          plan_type: 'monthly' | 'yearly';
-          status: 'active' | 'expired';
-          amount: number | string;
-          admin_note: string | null;
-          admin_email: string | null;
-          starts_at: Date;
-          ends_at: Date;
-          created_at: Date;
-        }>(
-          `SELECT TOP 6
-           s.id,
-           s.plan_type,
-           s.status,
-           s.amount,
-           s.admin_note,
-           u.email AS admin_email,
-           s.starts_at,
-           s.ends_at,
-           s.created_at
-         FROM vendor_subscriptions s
-         INNER JOIN vendors v ON v.id = s.vendor_id
-         LEFT JOIN users u ON u.id = s.admin_user_id
-         WHERE v.user_id = $1
-         ORDER BY s.created_at DESC`,
-          [userId],
-        ),
-      ]);
+    const result = await this.databaseService.query<{
+      id: string;
+      email: string;
+      full_name: string | null;
+      phone_number: string | null;
+      role: string;
+      email_verified_at: Date | null;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT TOP 1 id, email, full_name, phone_number, role, email_verified_at, created_at, updated_at
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
 
     const user = result.rows[0];
     if (!user) {
       throw new NotFoundException('Account not found');
     }
+
+    const vendorAccess =
+      user.role === 'vendor'
+        ? await this.vendorAccessService.getVendorAccessForUser(userId)
+        : null;
+
+    const [vendorDetails, vendorSubscriptionHistory] = vendorAccess
+      ? await Promise.all([
+          this.databaseService.query<{
+            id: string;
+            shop_name: string;
+            is_active: boolean;
+            is_verified: boolean;
+            support_email: string | null;
+            support_phone: string | null;
+            shop_description: string | null;
+            logo_url: string | null;
+            banner_url: string | null;
+            business_address: string | null;
+            return_policy: string | null;
+            business_hours: string | null;
+            shipping_notes: string | null;
+            low_stock_threshold: number;
+            subscription_plan: 'monthly' | 'yearly' | null;
+            subscription_status: 'inactive' | 'active' | 'expired';
+            subscription_started_at: Date | null;
+            subscription_ends_at: Date | null;
+            subscription_override_plan: 'monthly' | 'yearly' | null;
+            subscription_override_status: 'active' | 'expired' | null;
+            subscription_override_started_at: Date | null;
+            subscription_override_ends_at: Date | null;
+            subscription_override_note: string | null;
+            subscription_override_updated_at: Date | null;
+            bank_account_name: string | null;
+            bank_name: string | null;
+            bank_iban: string | null;
+            pending_balance: number | string;
+            shipped_balance: number | string;
+            total_earnings: number | string;
+            paid_out: number | string;
+            outstanding_shipped_balance: number | string;
+          }>(
+            `SELECT TOP 1
+             v.id,
+             v.shop_name,
+             v.is_active,
+             v.is_verified,
+             v.support_email,
+             v.support_phone,
+             v.shop_description,
+             v.logo_url,
+             v.banner_url,
+             v.business_address,
+             v.return_policy,
+             v.business_hours,
+             v.shipping_notes,
+             v.low_stock_threshold,
+             v.subscription_plan,
+             v.subscription_status,
+             v.subscription_started_at,
+             v.subscription_ends_at,
+             v.subscription_override_plan,
+             v.subscription_override_status,
+             v.subscription_override_started_at,
+             v.subscription_override_ends_at,
+             v.subscription_override_note,
+             v.subscription_override_updated_at,
+             v.bank_account_name,
+             v.bank_name,
+             v.bank_iban,
+             ISNULL((SELECT SUM(vendor_earnings) FROM order_items WHERE vendor_id = v.id AND status IN ('pending', 'confirmed')), 0) AS pending_balance,
+             ISNULL((
+               SELECT SUM(oi.vendor_earnings)
+               FROM order_items oi
+               INNER JOIN orders o ON o.id = oi.order_id
+               WHERE oi.vendor_id = v.id
+                 AND oi.status = 'delivered'
+                 AND (o.payment_method = 'card' OR o.payment_status = 'cod_collected')
+             ), 0) AS shipped_balance,
+             ISNULL((SELECT SUM(vendor_earnings) FROM order_items WHERE vendor_id = v.id), 0) AS total_earnings,
+             ISNULL((SELECT SUM(amount) FROM vendor_payouts WHERE vendor_id = v.id), 0) AS paid_out,
+             ISNULL((
+               SELECT SUM(oi.vendor_earnings)
+               FROM order_items oi
+               INNER JOIN orders o ON o.id = oi.order_id
+               WHERE oi.vendor_id = v.id
+                 AND oi.status = 'delivered'
+                 AND (o.payment_method = 'card' OR o.payment_status = 'cod_collected')
+             ), 0)
+               - ISNULL((SELECT SUM(amount) FROM vendor_payouts WHERE vendor_id = v.id), 0) AS outstanding_shipped_balance
+           FROM vendors v
+           WHERE v.id = $1`,
+            [vendorAccess.id],
+          ),
+          this.databaseService.query<{
+            id: string;
+            plan_type: 'monthly' | 'yearly';
+            status: 'active' | 'expired';
+            amount: number | string;
+            admin_note: string | null;
+            admin_email: string | null;
+            starts_at: Date;
+            ends_at: Date;
+            created_at: Date;
+          }>(
+            `SELECT TOP 6
+             s.id,
+             s.plan_type,
+             s.status,
+             s.amount,
+             s.admin_note,
+             u.email AS admin_email,
+             s.starts_at,
+             s.ends_at,
+             s.created_at
+           FROM vendor_subscriptions s
+           LEFT JOIN users u ON u.id = s.admin_user_id
+           WHERE s.vendor_id = $1
+           ORDER BY s.created_at DESC`,
+            [vendorAccess.id],
+          ),
+        ])
+      : [{ rows: [] }, { rows: [] }];
+
+    const canViewFinance = vendorAccess?.access_role === 'shop_holder';
+    const canManageSettings = vendorAccess?.access_role === 'shop_holder';
 
     return {
       id: user.id,
@@ -180,12 +193,17 @@ export class AccountService {
       createdAt: user.created_at,
       updatedAt: user.updated_at,
       vendor:
-        user.role === 'vendor' && vendorDetails.rows[0]
+        user.role === 'vendor' && vendorDetails.rows[0] && vendorAccess
           ? {
               id: vendorDetails.rows[0].id,
               shopName: vendorDetails.rows[0].shop_name,
               isActive: vendorDetails.rows[0].is_active,
               isVerified: vendorDetails.rows[0].is_verified,
+              accessRole: vendorAccess.access_role,
+              isPrimaryOwner: vendorAccess.is_primary_owner,
+              canManageSettings,
+              canManageTeam: vendorAccess.access_role === 'shop_holder',
+              canViewFinance,
               supportEmail: vendorDetails.rows[0].support_email,
               supportPhone: vendorDetails.rows[0].support_phone,
               shopDescription: vendorDetails.rows[0].shop_description,
@@ -221,26 +239,36 @@ export class AccountService {
                   createdAt: entry.created_at,
                 }),
               ),
-              bankAccountName: vendorDetails.rows[0].bank_account_name,
-              bankName: vendorDetails.rows[0].bank_name,
-              bankIban: vendorDetails.rows[0].bank_iban,
-              payoutSummary: {
-                pendingBalance: Number(vendorDetails.rows[0].pending_balance),
-                shippedBalance: Number(vendorDetails.rows[0].shipped_balance),
-                totalEarnings: Number(vendorDetails.rows[0].total_earnings),
-                paidOut: Number(vendorDetails.rows[0].paid_out),
-                outstandingShippedBalance: Math.max(
-                  0,
-                  Number(vendorDetails.rows[0].outstanding_shipped_balance),
-                ),
-              },
+              bankAccountName: canViewFinance
+                ? vendorDetails.rows[0].bank_account_name
+                : null,
+              bankName: canViewFinance ? vendorDetails.rows[0].bank_name : null,
+              bankIban: canViewFinance ? vendorDetails.rows[0].bank_iban : null,
+              payoutSummary: canViewFinance
+                ? {
+                    pendingBalance: Number(vendorDetails.rows[0].pending_balance),
+                    shippedBalance: Number(vendorDetails.rows[0].shipped_balance),
+                    totalEarnings: Number(vendorDetails.rows[0].total_earnings),
+                    paidOut: Number(vendorDetails.rows[0].paid_out),
+                    outstandingShippedBalance: Math.max(
+                      0,
+                      Number(vendorDetails.rows[0].outstanding_shipped_balance),
+                    ),
+                  }
+                : {
+                    pendingBalance: 0,
+                    shippedBalance: 0,
+                    totalEarnings: 0,
+                    paidOut: 0,
+                    outstandingShippedBalance: 0,
+                  },
             }
           : null,
     };
   }
 
   async getAccount(userId: string) {
-    const [profile, addresses, paymentMethods, recentOrders, cartItems] =
+    const [profile, addresses, paymentMethods, recentOrders, cartItems, claimableGuestOrders] =
       await Promise.all([
         this.databaseService.query<{
           id: string;
@@ -324,7 +352,16 @@ export class AccountService {
            ORDER BY sort_order ASC, id ASC
          ) pi
          WHERE c.customer_id = $1
-         ORDER BY ci.updated_at DESC`,
+          ORDER BY ci.updated_at DESC`,
+          [userId],
+        ),
+        this.databaseService.query<{ claimable_count: number }>(
+          `SELECT COUNT(*) AS claimable_count
+           FROM users u
+           INNER JOIN orders o
+             ON o.guest_email = u.email
+            AND o.customer_id IS NULL
+           WHERE u.id = $1`,
           [userId],
         ),
       ]);
@@ -386,6 +423,123 @@ export class AccountService {
         status: row.status,
         createdAt: row.created_at,
       })),
+      guestOrderRecovery: {
+        claimableCount: claimableGuestOrders.rows[0]?.claimable_count ?? 0,
+      },
+    };
+  }
+
+  async requestGuestOrderClaim(userId: string, phoneNumber?: string) {
+    const userResult = await this.databaseService.query<{
+      email: string;
+      phone_number: string | null;
+    }>(
+      `SELECT TOP 1 email, phone_number
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    const user = userResult.rows[0];
+    if (!user) {
+      throw new NotFoundException('Account not found');
+    }
+
+    const normalizedEmail = user.email.trim().toLowerCase();
+    const normalizedPhone = phoneNumber?.trim() || user.phone_number?.trim() || null;
+    const claimableOrders = await this.databaseService.query<{ id: string }>(
+      `SELECT id
+       FROM orders
+       WHERE customer_id IS NULL
+         AND guest_email = $1
+         AND ($2 IS NULL OR guest_phone_number = $2)`,
+      [normalizedEmail, normalizedPhone],
+    );
+
+    if (!claimableOrders.rows.length) {
+      return {
+        message:
+          'No unlinked guest orders were found for this account email right now.',
+      };
+    }
+
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE guest_order_claim_tokens
+         SET used_at = COALESCE(used_at, SYSDATETIME())
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [userId],
+      );
+
+      await client.query(
+        `INSERT INTO guest_order_claim_tokens (user_id, email, token, expires_at)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, normalizedEmail, token, expiresAt],
+      );
+    });
+
+    await this.mailService.sendGuestOrderClaimEmail(normalizedEmail, token);
+
+    return {
+      message:
+        'Verification email sent. Open the link in that email to securely connect your past guest orders.',
+    };
+  }
+
+  async verifyGuestOrderClaim(token: string) {
+    const result = await this.databaseService.withTransaction(async (client) => {
+      const tokenResult = await client.query<{
+        id: string;
+        user_id: string;
+        email: string;
+        expires_at: Date;
+        used_at: Date | null;
+      }>(
+        `SELECT TOP 1 id, user_id, email, expires_at, used_at
+         FROM guest_order_claim_tokens
+         WHERE token = $1`,
+        [token],
+      );
+
+      const record = tokenResult.rows[0];
+      if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
+        throw new BadRequestException(
+          'Invalid or expired guest order claim token',
+        );
+      }
+
+      const linked = await client.query<{ id: string }>(
+        `UPDATE orders
+         SET customer_id = $1,
+             guest_claimed_at = SYSDATETIME(),
+             guest_claimed_by_user_id = $1,
+             updated_at = SYSDATETIME()
+         OUTPUT INSERTED.id
+         WHERE customer_id IS NULL
+           AND guest_email = $2`,
+        [record.user_id, record.email],
+      );
+
+      await client.query(
+        `UPDATE guest_order_claim_tokens
+         SET used_at = SYSDATETIME()
+         WHERE id = $1`,
+        [record.id],
+      );
+
+      return linked.rows.length;
+    });
+
+    return {
+      message:
+        result > 0
+          ? `Connected ${result} guest order${result === 1 ? '' : 's'} to your account.`
+          : 'No pending guest orders were left to connect.',
+      linkedCount: result,
     };
   }
 
@@ -417,6 +571,11 @@ export class AccountService {
     if (!currentUser) {
       throw new NotFoundException('Account not found');
     }
+
+    const vendorAccess =
+      currentUser.role === 'vendor'
+        ? await this.vendorAccessService.getVendorAccessForUser(userId)
+        : null;
 
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -463,7 +622,7 @@ export class AccountService {
       const transactionUpdates = [...updates];
       const transactionValues = [...values];
 
-      if (emailChanged && currentUser.role === 'vendor') {
+      if (emailChanged && vendorAccess?.is_primary_owner) {
         transactionUpdates.push('email_verified_at = NULL');
       }
 
@@ -475,7 +634,12 @@ export class AccountService {
         transactionValues,
       );
 
-      if (!emailChanged || currentUser.role !== 'vendor' || !normalizedEmail) {
+      if (
+        !emailChanged ||
+        currentUser.role !== 'vendor' ||
+        !normalizedEmail ||
+        !vendorAccess?.is_primary_owner
+      ) {
         return;
       }
 
@@ -525,6 +689,7 @@ export class AccountService {
     userId: string,
     dto: { planType: 'monthly' | 'yearly' },
   ) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
     const vendor = await this.databaseService.query<{
       id: string;
       is_active: boolean;
@@ -551,8 +716,8 @@ export class AccountService {
          subscription_override_started_at,
          subscription_override_ends_at
        FROM vendors
-       WHERE user_id = $1`,
-      [userId],
+       WHERE id = $1`,
+      [access.id],
     );
 
     const current = vendor.rows[0];
@@ -665,14 +830,7 @@ export class AccountService {
     userId: string,
     dto: UpdateVendorBankDetailsDto,
   ) {
-    const vendor = await this.databaseService.query<{ id: string }>(
-      'SELECT TOP 1 id FROM vendors WHERE user_id = $1',
-      [userId],
-    );
-
-    if (!vendor.rows[0]) {
-      throw new NotFoundException('Vendor account not found');
-    }
+    const vendor = await this.vendorAccessService.requireShopHolderAccess(userId);
 
     await this.databaseService.query(
       `UPDATE vendors
@@ -680,12 +838,12 @@ export class AccountService {
            bank_name = $2,
            bank_iban = $3,
            updated_at = SYSDATETIME()
-       WHERE user_id = $4`,
+       WHERE id = $4`,
       [
         dto.bankAccountName?.trim() || null,
         dto.bankName?.trim() || null,
         dto.bankIban?.trim().toUpperCase() || null,
-        userId,
+        vendor.id,
       ],
     );
 
@@ -697,10 +855,14 @@ export class AccountService {
     dto: UpdateVendorProfileDto,
     logoImage?: Express.Multer.File,
   ) {
+    const vendorAccess = await this.vendorAccessService.requireShopHolderAccess(
+      userId,
+    );
+
     const vendor = await this.databaseService.query<{
       id: string;
       logo_url: string | null;
-    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE user_id = $1', [userId]);
+    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE id = $1', [vendorAccess.id]);
 
     if (!vendor.rows[0]) {
       this.cleanupTemporaryFile(logoImage);
@@ -743,7 +905,7 @@ export class AccountService {
              shipping_notes = $10,
              low_stock_threshold = COALESCE($11, low_stock_threshold),
              updated_at = SYSDATETIME()
-         WHERE user_id = $12`,
+         WHERE id = $12`,
         [
           dto.shopName?.trim() || null,
           dto.supportEmail?.trim().toLowerCase() || null,
@@ -756,7 +918,7 @@ export class AccountService {
           dto.businessHours?.trim() || null,
           dto.shippingNotes?.trim() || null,
           dto.lowStockThreshold,
-          userId,
+          vendorAccess.id,
         ],
       );
     } catch (error) {
@@ -773,6 +935,534 @@ export class AccountService {
     }
 
     return this.getSettings(userId);
+  }
+
+  async getVendorTeamAccess(userId: string) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+
+    const [members, invites] = await Promise.all([
+      this.databaseService.query<{
+        id: string;
+        user_id: string;
+        full_name: string | null;
+        email: string;
+        role: 'shop_holder' | 'employee';
+        status: 'pending' | 'active' | 'removed';
+        joined_at: Date | null;
+        updated_at: Date;
+        is_primary_owner: boolean;
+      }>(
+        `SELECT
+           tm.id,
+           tm.user_id,
+           u.full_name,
+           u.email,
+           tm.role,
+           tm.status,
+           tm.joined_at,
+           tm.updated_at,
+           CASE
+             WHEN v.user_id = tm.user_id THEN CAST(1 AS BIT)
+             ELSE CAST(0 AS BIT)
+           END AS is_primary_owner
+         FROM vendor_team_members tm
+         INNER JOIN users u ON u.id = tm.user_id
+         INNER JOIN vendors v ON v.id = tm.vendor_id
+         WHERE tm.vendor_id = $1
+           AND tm.status <> 'removed'
+         ORDER BY
+           CASE WHEN v.user_id = tm.user_id THEN 0 ELSE 1 END,
+           CASE WHEN tm.role = 'shop_holder' THEN 0 ELSE 1 END,
+           u.email ASC`,
+        [access.id],
+      ),
+      this.databaseService.query<{
+        id: string;
+        user_id: string | null;
+        email: string;
+        role: 'shop_holder' | 'employee';
+        note: string | null;
+        status: 'pending' | 'accepted' | 'revoked' | 'expired';
+        invited_at: Date;
+        last_sent_at: Date;
+        expires_at: Date;
+        invited_by_name: string | null;
+      }>(
+        `SELECT
+           i.id,
+           i.user_id,
+           i.email,
+           i.role,
+           i.note,
+           i.status,
+           i.invited_at,
+           i.last_sent_at,
+           i.expires_at,
+           inviter.full_name AS invited_by_name
+         FROM vendor_team_invites i
+         LEFT JOIN users inviter ON inviter.id = i.invited_by_user_id
+         WHERE i.vendor_id = $1
+           AND i.status = 'pending'
+         ORDER BY i.last_sent_at DESC, i.invited_at DESC`,
+        [access.id],
+      ),
+    ]);
+
+    return {
+      vendorId: access.id,
+      currentUserRole: access.access_role,
+      canManageTeam: true,
+      members: members.rows.map((member) => ({
+        id: member.id,
+        userId: member.user_id,
+        name: member.full_name,
+        email: member.email,
+        role: member.role,
+        status: member.status,
+        joinedAt: member.joined_at,
+        updatedAt: member.updated_at,
+        isPrimaryOwner: member.is_primary_owner,
+      })),
+      invites: invites.rows.map((invite) => ({
+        id: invite.id,
+        userId: invite.user_id,
+        email: invite.email,
+        role: invite.role,
+        note: invite.note,
+        status: invite.status,
+        invitedAt: invite.invited_at,
+        lastSentAt: invite.last_sent_at,
+        expiresAt: invite.expires_at,
+        invitedByName: invite.invited_by_name,
+      })),
+    };
+  }
+
+  async createVendorTeamInvite(
+    userId: string,
+    dto: CreateVendorTeamInviteDto,
+  ) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+
+    const delivery = await this.databaseService.withTransaction(async (client) => {
+      if (normalizedEmail === normalizedEmail.trim().toLowerCase() && normalizedEmail.length === 0) {
+        throw new BadRequestException('Invite email is required');
+      }
+
+      const existingMember = await client.query<{ id: string }>(
+        `SELECT TOP 1 tm.id
+         FROM vendor_team_members tm
+         INNER JOIN users u ON u.id = tm.user_id
+         WHERE tm.vendor_id = $1
+           AND u.email = $2
+           AND tm.status IN ('pending', 'active')`,
+        [access.id, normalizedEmail],
+      );
+
+      if (existingMember.rows[0]) {
+        throw new BadRequestException(
+          'This email already has access or a pending invite for this shop',
+        );
+      }
+
+      const existingInvite = await client.query<{ id: string }>(
+        `SELECT TOP 1 id
+         FROM vendor_team_invites
+         WHERE vendor_id = $1
+           AND email = $2
+           AND status = 'pending'`,
+        [access.id, normalizedEmail],
+      );
+
+      if (existingInvite.rows[0]) {
+        throw new BadRequestException(
+          'This email already has access or a pending invite for this shop',
+        );
+      }
+
+      const existingUser = await client.query<{
+        id: string;
+        role: 'admin' | 'vendor' | 'customer';
+      }>(
+        `SELECT TOP 1 id, role
+         FROM users
+         WHERE email = $1`,
+        [normalizedEmail],
+      );
+
+      let inviteeUserId = existingUser.rows[0]?.id ?? null;
+      let needsPasswordSetup = false;
+
+      if (inviteeUserId === userId) {
+        throw new BadRequestException(
+          'Your own shop account already has access to this workspace',
+        );
+      }
+
+      if (existingUser.rows[0]) {
+        if (existingUser.rows[0].role !== 'vendor') {
+          throw new BadRequestException(
+            'This email is already being used by a non-vendor account',
+          );
+        }
+
+        const otherOwner = await client.query<{ id: string }>(
+          `SELECT TOP 1 id
+           FROM vendors
+           WHERE user_id = $1
+             AND id <> $2`,
+          [inviteeUserId, access.id],
+        );
+
+        const otherMembership = await client.query<{ id: string }>(
+          `SELECT TOP 1 id
+           FROM vendor_team_members
+           WHERE user_id = $1
+             AND vendor_id <> $2
+             AND status IN ('pending', 'active')`,
+          [inviteeUserId, access.id],
+        );
+
+        if (otherOwner.rows[0] || otherMembership.rows[0]) {
+          throw new BadRequestException(
+            'This user is already linked to another vendor shop',
+          );
+        }
+      } else {
+        const passwordHash = await bcrypt.hash(randomUUID(), 10);
+        const createdUser = await client.query<{ id: string }>(
+          `INSERT INTO users (email, password_hash, role, email_verified_at)
+           OUTPUT INSERTED.id
+           VALUES ($1, $2, 'vendor', SYSDATETIME())`,
+          [normalizedEmail, passwordHash],
+        );
+        inviteeUserId = createdUser.rows[0].id;
+        needsPasswordSetup = true;
+      }
+
+      await client.query(
+        `INSERT INTO vendor_team_members (
+           vendor_id,
+           user_id,
+           role,
+           status,
+           invited_by_user_id,
+           joined_at
+         )
+         VALUES ($1, $2, $3, 'pending', $4, NULL)`,
+        [access.id, inviteeUserId, dto.role, userId],
+      );
+
+      let passwordResetToken: string | null = null;
+      if (needsPasswordSetup) {
+        passwordResetToken = randomUUID();
+        const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+        await client.query(
+          `INSERT INTO password_resets (user_id, token, expires_at)
+           VALUES ($1, $2, $3)`,
+          [inviteeUserId, passwordResetToken, resetExpiresAt],
+        );
+      }
+
+      const inviteToken = randomUUID();
+      await client.query(
+        `INSERT INTO vendor_team_invites (
+           vendor_id,
+           user_id,
+           email,
+           role,
+           note,
+           token,
+           status,
+           invited_by_user_id,
+           invited_at,
+           last_sent_at,
+           expires_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, SYSDATETIME(), SYSDATETIME(), $8)`,
+        [
+          access.id,
+          inviteeUserId,
+          normalizedEmail,
+          dto.role,
+          dto.note?.trim() || null,
+          inviteToken,
+          userId,
+          expiresAt,
+        ],
+      );
+
+      const inviter = await client.query<{ full_name: string | null; email: string }>(
+        'SELECT TOP 1 full_name, email FROM users WHERE id = $1',
+        [userId],
+      );
+
+      return {
+        email: normalizedEmail,
+        shopName: access.shop_name,
+        role: dto.role,
+        inviterName:
+          inviter.rows[0]?.full_name?.trim() ||
+          inviter.rows[0]?.email ||
+          'Shop holder',
+        resetToken: passwordResetToken,
+      };
+    });
+
+    await this.sendVendorTeamInviteEmail(delivery);
+
+    return {
+      message: 'Team invitation sent.',
+      ...(await this.getVendorTeamAccess(userId)),
+    };
+  }
+
+  async resendVendorTeamInvite(userId: string, inviteId: string) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+
+    const delivery = await this.databaseService.withTransaction(async (client) => {
+      const invite = await client.query<{
+        id: string;
+        vendor_id: string;
+        user_id: string | null;
+        email: string;
+        role: 'shop_holder' | 'employee';
+      }>(
+        `SELECT TOP 1 id, vendor_id, user_id, email, role
+         FROM vendor_team_invites
+         WHERE id = $1
+           AND vendor_id = $2
+           AND status = 'pending'`,
+        [inviteId, access.id],
+      );
+
+      const current = invite.rows[0];
+      if (!current) {
+        throw new NotFoundException('Pending invite not found');
+      }
+
+      let resetToken: string | null = null;
+      if (current.user_id) {
+        const userRow = await client.query<{ full_name: string | null }>(
+          'SELECT TOP 1 full_name FROM users WHERE id = $1',
+          [current.user_id],
+        );
+
+        const member = await client.query<{ id: string; status: string }>(
+          `SELECT TOP 1 id, status
+           FROM vendor_team_members
+           WHERE vendor_id = $1
+             AND user_id = $2`,
+          [access.id, current.user_id],
+        );
+
+        if (!member.rows[0] || member.rows[0].status === 'removed') {
+          throw new NotFoundException('Team member not found for this invite');
+        }
+
+        if (!userRow.rows[0]?.full_name) {
+          resetToken = randomUUID();
+          const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+          await client.query(
+            `INSERT INTO password_resets (user_id, token, expires_at)
+             VALUES ($1, $2, $3)`,
+            [current.user_id, resetToken, resetExpiresAt],
+          );
+        }
+      }
+
+      const nextToken = randomUUID();
+      await client.query(
+        `UPDATE vendor_team_invites
+         SET token = $1,
+             expires_at = $2,
+             last_sent_at = SYSDATETIME(),
+             updated_at = SYSDATETIME()
+         WHERE id = $3`,
+        [nextToken, expiresAt, inviteId],
+      );
+
+      const inviter = await client.query<{ full_name: string | null; email: string }>(
+        'SELECT TOP 1 full_name, email FROM users WHERE id = $1',
+        [userId],
+      );
+
+      return {
+        email: current.email,
+        shopName: access.shop_name,
+        role: current.role,
+        inviterName:
+          inviter.rows[0]?.full_name?.trim() ||
+          inviter.rows[0]?.email ||
+          'Shop holder',
+        resetToken,
+      };
+    });
+
+    await this.sendVendorTeamInviteEmail(delivery);
+
+    return {
+      message: 'Invitation resent.',
+      ...(await this.getVendorTeamAccess(userId)),
+    };
+  }
+
+  async updateVendorTeamMemberRole(
+    userId: string,
+    memberId: string,
+    dto: UpdateVendorTeamMemberRoleDto,
+  ) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+
+    await this.databaseService.withTransaction(async (client) => {
+      const member = await client.query<{
+        id: string;
+        user_id: string;
+        role: 'shop_holder' | 'employee';
+        status: 'pending' | 'active' | 'removed';
+        is_primary_owner: boolean;
+      }>(
+        `SELECT TOP 1
+           tm.id,
+           tm.user_id,
+           tm.role,
+           tm.status,
+           CASE
+             WHEN v.user_id = tm.user_id THEN CAST(1 AS BIT)
+             ELSE CAST(0 AS BIT)
+           END AS is_primary_owner
+         FROM vendor_team_members tm
+         INNER JOIN vendors v ON v.id = tm.vendor_id
+         WHERE tm.id = $1
+           AND tm.vendor_id = $2`,
+        [memberId, access.id],
+      );
+
+      const current = member.rows[0];
+      if (!current || current.status === 'removed') {
+        throw new NotFoundException('Team member not found');
+      }
+
+      if (current.is_primary_owner) {
+        throw new BadRequestException(
+          'The primary shop holder role cannot be changed',
+        );
+      }
+
+      if (current.role === 'shop_holder' && dto.role !== 'shop_holder') {
+        const activeHolderCount = await this.countActiveShopHolders(
+          access.id,
+          client,
+        );
+        if (activeHolderCount <= 1) {
+          throw new BadRequestException(
+            'The last remaining shop holder cannot be demoted',
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE vendor_team_members
+         SET role = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = $2`,
+        [dto.role, memberId],
+      );
+
+      await client.query(
+        `UPDATE vendor_team_invites
+         SET role = $1,
+             updated_at = SYSDATETIME()
+         WHERE vendor_id = $2
+           AND user_id = $3
+           AND status = 'pending'`,
+        [dto.role, access.id, current.user_id],
+      );
+    });
+
+    return {
+      message: 'Team role updated.',
+      ...(await this.getVendorTeamAccess(userId)),
+    };
+  }
+
+  async removeVendorTeamMember(userId: string, memberId: string) {
+    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+
+    await this.databaseService.withTransaction(async (client) => {
+      const member = await client.query<{
+        id: string;
+        user_id: string;
+        role: 'shop_holder' | 'employee';
+        status: 'pending' | 'active' | 'removed';
+        is_primary_owner: boolean;
+      }>(
+        `SELECT TOP 1
+           tm.id,
+           tm.user_id,
+           tm.role,
+           tm.status,
+           CASE
+             WHEN v.user_id = tm.user_id THEN CAST(1 AS BIT)
+             ELSE CAST(0 AS BIT)
+           END AS is_primary_owner
+         FROM vendor_team_members tm
+         INNER JOIN vendors v ON v.id = tm.vendor_id
+         WHERE tm.id = $1
+           AND tm.vendor_id = $2`,
+        [memberId, access.id],
+      );
+
+      const current = member.rows[0];
+      if (!current || current.status === 'removed') {
+        throw new NotFoundException('Team member not found');
+      }
+
+      if (current.is_primary_owner) {
+        throw new BadRequestException(
+          'The primary shop holder cannot be removed',
+        );
+      }
+
+      if (current.role === 'shop_holder') {
+        const activeHolderCount = await this.countActiveShopHolders(
+          access.id,
+          client,
+        );
+        if (activeHolderCount <= 1) {
+          throw new BadRequestException(
+            'The last remaining shop holder cannot be removed',
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE vendor_team_members
+         SET status = 'removed',
+             updated_at = SYSDATETIME()
+         WHERE id = $1`,
+        [memberId],
+      );
+
+      await client.query(
+        `UPDATE vendor_team_invites
+         SET status = 'revoked',
+             responded_at = COALESCE(responded_at, SYSDATETIME()),
+             updated_at = SYSDATETIME()
+         WHERE vendor_id = $1
+           AND user_id = $2
+           AND status = 'pending'`,
+        [access.id, current.user_id],
+      );
+    });
+
+    return {
+      message: 'Team access removed.',
+      ...(await this.getVendorTeamAccess(userId)),
+    };
   }
 
   async createAddress(userId: string, dto: UpsertAddressDto) {
@@ -1025,6 +1715,46 @@ export class AccountService {
     if (file?.path && existsSync(file.path)) {
       unlinkSync(file.path);
     }
+  }
+
+  private async countActiveShopHolders(
+    vendorId: string,
+    client: {
+      query<T = Record<string, unknown>>(
+        text: string,
+        params?: unknown[],
+      ): Promise<{ rows: T[] }>;
+    } = this.databaseService,
+  ) {
+    const result = await client.query<{ holder_count: number }>(
+      `SELECT COUNT(*) AS holder_count
+       FROM vendor_team_members
+       WHERE vendor_id = $1
+         AND role = 'shop_holder'
+         AND status = 'active'`,
+      [vendorId],
+    );
+
+    return Number(result.rows[0]?.holder_count ?? 0);
+  }
+
+  private async sendVendorTeamInviteEmail(payload: {
+    email: string;
+    shopName: string;
+    role: 'shop_holder' | 'employee';
+    inviterName: string;
+    resetToken: string | null;
+  }) {
+    await this.mailService.sendVendorTeamInviteEmail({
+      email: payload.email,
+      shopName: payload.shopName,
+      role: payload.role,
+      inviterName: payload.inviterName,
+      actionUrl: payload.resetToken
+        ? `/reset-password?token=${encodeURIComponent(payload.resetToken)}`
+        : '/login',
+      actionLabel: payload.resetToken ? 'Set up account' : 'Sign in',
+    });
   }
 
   private formatSqlDateTime(value: Date) {

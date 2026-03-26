@@ -171,6 +171,101 @@ export class MailService {
     );
   }
 
+  async sendCustomerActivationEmail(payload: {
+    email: string;
+    fullName?: string | null;
+    token: string;
+  }) {
+    const settings = await this.getMailerSettings();
+    if (!settings.passwordResetEmailsEnabled) {
+      this.logger.warn(
+        'Customer activation email skipped because password reset emails are disabled in platform settings',
+      );
+      return;
+    }
+
+    const transporter = await this.getTransporter(settings);
+    const activationUrl = `${settings.appBaseUrl}/reset-password?token=${encodeURIComponent(payload.token)}`;
+    const greeting = payload.fullName?.trim()
+      ? `Hi ${payload.fullName.trim()},`
+      : 'Hi,';
+    const info = await transporter.sendMail({
+      from: settings.mailFrom,
+      to: payload.email,
+      subject: 'Activate your Vishu.shop account',
+      html: `<p>${greeting}</p>
+<p>We created a Vishu.shop customer account for this email after your recent purchase.</p>
+<p>Activate it to track orders, view your order history, and manage future purchases.</p>
+<p><a href="${activationUrl}">${activationUrl}</a></p>`,
+    });
+    this.logger.log(
+      `Customer activation email queued for ${payload.email}: ${info.messageId}`,
+    );
+  }
+
+  async sendGuestOrderConfirmationEmail(payload: {
+    email: string;
+    fullName?: string | null;
+    orderId: string;
+    totalPrice: number;
+    placedAt: Date;
+    shippingAddress: {
+      fullName: string | null;
+      phoneNumber: string | null;
+      line1: string | null;
+      line2: string | null;
+      city: string | null;
+    } | null;
+    items: Array<{
+      title: string;
+      quantity: number;
+      unitPrice: number;
+      color?: string | null;
+      size?: string | null;
+    }>;
+  }) {
+    const settings = await this.getMailerSettings();
+    const transporter = await this.getTransporter(settings);
+    const greeting = payload.fullName?.trim()
+      ? `Hi ${payload.fullName.trim()},`
+      : 'Hi,';
+    const itemsHtml = payload.items
+      .map((item) => {
+        const variant = [item.color, item.size].filter(Boolean).join(' · ');
+        return `<li><strong>${item.title}</strong> x ${item.quantity}${
+          variant ? ` (${variant})` : ''
+        } - ${item.unitPrice.toFixed(2)} EUR each</li>`;
+      })
+      .join('');
+    const address = payload.shippingAddress
+      ? `<p><strong>Delivery:</strong> ${[
+          payload.shippingAddress.fullName,
+          payload.shippingAddress.phoneNumber,
+          payload.shippingAddress.line1,
+          payload.shippingAddress.line2,
+          payload.shippingAddress.city,
+        ]
+          .filter(Boolean)
+          .join(', ')}</p>`
+      : '';
+    const info = await transporter.sendMail({
+      from: settings.mailFrom,
+      to: payload.email,
+      subject: `Order confirmation ${payload.orderId}`,
+      html: `<p>${greeting}</p>
+<p>Thank you for your order.</p>
+<p><strong>Order number:</strong> ${payload.orderId}</p>
+<p><strong>Placed:</strong> ${new Date(payload.placedAt).toLocaleString('en-GB')}</p>
+<ul>${itemsHtml}</ul>
+<p><strong>Total:</strong> ${payload.totalPrice.toFixed(2)} EUR</p>
+${address}
+<p>We will contact you with delivery updates if needed.</p>`,
+    });
+    this.logger.log(
+      `Guest order confirmation email queued for ${payload.email}: ${info.messageId}`,
+    );
+  }
+
   async sendAdminVendorApprovalAlert(
     emails: string[],
     payload: { shopName: string; vendorEmail: string; reviewUrl: string },
@@ -224,6 +319,35 @@ export class MailService {
     );
   }
 
+  async sendVendorTeamInviteEmail(payload: {
+    email: string;
+    shopName: string;
+    role: 'shop_holder' | 'employee';
+    inviterName: string;
+    actionUrl: string;
+    actionLabel: string;
+  }) {
+    const settings = await this.getMailerSettings();
+    const transporter = await this.getTransporter(settings);
+    const absoluteActionUrl = payload.actionUrl.startsWith('http')
+      ? payload.actionUrl
+      : `${settings.appBaseUrl}${payload.actionUrl}`;
+    const roleLabel =
+      payload.role === 'shop_holder' ? 'Shop Holder' : 'Employee';
+    const info = await transporter.sendMail({
+      from: settings.mailFrom,
+      to: payload.email,
+      subject: `You have been invited to ${payload.shopName}`,
+      html: `<p>${payload.inviterName} invited you to join <strong>${payload.shopName}</strong> on Vishu.shop.</p>
+<p><strong>Role:</strong> ${roleLabel}</p>
+<p>Use the link below to ${payload.actionLabel.toLowerCase()} and activate your access.</p>
+<p><a href="${absoluteActionUrl}">${absoluteActionUrl}</a></p>`,
+    });
+    this.logger.log(
+      `Vendor team invite email queued for ${payload.email}: ${info.messageId}`,
+    );
+  }
+
   async sendPlatformTestEmail(email: string) {
     const settings = await this.getMailerSettings();
     const transporter = await this.getTransporter(settings);
@@ -262,6 +386,23 @@ export class MailService {
     });
     this.logger.log(
       `Vendor low stock alert queued for ${payload.email}: ${info.messageId}`,
+    );
+  }
+
+  async sendGuestOrderClaimEmail(email: string, token: string) {
+    const settings = await this.getMailerSettings();
+    const transporter = await this.getTransporter(settings);
+    const claimUrl = `${settings.appBaseUrl}/claim-orders?token=${encodeURIComponent(token)}`;
+    const info = await transporter.sendMail({
+      from: settings.mailFrom,
+      to: email,
+      subject: 'Confirm access to your past guest orders',
+      html: `<p>Use the link below to securely connect your previous guest orders to your Vishu.shop account.</p>
+<p>This verification step is required before any old guest orders can appear in your account history.</p>
+<p><a href="${claimUrl}">${claimUrl}</a></p>`,
+    });
+    this.logger.log(
+      `Guest order claim email queued for ${email}: ${info.messageId}`,
     );
   }
 }

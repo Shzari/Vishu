@@ -25,10 +25,19 @@ import { AuthenticatedUser } from '../common/types';
 import { AdminService } from './admin.service';
 import { AdminCodStatusDto } from '../orders/dto';
 import {
+  BrandMutationDto,
+  CatalogMasterDataMutationDto,
+  CategoryMutationDto,
+  ColorMutationDto,
   CreateAdminUserDto,
+  GenderGroupMutationDto,
   PromotionMutationDto,
   PromotionUpdateDto,
+  ReviewCatalogRequestDto,
   SendPlatformTestEmailDto,
+  SizeMutationDto,
+  SizeTypeMutationDto,
+  SubcategoryMutationDto,
   UpdatePromotionSettingsDto,
   UpdatePlatformSettingsDto,
   UpdateVendorSubscriptionDto,
@@ -131,6 +140,233 @@ export class AdminController {
   @Get('promotions')
   getPromotions() {
     return this.adminService.getPromotionSettings();
+  }
+
+  @Get('catalog-requests')
+  getCatalogRequests(
+    @Query('type') type?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.adminService.getCatalogRequests(type, status);
+  }
+
+  @Get('catalog-structure')
+  getCatalogStructure() {
+    return this.adminService.getCatalogStructure();
+  }
+
+  @Post('catalog/categories')
+  createCategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: CategoryMutationDto,
+  ) {
+    return this.adminService.createCategory(req.user.sub, dto);
+  }
+
+  @Patch('catalog/categories/:id')
+  updateCategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: CategoryMutationDto,
+  ) {
+    return this.adminService.updateCategory(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/categories/:id')
+  deleteCategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteCategory(req.user.sub, id);
+  }
+
+  @Post('catalog/subcategories')
+  createSubcategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: SubcategoryMutationDto,
+  ) {
+    return this.adminService.createSubcategory(req.user.sub, dto);
+  }
+
+  @Patch('catalog/subcategories/:id')
+  updateSubcategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: SubcategoryMutationDto,
+  ) {
+    return this.adminService.updateSubcategory(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/subcategories/:id')
+  deleteSubcategory(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteSubcategory(req.user.sub, id);
+  }
+
+  @Post('catalog/brands')
+  createBrand(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: BrandMutationDto,
+  ) {
+    return this.adminService.createBrand(req.user.sub, dto);
+  }
+
+  @Patch('catalog/brands/:id')
+  updateBrand(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: BrandMutationDto,
+  ) {
+    return this.adminService.updateBrand(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/brands/:id')
+  deleteBrand(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteBrand(req.user.sub, id);
+  }
+
+  @Post('catalog/colors')
+  createColor(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: ColorMutationDto,
+  ) {
+    return this.adminService.createColor(req.user.sub, dto);
+  }
+
+  @Patch('catalog/colors/:id')
+  updateColor(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ColorMutationDto,
+  ) {
+    return this.adminService.updateColor(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/colors/:id')
+  deleteColor(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteColor(req.user.sub, id);
+  }
+
+  @Post('catalog/size-types')
+  createSizeType(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: SizeTypeMutationDto,
+  ) {
+    return this.adminService.createSizeType(req.user.sub, dto);
+  }
+
+  @Patch('catalog/size-types/:id')
+  updateSizeType(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: SizeTypeMutationDto,
+  ) {
+    return this.adminService.updateSizeType(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/size-types/:id')
+  deleteSizeType(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteSizeType(req.user.sub, id);
+  }
+
+  @Post('catalog/sizes')
+  createSize(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: SizeMutationDto,
+  ) {
+    return this.adminService.createSize(req.user.sub, dto);
+  }
+
+  @Patch('catalog/sizes/:id')
+  updateSize(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: SizeMutationDto,
+  ) {
+    return this.adminService.updateSize(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/sizes/:id')
+  deleteSize(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteSize(req.user.sub, id);
+  }
+
+  @Post('catalog/gender-groups')
+  createGenderGroup(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: GenderGroupMutationDto,
+  ) {
+    return this.adminService.createGenderGroup(req.user.sub, dto);
+  }
+
+  @Patch('catalog/gender-groups/:id')
+  updateGenderGroup(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: GenderGroupMutationDto,
+  ) {
+    return this.adminService.updateGenderGroup(req.user.sub, id, dto);
+  }
+
+  @Delete('catalog/gender-groups/:id')
+  deleteGenderGroup(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteGenderGroup(req.user.sub, id);
+  }
+
+  @Patch('catalog-requests/:id/review')
+  reviewCatalogRequest(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ReviewCatalogRequestDto,
+  ) {
+    return this.adminService.reviewCatalogRequest(req.user.sub, id, dto);
+  }
+
+  @Get('master-data')
+  getCatalogMasterData() {
+    return this.adminService.getCatalogMasterData();
+  }
+
+  @Post('master-data')
+  createCatalogMasterData(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: CatalogMasterDataMutationDto,
+  ) {
+    return this.adminService.createCatalogMasterData(req.user.sub, dto);
+  }
+
+  @Patch('master-data/:id')
+  updateCatalogMasterData(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: CatalogMasterDataMutationDto,
+  ) {
+    return this.adminService.updateCatalogMasterData(req.user.sub, id, dto);
+  }
+
+  @Delete('master-data/:id')
+  deleteCatalogMasterData(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteCatalogMasterData(req.user.sub, id);
   }
 
   @Patch('promotions/settings')

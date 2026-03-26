@@ -1,6 +1,6 @@
 # Vishu Project Status
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 This file is the handoff reference for any account or agent continuing work on this repo.
 
@@ -11,6 +11,10 @@ This file is the handoff reference for any account or agent continuing work on t
 - Main local URLs:
   - web: `http://localhost:3001`
   - api: `http://localhost:3000`
+- Current DB structure reference:
+  - `DATABASE-STRUCTURE.md`
+- Current AWS deploy reference:
+  - `AWS-DEPLOY-CHECKLIST.md`
 - Local runtime note:
   - local web is pointed back to `localhost` for API calls
   - old Tailscale local API target should no longer be used for daily local development
@@ -38,10 +42,16 @@ This file is the handoff reference for any account or agent continuing work on t
 - Status: `Done`
 - Completed:
   - customer register/login/reset-password flow
-  - customer can register and buy immediately
+  - customer can buy as guest without creating an account first
+  - customer accounts can now also be auto-created from guest checkout
+  - guest-created customer accounts stay unactivated until password setup
+  - guest checkout now sends:
+    - order confirmation email
+    - separate account activation email when needed
   - customer account, addresses, saved cards, and password change are in place
 - Important rule:
-  - customer email verification is `not required`
+  - customer can buy without login
+  - customer account activation is required before sign-in and order-history access
 
 ### Phase 3: Vendor Onboarding
 
@@ -201,6 +211,36 @@ This file is the handoff reference for any account or agent continuing work on t
   - without Algolia credentials, the app falls back safely to database-driven layered search
 - API now has a search reindex helper:
   - `npm --workspace apps/api run sync:search-index`
+- the marketplace catalog was normalized on 2026-03-26
+  - new dedicated tables now exist for:
+    - `gender_groups`
+    - `categories`
+    - `subcategories`
+    - `brands`
+    - `colors`
+    - `size_types`
+    - `sizes`
+    - `vendor_requests`
+    - `product_colors`
+    - `product_sizes`
+  - `products` now also carries structured foreign keys:
+    - `brand_id`
+    - `category_id`
+    - `subcategory_id`
+    - `gender_group_id`
+  - vendor product creation now uses admin-managed catalog values instead of free typing structured fields
+  - admin settings now acts as the marketplace structure control panel instead of one generic master-data form
+  - vendor request review is DB-backed, but approval does not auto-create the structure value
+  - `DATABASE-STRUCTURE.md` was added as the new always-current table and relationship guide
+- guest checkout customer-account flow was upgraded on 2026-03-26
+  - guest orders now create or reuse a `customer` record automatically
+  - order is linked to that customer record immediately
+  - first guest order sends two separate emails:
+    - order confirmation
+    - customer account activation
+  - unactivated customer records become active through password setup from the secure email link
+  - duplicate active customer accounts are not created for the same email
+  - `AWS-DEPLOY-CHECKLIST.md` was added because SMTP and `APP_BASE_URL` are now part of checkout-account correctness, not just optional polish
 - repeated localhost design breakages were caused by stale Next.js web processes serving old CSS chunk references
 - when localhost looks unstyled:
   - compare the CSS chunk referenced in page HTML with files in `apps/web/.next/static/chunks`
@@ -315,7 +355,9 @@ This file is the handoff reference for any account or agent continuing work on t
   - quick view is for fast browsing
   - full product page is the canonical detailed view
 - Customer auth:
-  - customer email verification is not required
+  - guest checkout is allowed without login
+  - customer records created through guest checkout must stay unactivated until password setup
+  - customer login requires activation first
 - Vendor auth:
   - vendor email verification is required
   - vendor still needs admin approval
@@ -331,10 +373,16 @@ This file is the handoff reference for any account or agent continuing work on t
   - prefer database-first storage for business data and workflow state
   - keep moving important state out of browser/local app storage when practical
   - browser storage should be minimal and temporary, not the source of truth
+  - normalized catalog tables are now the source of truth for marketplace structure
+  - compatibility text fields on `products` still exist, but new work should prefer relations first
 - AWS deployment rule:
   - after pulling code on AWS, database/schema changes must be checked first
   - if a change touches tables, columns, SQL bootstrap, or DB-backed workflow state, treat DB verification as the first deployment task
   - do not treat AWS deploy/update as complete until API startup and SQL compatibility are confirmed
+  - guest checkout/account flows are now also deployment-sensitive:
+    - SMTP must work
+    - `APP_BASE_URL` must be correct
+    - activation links and order emails must be tested after deploy
 
 ## Release Readiness Notes
 
@@ -350,6 +398,24 @@ This file is the handoff reference for any account or agent continuing work on t
 ## Database Change Check For AWS
 
 - Search work on 2026-03-25 did **not** add new SQL tables or columns.
+- Catalog refactor work on 2026-03-26 **did** add and reorganize SQL structure.
+- New SQL tables added in the catalog refactor:
+  - `gender_groups`
+  - `categories`
+  - `subcategories`
+  - `brands`
+  - `colors`
+  - `size_types`
+  - `sizes`
+  - `vendor_requests`
+  - `product_colors`
+  - `product_sizes`
+- Existing `products` table now also uses structured catalog references:
+  - `brand_id`
+  - `category_id`
+  - `subcategory_id`
+  - `gender_group_id`
+- Schema bootstrap now also backfills normalized structure data from older product/master-data content where possible.
 - Search deployment requires only environment configuration if Algolia is desired:
   - `ALGOLIA_APP_ID`
   - `ALGOLIA_ADMIN_API_KEY`
@@ -363,10 +429,17 @@ This file is the handoff reference for any account or agent continuing work on t
   - `homepage_hero_slides.starts_at`
   - `homepage_hero_slides.ends_at`
 - On AWS, API startup against SQL Server must be confirmed after pull because schema bootstrap is still responsible for applying any missing columns.
+- On AWS, after this catalog refactor, also verify:
+  - admin settings structure lists load
+  - vendor product form loads catalog options
+  - category/storefront filtering still returns products
+  - product create/update succeeds with normalized IDs and relation rows
 
 ## Pre-Push / Pre-AWS Checklist
 
 - Confirm the local folder is attached to the real GitHub repo before committing.
+- Read `DATABASE-STRUCTURE.md` before reviewing schema-related deployment risk.
+- Read `AWS-DEPLOY-CHECKLIST.md` before any real AWS push/pull/update.
 - Run:
   - `npm --workspace apps/api run build`
   - `npm --workspace apps/web run build`
@@ -375,9 +448,16 @@ This file is the handoff reference for any account or agent continuing work on t
   - `npm --workspace apps/api run sync:search-index`
 - After pulling on AWS:
   - verify API boots without SQL errors
+  - verify normalized catalog tables/bootstrap complete without SQL errors
   - verify homepage promotions load
   - verify `/products/search` responds
   - verify homepage search returns structured results
+  - verify admin settings structure sections load
+  - verify vendor product form can read brands/categories/subcategories/colors/sizes
+  - verify guest checkout sends the correct email flow:
+    - order confirmation email
+    - activation email only when the customer is still unactivated
+  - verify password-setup activation links point to the real public domain
 
 ## Next Recommended Work
 
@@ -401,3 +481,4 @@ Whenever meaningful work is completed:
 - move finished items from `Left to finish` into `Done`
 - add any new business decision that changes how the app should behave
 - if the change affects SQL tables or DB-backed logic, mention it clearly so AWS pull/deploy work can check DB changes first
+- if the change affects table layout or table ownership, update `DATABASE-STRUCTURE.md` in the same change

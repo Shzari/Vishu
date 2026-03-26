@@ -1,4 +1,5 @@
 export type UserRole = "admin" | "vendor" | "customer";
+export type VendorAccessRole = "shop_holder" | "employee";
 
 export interface SessionUser {
   sub: string;
@@ -61,6 +62,8 @@ export interface ProfileResponse {
     is_active: boolean;
     is_verified: boolean;
     approved_at: string | null;
+    access_role: VendorAccessRole;
+    is_primary_owner: boolean;
   } | null;
 }
 
@@ -75,6 +78,18 @@ export interface Product {
   category: string;
   color?: string | null;
   size?: string | null;
+  brand?: { id: string; name: string } | null;
+  categoryRef?: { id: string; name: string } | null;
+  subcategory?: { id: string; name: string } | null;
+  genderGroup?: { id: string; name: string } | null;
+  colors: { id: string; name: string }[];
+  sizeVariants: {
+    id: string;
+    label: string;
+    stock: number;
+    sizeTypeId: string;
+    sizeTypeName: string;
+  }[];
   productCode?: string | null;
   vendor?: {
     id: string;
@@ -134,6 +149,8 @@ export interface CartItem {
   title: string;
   price: number;
   image?: string;
+  color?: string | null;
+  size?: string | null;
   quantity: number;
   stock: number;
 }
@@ -202,6 +219,7 @@ export interface AdminUserRow {
   email: string;
   role: string;
   is_active: boolean;
+  created_at: string;
   vendor_id: string | null;
   shop_name: string | null;
   vendor_active: boolean | null;
@@ -447,6 +465,139 @@ export interface AdminPlatformSettings {
   activityLog: AdminActivityLogEntry[];
 }
 
+export interface AdminCatalogRequest {
+  id: string;
+  requestType: "category" | "subcategory" | "brand" | "size" | "color";
+  categoryId?: string | null;
+  categoryName?: string | null;
+  subcategoryId?: string | null;
+  subcategoryName?: string | null;
+  sizeTypeId?: string | null;
+  sizeTypeName?: string | null;
+  requestedValue: string;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  adminNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  vendor: {
+    id: string;
+    shopName: string;
+    email: string;
+  };
+}
+
+export interface AdminCatalogMasterDataOption {
+  id: string;
+  optionType: "category" | "subcategory" | "brand" | "size" | "color";
+  department: string | null;
+  parentValue: string | null;
+  value: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendorCatalogRequest {
+  id: string;
+  requestType: "category" | "subcategory" | "brand" | "size" | "color";
+  categoryId?: string | null;
+  categoryName?: string | null;
+  subcategoryId?: string | null;
+  subcategoryName?: string | null;
+  sizeTypeId?: string | null;
+  sizeTypeName?: string | null;
+  requestedValue: string;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  adminNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+export interface VendorCatalogOptions {
+  genderGroups: {
+    id: string;
+    name: string;
+  }[];
+  categories: {
+    id: string;
+    name: string;
+    subcategories: { id: string; name: string }[];
+  }[];
+  brands: { id: string; name: string }[];
+  colors: { id: string; name: string }[];
+  sizeTypes: {
+    id: string;
+    name: string;
+    sizes: { id: string; label: string }[];
+  }[];
+}
+
+export interface AdminCatalogCategory {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogSubcategory {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogBrand {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogColor {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogSizeType {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogSize {
+  id: string;
+  sizeTypeId: string;
+  sizeTypeName: string;
+  label: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogGenderGroup {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface AdminCatalogStructure {
+  categories: AdminCatalogCategory[];
+  subcategories: AdminCatalogSubcategory[];
+  brands: AdminCatalogBrand[];
+  colors: AdminCatalogColor[];
+  sizeTypes: AdminCatalogSizeType[];
+  sizes: AdminCatalogSize[];
+  genderGroups: AdminCatalogGenderGroup[];
+}
+
 export interface AdminProductOption {
   id: string;
   title: string;
@@ -599,6 +750,9 @@ export interface CustomerAccount {
     status: string;
     createdAt: string;
   }[];
+  guestOrderRecovery: {
+    claimableCount: number;
+  };
 }
 
 export interface AccountSettingsProfile {
@@ -615,6 +769,11 @@ export interface AccountSettingsProfile {
     shopName: string;
     isActive: boolean;
     isVerified: boolean;
+    accessRole: VendorAccessRole;
+    isPrimaryOwner: boolean;
+    canManageSettings: boolean;
+    canManageTeam: boolean;
+    canViewFinance: boolean;
     supportEmail: string | null;
     supportPhone: string | null;
     shopDescription: string | null;
@@ -659,9 +818,6 @@ export interface AccountSettingsProfile {
       endsAt: string;
       createdAt: string;
     }[];
-    bankAccountName: string | null;
-    bankName: string | null;
-    bankIban: string | null;
     payoutSummary: {
       pendingBalance: number;
       shippedBalance: number;
@@ -672,13 +828,43 @@ export interface AccountSettingsProfile {
   } | null;
 }
 
+export interface VendorTeamMember {
+  id: string;
+  userId: string;
+  name: string | null;
+  email: string;
+  role: VendorAccessRole;
+  status: "pending" | "active";
+  joinedAt: string | null;
+  updatedAt: string;
+  isPrimaryOwner: boolean;
+}
+
+export interface VendorTeamInvite {
+  id: string;
+  userId: string | null;
+  email: string;
+  role: VendorAccessRole;
+  note: string | null;
+  status: "pending";
+  invitedAt: string;
+  lastSentAt: string;
+  expiresAt: string;
+  invitedByName: string | null;
+}
+
+export interface VendorTeamAccessResponse {
+  vendorId: string;
+  currentUserRole: VendorAccessRole;
+  canManageTeam: boolean;
+  members: VendorTeamMember[];
+  invites: VendorTeamInvite[];
+}
+
 export interface AdminVendorPayoutRow {
   vendorId: string;
   shopName: string;
   vendorEmail: string;
-  bankAccountName: string | null;
-  bankName: string | null;
-  bankIban: string | null;
   grossSales: number;
   totalCommission: number;
   payableNow: number;
@@ -687,5 +873,4 @@ export interface AdminVendorPayoutRow {
   paidOut: number;
   outstandingShippedBalance: number;
   orderCount: number;
-  bankReady: boolean;
 }

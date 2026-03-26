@@ -9,6 +9,7 @@ import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
   formatProductAttributeLabel,
+  getCatalogDepartmentDisplayLabel,
   getCatalogGenderLabel,
 } from "@/lib/catalog";
 import type { Product, PublicVendorDetail } from "@/lib/types";
@@ -263,7 +264,7 @@ export default function ShopDetailPage() {
                     <span className="price">{formatCurrency(product.price)}</span>
                   </div>
                   <div className="product-subline">
-                    {formatCatalogLabel(product.department)}
+                    {formatCatalogLabel(product.category)}
                     {product.color ? ` · ${formatCatalogLabel(product.color)}` : ""}
                     {product.size ? ` · ${String(product.size).toUpperCase()}` : ""}
                   </div>
@@ -291,6 +292,11 @@ export default function ShopDetailPage() {
                           title: product.title,
                           price: product.price,
                           image: product.images[0],
+                          color: product.color ?? product.colors[0]?.name ?? null,
+                          size:
+                            product.size ??
+                            product.sizeVariants[0]?.label ??
+                            null,
                           quantity: 1,
                           stock: product.stock,
                         })
@@ -319,7 +325,15 @@ export default function ShopDetailPage() {
                   <ProductMedia
                     image={assetUrl(selectedQuickViewImage)}
                     title={quickViewProduct.title}
-                    subtitle={`${formatCatalogLabel(quickViewProduct.department)} ${formatCatalogLabel(quickViewProduct.category)}`}
+                    subtitle={
+                      getCatalogDepartmentDisplayLabel(
+                        quickViewProduct.department,
+                      )
+                        ? `${getCatalogDepartmentDisplayLabel(
+                            quickViewProduct.department,
+                          )} ${formatCatalogLabel(quickViewProduct.category)}`
+                        : formatCatalogLabel(quickViewProduct.category)
+                    }
                   />
                 </div>
                 <div className="product-detail-thumbs">
@@ -338,7 +352,13 @@ export default function ShopDetailPage() {
 
               <div className="product-detail-info">
                 <div className="product-kicker">
-                  {formatCatalogLabel(quickViewProduct.department)} / {formatCatalogLabel(quickViewProduct.category)}
+                  {getCatalogDepartmentDisplayLabel(
+                    quickViewProduct.department,
+                  )
+                    ? `${getCatalogDepartmentDisplayLabel(
+                        quickViewProduct.department,
+                      )} / ${formatCatalogLabel(quickViewProduct.category)}`
+                    : formatCatalogLabel(quickViewProduct.category)}
                 </div>
                 <h2 className="product-detail-title">{quickViewProduct.title}</h2>
                 <div className="product-detail-price">{formatCurrency(quickViewProduct.price)}</div>
@@ -351,14 +371,22 @@ export default function ShopDetailPage() {
                     type="button"
                     className="button"
                     onClick={() =>
-                      addItem({
-                        productId: quickViewProduct.id,
-                        title: quickViewProduct.title,
-                        price: quickViewProduct.price,
-                        image: quickViewProduct.images[0],
-                        quantity: 1,
-                        stock: quickViewProduct.stock,
-                      })
+                        addItem({
+                          productId: quickViewProduct.id,
+                          title: quickViewProduct.title,
+                          price: quickViewProduct.price,
+                          image: quickViewProduct.images[0],
+                          color:
+                            quickViewProduct.color ??
+                            quickViewProduct.colors[0]?.name ??
+                            null,
+                          size:
+                            quickViewProduct.size ??
+                            quickViewProduct.sizeVariants[0]?.label ??
+                            null,
+                          quantity: 1,
+                          stock: quickViewProduct.stock,
+                        })
                     }
                     disabled={quickViewProduct.stock === 0}
                   >
@@ -372,10 +400,18 @@ export default function ShopDetailPage() {
                   </Link>
                 </div>
                 <div className="product-detail-meta">
-                  <div className="meta-row">
-                    <span>{getCatalogGenderLabel()}</span>
-                    <strong>{formatCatalogLabel(quickViewProduct.department)}</strong>
-                  </div>
+                  {getCatalogDepartmentDisplayLabel(
+                    quickViewProduct.department,
+                  ) ? (
+                    <div className="meta-row">
+                      <span>{getCatalogGenderLabel()}</span>
+                      <strong>
+                        {getCatalogDepartmentDisplayLabel(
+                          quickViewProduct.department,
+                        )}
+                      </strong>
+                    </div>
+                  ) : null}
                   <div className="meta-row">
                     <span>Category</span>
                     <strong>{formatCatalogLabel(quickViewProduct.category)}</strong>
@@ -396,9 +432,19 @@ export default function ShopDetailPage() {
                     <span>Browse in marketplace</span>
                     <Link
                       className="table-link"
-                      href={`/?department=${encodeURIComponent(
-                        quickViewProduct.department,
-                      )}&category=${encodeURIComponent(quickViewProduct.category)}`}
+                      href={
+                        getCatalogDepartmentDisplayLabel(
+                          quickViewProduct.department,
+                        )
+                          ? `/?department=${encodeURIComponent(
+                              quickViewProduct.department,
+                            )}&category=${encodeURIComponent(
+                              quickViewProduct.category,
+                            )}`
+                          : `/?category=${encodeURIComponent(
+                              quickViewProduct.category,
+                            )}`
+                      }
                     >
                       More {formatCatalogLabel(quickViewProduct.category)}
                     </Link>

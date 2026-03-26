@@ -3,112 +3,128 @@
 import Link from "next/link";
 import { useCart } from "@/components/providers";
 import { assetUrl, formatCurrency } from "@/lib/api";
-import { ProductMedia } from "@/components/product-media";
 
 export default function CartPage() {
   const { items, updateItemQuantity, removeItem } = useCart();
-  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const units = items.reduce((sum, item) => sum + item.quantity, 0);
+  const subtotal = items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
 
   return (
-    <div className="split">
-      <section className="form-card stack">
-        <div className="catalog-toolbar compact-toolbar">
+    <div className="cart-page-shell">
+      <section className="cart-page-main">
+        <div className="cart-page-head">
           <div>
-            <h1 className="section-title">Your Cart</h1>
-            <p className="muted">Keep reviewing items or jump back into the marketplace.</p>
+            <h1 className="section-title">Cart</h1>
+            <p className="muted">
+              Review your items and move quickly to checkout.
+            </p>
           </div>
-          <div className="catalog-meta">
-            <Link className="table-link" href="/">
-              Continue shopping
-            </Link>
-          </div>
+          <Link className="table-link" href="/">
+            Continue shopping
+          </Link>
         </div>
-        {items.length === 0 && (
-          <div className="empty stack">
-            <span>Your cart is empty.</span>
+
+        {items.length === 0 ? (
+          <div className="cart-page-empty">
+            <strong>Your cart is empty.</strong>
+            <p>Browse the marketplace and add products to start checking out.</p>
             <Link href="/" className="button">
               Browse products
             </Link>
           </div>
-        )}
-        {items.map((item) => (
-          <div key={item.productId} className="card">
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "120px 1fr",
-                gap: "1rem",
-                alignItems: "center",
-              }}
-            >
-              <div style={{ borderRadius: "18px", overflow: "hidden", minHeight: "120px" }}>
-                <ProductMedia
-                  title={item.title}
-                  image={assetUrl(item.image)}
-                  subtitle="Saved in cart"
-                  className="card-image"
-                />
-              </div>
-              <div className="stack">
-                <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-                  <div>
-                    <Link href={`/products/${item.productId}`} className="product-title-link">
+        ) : (
+          <div className="cart-page-list">
+            {items.map((item) => (
+              <article key={item.productId} className="cart-page-item">
+                <Link
+                  href={`/products/${item.productId}`}
+                  className="cart-page-item-media"
+                >
+                  {item.image ? (
+                    <img
+                      src={assetUrl(item.image)}
+                      alt={item.title}
+                      className="cart-page-item-image"
+                    />
+                  ) : (
+                    <span className="cart-page-item-placeholder">Vishu</span>
+                  )}
+                </Link>
+
+                <div className="cart-page-item-copy">
+                  <div className="cart-page-item-top">
+                    <Link
+                      href={`/products/${item.productId}`}
+                      className="cart-page-item-title"
+                    >
                       {item.title}
                     </Link>
-                    <p className="muted">{formatCurrency(item.price)} each</p>
+                    <strong className="cart-page-item-total">
+                      {formatCurrency(item.price * item.quantity)}
+                    </strong>
                   </div>
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() => removeItem(item.productId)}
-                  >
-                    Remove
-                  </button>
+
+                  {item.color || item.size ? (
+                    <div className="cart-page-item-meta">
+                      {[item.color, item.size].filter(Boolean).join(" · ")}
+                    </div>
+                  ) : null}
+
+                  <div className="cart-page-item-actions">
+                    <div className="cart-page-qty">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQuantity(item.productId, item.quantity - 1)
+                        }
+                      >
+                        -
+                      </button>
+                      <span>{item.quantity}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQuantity(item.productId, item.quantity + 1)
+                        }
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="cart-page-remove"
+                      onClick={() => removeItem(item.productId)}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-                <div className="inline-actions">
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() => updateItemQuantity(item.productId, item.quantity - 1)}
-                  >
-                    -
-                  </button>
-                  <span className="chip">Qty {item.quantity}</span>
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() => updateItemQuantity(item.productId, item.quantity + 1)}
-                  >
-                    +
-                  </button>
-                  <span className="chip">Stock {item.stock}</span>
-                </div>
-              </div>
-            </div>
+              </article>
+            ))}
           </div>
-        ))}
+        )}
       </section>
 
-      <aside className="form-card stack">
-        <h2 className="section-title">Summary</h2>
-        <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-          <span>Items</span>
-          <strong>{items.length}</strong>
+      <aside className="cart-page-summary">
+        <div className="cart-page-summary-block">
+          <h2>Summary</h2>
+          <div className="cart-page-summary-row">
+            <span>Subtotal</span>
+            <strong>{formatCurrency(subtotal)}</strong>
+          </div>
+          <p className="cart-page-summary-note">
+            Shipping and taxes are calculated at checkout.
+          </p>
         </div>
-        <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-          <span>Total units</span>
-          <strong>{units}</strong>
-        </div>
-        <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-          <span>Total</span>
-          <strong>{formatCurrency(total)}</strong>
-        </div>
-        <Link href="/checkout" className="button">
-          Proceed to Checkout
-        </Link>
-        <Link href="/" className="button-secondary">
-          Continue Shopping
+
+        <Link
+          href={items.length === 0 ? "/" : "/checkout"}
+          className="button cart-page-checkout"
+        >
+          {items.length === 0 ? "Browse products" : "Proceed to checkout"}
         </Link>
       </aside>
     </div>

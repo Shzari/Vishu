@@ -11,17 +11,52 @@ import { join } from 'path';
 import { AuthenticatedUser } from '../common/types';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
+import { VendorAccessService } from '../vendor-access/vendor-access.service';
 import {
   ProductBulkStockDto,
   ProductMutationDto,
   ProductUpdateDto,
+  VendorCatalogRequestDto,
 } from './dto';
 
 type UploadedFile = Express.Multer.File;
 
-const PRODUCT_DEPARTMENTS = ['men', 'women', 'unisex'] as const;
+const PRODUCT_DEPARTMENTS = ['men', 'women', 'kids', 'babies'] as const;
 const DEFAULT_SEARCH_LIMIT = 24;
 const DEFAULT_FALLBACK_LIMIT = 10;
+const PRODUCT_COLOR_OPTIONS = [
+  'black',
+  'white',
+  'ivory',
+  'cream',
+  'beige',
+  'brown',
+  'tan',
+  'gray',
+  'blue',
+  'navy',
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'olive',
+  'pink',
+  'purple',
+  'burgundy',
+  'gold',
+  'silver',
+  'multicolor',
+] as const;
+const PRODUCT_SIZE_OPTIONS = [
+  'xs',
+  's',
+  'm',
+  'l',
+  'xl',
+  'xxl',
+  'xxxl',
+  'one-size',
+] as const;
 const SEARCH_STOP_WORDS = new Set([
   'a',
   'an',
@@ -73,19 +108,23 @@ const PRODUCT_CATEGORY_GROUPS: Record<
     'sportswear',
     'accessories',
   ],
-  unisex: [
+  kids: [
     'tshirts',
-    'tops',
-    'shirts',
     'hoodies',
-    'sweatshirts',
-    'sweaters',
     'jackets',
-    'outerwear',
     'pants',
     'jeans',
-    'shorts',
+    'sets',
+    'schoolwear',
     'sportswear',
+  ],
+  babies: [
+    'bodysuits',
+    'rompers',
+    'sets',
+    'outerwear',
+    'sleepwear',
+    'blankets',
     'accessories',
   ],
 };
@@ -129,6 +168,33 @@ interface ProductRow {
   created_at: Date;
 }
 
+interface ProductStructureRow {
+  product_id: string;
+  brand_id: string | null;
+  brand_name: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  subcategory_id: string | null;
+  subcategory_name: string | null;
+  gender_group_id: string | null;
+  gender_group_name: string | null;
+}
+
+interface ProductColorRow {
+  product_id: string;
+  color_id: string;
+  color_name: string;
+}
+
+interface ProductSizeRow {
+  product_id: string;
+  size_id: string;
+  size_label: string;
+  size_stock: number;
+  size_type_id: string;
+  size_type_name: string;
+}
+
 interface HomepageHeroSlideRow {
   id: string;
   internal_name: string | null;
@@ -169,6 +235,18 @@ interface PublicCatalogProduct {
   category: string;
   color: string | null;
   size: string | null;
+  brand?: { id: string; name: string } | null;
+  categoryRef?: { id: string; name: string } | null;
+  subcategory?: { id: string; name: string } | null;
+  genderGroup?: { id: string; name: string } | null;
+  colors: { id: string; name: string }[];
+  sizeVariants: {
+    id: string;
+    label: string;
+    stock: number;
+    sizeTypeId: string;
+    sizeTypeName: string;
+  }[];
   productCode?: string | null;
   vendor?: {
     id: string;
@@ -188,7 +266,7 @@ interface SearchLayer {
 type SearchableProduct = PublicCatalogProduct & {
   totalUnitsSold: number;
   popularityScore: number;
-  brand: string | null;
+  brandName: string | null;
   tags: string[];
 };
 
@@ -221,6 +299,7 @@ export class ProductsService {
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly vendorAccessService: VendorAccessService,
   ) {}
 
   async listPublicProducts() {
@@ -516,6 +595,250 @@ export class ProductsService {
     };
   }
 
+  async getVendorCatalogOptions(user: AuthenticatedUser) {
+    await this.getVendorForUser(user.sub);
+    const [genderGroups, categories, brands, colors, sizeTypes, sizes] =
+      await Promise.all([
+        this.databaseService.query<{
+          id: string;
+          name: string;
+          sort_order: number;
+        }>(
+          `SELECT id, name, sort_order
+           FROM gender_groups
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, name ASC`,
+        ),
+        this.databaseService.query<{
+          id: string;
+          name: string;
+          sort_order: number;
+        }>(
+          `SELECT id, name, sort_order
+           FROM categories
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, name ASC`,
+        ),
+        this.databaseService.query<{
+          id: string;
+          name: string;
+          sort_order: number;
+        }>(
+          `SELECT id, name, sort_order
+           FROM brands
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, name ASC`,
+        ),
+        this.databaseService.query<{
+          id: string;
+          name: string;
+          sort_order: number;
+        }>(
+          `SELECT id, name, sort_order
+           FROM colors
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, name ASC`,
+        ),
+        this.databaseService.query<{
+          id: string;
+          name: string;
+          sort_order: number;
+        }>(
+          `SELECT id, name, sort_order
+           FROM size_types
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, name ASC`,
+        ),
+        this.databaseService.query<{
+          id: string;
+          size_type_id: string;
+          label: string;
+          sort_order: number;
+        }>(
+          `SELECT id, size_type_id, label, sort_order
+           FROM sizes
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, label ASC`,
+        ),
+      ]);
+
+    const subcategories = await this.databaseService.query<{
+      id: string;
+      category_id: string;
+      name: string;
+      sort_order: number;
+    }>(
+      `SELECT id, category_id, name, sort_order
+       FROM subcategories
+       WHERE is_active = 1
+       ORDER BY sort_order ASC, name ASC`,
+    );
+
+    return {
+      genderGroups: genderGroups.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+      })),
+      categories: categories.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        subcategories: subcategories.rows
+          .filter((entry) => entry.category_id === row.id)
+          .map((entry) => ({ id: entry.id, name: entry.name })),
+      })),
+      brands: brands.rows.map((row) => ({ id: row.id, name: row.name })),
+      colors: colors.rows.map((row) => ({ id: row.id, name: row.name })),
+      sizeTypes: sizeTypes.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        sizes: sizes.rows
+          .filter((entry) => entry.size_type_id === row.id)
+          .map((entry) => ({ id: entry.id, label: entry.label })),
+      })),
+    };
+  }
+
+  async getVendorCatalogRequests(user: AuthenticatedUser) {
+    const vendor = await this.getVendorForUser(user.sub);
+
+    const result = await this.databaseService.query<{
+      id: string;
+      request_type: string;
+      category_id: string | null;
+      category_name: string | null;
+      subcategory_id: string | null;
+      subcategory_name: string | null;
+      size_type_id: string | null;
+      size_type_name: string | null;
+      requested_value: string;
+      note: string | null;
+      status: string;
+      admin_note: string | null;
+      reviewed_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT
+         vr.id,
+         vr.request_type,
+         vr.category_id,
+         c.name AS category_name,
+         vr.subcategory_id,
+         sc.name AS subcategory_name,
+         vr.size_type_id,
+         st.name AS size_type_name,
+         vr.requested_value,
+         vr.note,
+         vr.status,
+         vr.admin_note,
+         vr.reviewed_at,
+         vr.created_at
+       FROM vendor_requests vr
+       LEFT JOIN categories c ON c.id = vr.category_id
+       LEFT JOIN subcategories sc ON sc.id = vr.subcategory_id
+       LEFT JOIN size_types st ON st.id = vr.size_type_id
+       WHERE vendor_id = $1
+       ORDER BY created_at DESC`,
+      [vendor.id],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      requestType: row.request_type,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      subcategoryId: row.subcategory_id,
+      subcategoryName: row.subcategory_name,
+      sizeTypeId: row.size_type_id,
+      sizeTypeName: row.size_type_name,
+      requestedValue: row.requested_value,
+      note: row.note,
+      status: row.status,
+      adminNote: row.admin_note,
+      reviewedAt: row.reviewed_at,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async createVendorCatalogRequest(
+    user: AuthenticatedUser,
+    dto: VendorCatalogRequestDto,
+  ) {
+    const vendor = await this.getVendorForUser(user.sub);
+    const requestType = this.normalizeCatalogRequestType(dto.requestType);
+    const requestedValue = dto.requestedValue.trim();
+    if (!requestedValue) {
+      throw new BadRequestException('Requested value is required');
+    }
+
+    const lookupValue = this.normalizeCatalogRequestLookupValue(
+      requestType,
+      requestedValue,
+    );
+    if (!lookupValue) {
+      throw new BadRequestException('Requested value is invalid');
+    }
+
+    if (await this.catalogRequestMatchesExistingOption(requestType, lookupValue)) {
+      throw new BadRequestException(
+        'This option already exists. Select it directly instead of submitting a request.',
+      );
+    }
+
+    const pendingRows = await this.databaseService.query<{
+      id: string;
+      requested_value: string;
+    }>(
+      `SELECT id, requested_value
+       FROM vendor_requests
+       WHERE vendor_id = $1
+         AND request_type = $2
+         AND status = 'pending'`,
+      [vendor.id, requestType],
+    );
+
+    if (
+      pendingRows.rows.some(
+        (row) =>
+          this.normalizeCatalogRequestLookupValue(
+            requestType,
+            row.requested_value,
+          ) === lookupValue,
+      )
+    ) {
+      throw new BadRequestException(
+        'You already have a pending request for this option.',
+      );
+    }
+
+    await this.databaseService.query(
+      `INSERT INTO vendor_requests (
+         vendor_id,
+         request_type,
+         requested_value,
+         note,
+         category_id,
+         subcategory_id,
+         size_type_id,
+         updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, SYSDATETIME())`,
+      [
+        vendor.id,
+        requestType,
+        requestedValue,
+        dto.note?.trim() || null,
+        dto.categoryId?.trim() || null,
+        dto.subcategoryId?.trim() || null,
+        dto.sizeTypeId?.trim() || null,
+      ],
+    );
+
+    return {
+      message: 'Catalog request submitted.',
+      requests: await this.getVendorCatalogRequests(user),
+    };
+  }
+
   async createProduct(
     user: AuthenticatedUser,
     dto: ProductMutationDto,
@@ -531,35 +854,57 @@ export class ProductsService {
     const vendor = await this.getVendorForUser(user.sub);
     this.assertVendorReady(vendor);
     const normalizedDto = this.normalizeProductMutationDto(dto);
-    this.assertValidCatalogPlacement(
-      normalizedDto.department,
-      normalizedDto.category,
+    const selection = await this.resolveStructuredProductSelection(
+      normalizedDto,
     );
 
     try {
       const product = await this.databaseService.withTransaction(
         async (client) => {
           const created = await client.query<{ id: string }>(
-            `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
+            `INSERT INTO products (
+               vendor_id,
+               title,
+               description,
+               price,
+               stock,
+               is_listed,
+               department,
+               category,
+               brand_id,
+               category_id,
+               subcategory_id,
+               gender_group_id,
+               color,
+               size
+             )
            OUTPUT INSERTED.id
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
             [
               vendor.id,
               normalizedDto.title,
               normalizedDto.description,
               normalizedDto.price,
-              normalizedDto.stock,
+              selection.totalStock,
               true,
-              normalizedDto.department,
-              normalizedDto.category,
-              normalizedDto.color,
-              normalizedDto.size,
+              selection.department,
+              selection.category,
+              selection.brand.id,
+              selection.categoryEntity.id,
+              selection.subcategory.id,
+              selection.genderGroup?.id ?? null,
+              selection.primaryColor,
+              selection.primarySize,
             ],
           );
 
           const productCode = this.generateProductCode(
             vendor,
-            normalizedDto,
+            {
+              category: selection.category,
+              color: selection.primaryColor,
+              size: selection.primarySize,
+            },
             created.rows[0].id,
           );
           await client.query(
@@ -567,10 +912,26 @@ export class ProductsService {
             [productCode, created.rows[0].id],
           );
 
+          for (const [index, color] of selection.colors.entries()) {
+            await client.query(
+              `INSERT INTO product_colors (product_id, color_id, sort_order)
+               VALUES ($1, $2, $3)`,
+              [created.rows[0].id, color.id, index],
+            );
+          }
+
+          for (const variant of selection.sizeVariants) {
+            await client.query(
+              `INSERT INTO product_sizes (product_id, size_id, stock, sku, updated_at)
+               VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+              [created.rows[0].id, variant.id, variant.stock, null],
+            );
+          }
+
           for (const [index, file] of files.entries()) {
             const imageUrl = this.storeProductImage(
               vendor,
-              normalizedDto.category,
+              selection.category,
               file,
             );
             await client.query(
@@ -612,10 +973,16 @@ export class ProductsService {
           stock: number;
           department: string;
           category: string;
+          brand_id: string | null;
+          category_id: string | null;
+          subcategory_id: string | null;
+          gender_group_id: string | null;
+          color: string | null;
+          size: string | null;
           product_code: string | null;
           low_stock_alert_sent_at: Date | null;
         }>(
-          `SELECT TOP 1 title, stock, department, category, product_code, low_stock_alert_sent_at
+          `SELECT TOP 1 title, stock, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size, product_code, low_stock_alert_sent_at
            FROM products
            WHERE id = $1`,
           [productId],
@@ -626,10 +993,39 @@ export class ProductsService {
           throw new NotFoundException('Product not found');
         }
 
-        this.assertValidCatalogPlacement(
-          normalizedDto.department ?? currentRow.department,
-          normalizedDto.category ?? currentRow.category,
+        const currentColorRows = await client.query<{ color_id: string }>(
+          `SELECT color_id FROM product_colors WHERE product_id = $1 ORDER BY sort_order ASC`,
+          [productId],
         );
+        const currentSizeRows = await client.query<{ size_id: string; stock: number }>(
+          `SELECT size_id, stock FROM product_sizes WHERE product_id = $1`,
+          [productId],
+        );
+
+        const selection = await this.resolveStructuredProductSelection({
+          title: normalizedDto.title ?? currentRow.title,
+          description: normalizedDto.description ?? '',
+          price: normalizedDto.price ?? 0,
+          stock: normalizedDto.stock ?? currentRow.stock,
+          brandId: normalizedDto.brandId ?? currentRow.brand_id ?? '',
+          categoryId: normalizedDto.categoryId ?? currentRow.category_id ?? '',
+          subcategoryId:
+            normalizedDto.subcategoryId ?? currentRow.subcategory_id ?? '',
+          genderGroupId:
+            normalizedDto.genderGroupId === undefined
+              ? currentRow.gender_group_id
+              : normalizedDto.genderGroupId,
+          colorIds:
+            normalizedDto.colorIds ??
+            currentColorRows.rows.map((entry) => entry.color_id),
+          sizeTypeId: normalizedDto.sizeTypeId,
+          sizeVariants:
+            normalizedDto.sizeVariants ??
+            currentSizeRows.rows.map((entry) => ({
+              sizeId: entry.size_id,
+              stock: Number(entry.stock),
+            })),
+        });
 
         const updates: string[] = [];
         const values: unknown[] = [];
@@ -649,16 +1045,25 @@ export class ProductsService {
           pushUpdate('description', normalizedDto.description);
         if (normalizedDto.price !== undefined)
           pushUpdate('price', normalizedDto.price);
-        if (normalizedDto.stock !== undefined)
-          pushUpdate('stock', normalizedDto.stock);
-        if (normalizedDto.department !== undefined)
-          pushUpdate('department', normalizedDto.department);
-        if (normalizedDto.category !== undefined)
-          pushUpdate('category', normalizedDto.category);
-        if (normalizedDto.color !== undefined)
-          pushUpdate('color', normalizedDto.color);
-        if (normalizedDto.size !== undefined)
-          pushUpdate('size', normalizedDto.size);
+        if (
+          normalizedDto.stock !== undefined ||
+          normalizedDto.brandId !== undefined ||
+          normalizedDto.categoryId !== undefined ||
+          normalizedDto.subcategoryId !== undefined ||
+          normalizedDto.genderGroupId !== undefined ||
+          normalizedDto.colorIds !== undefined ||
+          normalizedDto.sizeVariants !== undefined
+        ) {
+          pushUpdate('stock', selection.totalStock);
+          pushUpdate('department', selection.department);
+          pushUpdate('category', selection.category);
+          pushUpdate('brand_id', selection.brand.id);
+          pushUpdate('category_id', selection.categoryEntity.id);
+          pushUpdate('subcategory_id', selection.subcategory.id);
+          pushUpdate('gender_group_id', selection.genderGroup?.id ?? null);
+          pushUpdate('color', selection.primaryColor);
+          pushUpdate('size', selection.primarySize);
+        }
 
         if (updates.length) {
           values.push(productId);
@@ -670,9 +1075,12 @@ export class ProductsService {
           );
         }
 
-        if (normalizedDto.stock !== undefined) {
+        if (
+          normalizedDto.stock !== undefined ||
+          normalizedDto.sizeVariants !== undefined
+        ) {
           const threshold = vendor.low_stock_threshold;
-          const nextStock = normalizedDto.stock;
+          const nextStock = selection.totalStock;
 
           if (threshold <= 0 || nextStock > threshold) {
             if (currentRow.low_stock_alert_sent_at) {
@@ -704,6 +1112,32 @@ export class ProductsService {
           }
         }
 
+        if (normalizedDto.colorIds !== undefined) {
+          await client.query('DELETE FROM product_colors WHERE product_id = $1', [
+            productId,
+          ]);
+          for (const [index, color] of selection.colors.entries()) {
+            await client.query(
+              `INSERT INTO product_colors (product_id, color_id, sort_order)
+               VALUES ($1, $2, $3)`,
+              [productId, color.id, index],
+            );
+          }
+        }
+
+        if (normalizedDto.sizeVariants !== undefined) {
+          await client.query('DELETE FROM product_sizes WHERE product_id = $1', [
+            productId,
+          ]);
+          for (const variant of selection.sizeVariants) {
+            await client.query(
+              `INSERT INTO product_sizes (product_id, size_id, stock, sku, updated_at)
+               VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+              [productId, variant.id, variant.stock, null],
+            );
+          }
+        }
+
         if (files.length) {
           const shouldReplace = normalizedDto.replaceImages === true;
           const nextImageCount = shouldReplace
@@ -726,7 +1160,7 @@ export class ProductsService {
             ? 0
             : currentImageRows.rows.length;
           const category =
-            normalizedDto.category ??
+            selection.category ??
             (await this.getProductCategory(client, productId));
 
           for (const [index, file] of files.entries()) {
@@ -882,7 +1316,14 @@ export class ProductsService {
     this.assertVendorReady(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
-    const sourceResult = await this.databaseService.query<ProductRow>(
+    const sourceResult = await this.databaseService.query<
+      ProductRow & {
+        brand_id: string | null;
+        category_id: string | null;
+        subcategory_id: string | null;
+        gender_group_id: string | null;
+      }
+    >(
       `SELECT TOP 1
          p.id,
          p.title,
@@ -892,6 +1333,10 @@ export class ProductsService {
          p.is_listed,
          p.department,
          p.category,
+         p.brand_id,
+         p.category_id,
+         p.subcategory_id,
+         p.gender_group_id,
          p.color,
          p.size,
          p.product_code,
@@ -915,9 +1360,9 @@ export class ProductsService {
     const duplicated = await this.databaseService.withTransaction(
       async (client) => {
         const created = await client.query<{ id: string }>(
-          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, color, size)
+          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size)
          OUTPUT INSERTED.id
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
           [
             vendor.id,
             `${source.title} Copy`,
@@ -927,6 +1372,10 @@ export class ProductsService {
             false,
             source.department,
             source.category,
+            source.brand_id,
+            source.category_id,
+            source.subcategory_id,
+            source.gender_group_id,
             source.color,
             source.size,
           ],
@@ -946,6 +1395,35 @@ export class ProductsService {
           'UPDATE products SET product_code = $1, updated_at = SYSDATETIME() WHERE id = $2',
           [productCode, created.rows[0].id],
         );
+
+        const sourceColorRows = await client.query<{ color_id: string; sort_order: number }>(
+          `SELECT color_id, sort_order
+           FROM product_colors
+           WHERE product_id = $1
+           ORDER BY sort_order ASC`,
+          [productId],
+        );
+        for (const row of sourceColorRows.rows) {
+          await client.query(
+            `INSERT INTO product_colors (product_id, color_id, sort_order)
+             VALUES ($1, $2, $3)`,
+            [created.rows[0].id, row.color_id, row.sort_order],
+          );
+        }
+
+        const sourceSizeRows = await client.query<{ size_id: string; stock: number; sku: string | null }>(
+          `SELECT size_id, stock, sku
+           FROM product_sizes
+           WHERE product_id = $1`,
+          [productId],
+        );
+        for (const row of sourceSizeRows.rows) {
+          await client.query(
+            `INSERT INTO product_sizes (product_id, size_id, stock, sku, updated_at)
+             VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+            [created.rows[0].id, row.size_id, row.stock, row.sku],
+          );
+        }
 
         for (const [index, row] of imageRows.rows.entries()) {
           await client.query(
@@ -1030,6 +1508,9 @@ export class ProductsService {
     const imageRows = await this.getImagesForProducts(
       products.map((product) => product.id),
     );
+    const relations = await this.getRelationsForProducts(
+      products.map((product) => product.id),
+    );
     const imageMap = new Map<string, string[]>();
 
     for (const image of imageRows) {
@@ -1039,6 +1520,14 @@ export class ProductsService {
     }
 
     return products.map((row) => ({
+      ...(relations.get(row.id) ?? {
+        brand: null,
+        categoryRef: null,
+        subcategory: null,
+        genderGroup: null,
+        colors: [],
+        sizeVariants: [],
+      }),
       id: row.id,
       title: row.title,
       description: row.description,
@@ -1062,6 +1551,129 @@ export class ProductsService {
       images: imageMap.get(row.id) ?? [],
       createdAt: row.created_at,
     }));
+  }
+
+  private async getRelationsForProducts(productIds: string[]) {
+    if (!productIds.length) {
+      return new Map<
+        string,
+        Pick<
+          PublicCatalogProduct,
+          'brand' | 'categoryRef' | 'subcategory' | 'genderGroup' | 'colors' | 'sizeVariants'
+        >
+      >();
+    }
+
+    const clause = this.buildGuidLiteralClause(productIds);
+    const [structureRows, colorRows, sizeRows] = await Promise.all([
+      this.databaseService.query<ProductStructureRow>(
+        `SELECT
+           p.id AS product_id,
+           b.id AS brand_id,
+           b.name AS brand_name,
+           c.id AS category_id,
+           c.name AS category_name,
+           sc.id AS subcategory_id,
+           sc.name AS subcategory_name,
+           gg.id AS gender_group_id,
+           gg.name AS gender_group_name
+         FROM products p
+         LEFT JOIN brands b ON b.id = p.brand_id
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN subcategories sc ON sc.id = p.subcategory_id
+         LEFT JOIN gender_groups gg ON gg.id = p.gender_group_id
+         WHERE p.id IN (${clause})`,
+      ),
+      this.databaseService.query<ProductColorRow>(
+        `SELECT
+           pc.product_id,
+           c.id AS color_id,
+           c.name AS color_name
+         FROM product_colors pc
+         INNER JOIN colors c ON c.id = pc.color_id
+         WHERE pc.product_id IN (${clause})
+         ORDER BY pc.product_id ASC, pc.sort_order ASC, c.name ASC`,
+      ),
+      this.databaseService.query<ProductSizeRow>(
+        `SELECT
+           ps.product_id,
+           s.id AS size_id,
+           s.label AS size_label,
+           ps.stock AS size_stock,
+           st.id AS size_type_id,
+           st.name AS size_type_name
+         FROM product_sizes ps
+         INNER JOIN sizes s ON s.id = ps.size_id
+         INNER JOIN size_types st ON st.id = s.size_type_id
+         WHERE ps.product_id IN (${clause})
+         ORDER BY ps.product_id ASC, st.sort_order ASC, s.sort_order ASC, s.label ASC`,
+      ),
+    ]);
+
+    const map = new Map<
+      string,
+      Pick<
+        PublicCatalogProduct,
+        'brand' | 'categoryRef' | 'subcategory' | 'genderGroup' | 'colors' | 'sizeVariants'
+      >
+    >();
+
+    structureRows.rows.forEach((row) => {
+      map.set(row.product_id, {
+        brand:
+          row.brand_id && row.brand_name
+            ? { id: row.brand_id, name: row.brand_name }
+            : null,
+        categoryRef:
+          row.category_id && row.category_name
+            ? { id: row.category_id, name: row.category_name }
+            : null,
+        subcategory:
+          row.subcategory_id && row.subcategory_name
+            ? { id: row.subcategory_id, name: row.subcategory_name }
+            : null,
+        genderGroup:
+          row.gender_group_id && row.gender_group_name
+            ? { id: row.gender_group_id, name: row.gender_group_name }
+            : null,
+        colors: [],
+        sizeVariants: [],
+      });
+    });
+
+    colorRows.rows.forEach((row) => {
+      const current = map.get(row.product_id) ?? {
+        brand: null,
+        categoryRef: null,
+        subcategory: null,
+        genderGroup: null,
+        colors: [],
+        sizeVariants: [],
+      };
+      current.colors.push({ id: row.color_id, name: row.color_name });
+      map.set(row.product_id, current);
+    });
+
+    sizeRows.rows.forEach((row) => {
+      const current = map.get(row.product_id) ?? {
+        brand: null,
+        categoryRef: null,
+        subcategory: null,
+        genderGroup: null,
+        colors: [],
+        sizeVariants: [],
+      };
+      current.sizeVariants.push({
+        id: row.size_id,
+        label: row.size_label,
+        stock: Number(row.size_stock),
+        sizeTypeId: row.size_type_id,
+        sizeTypeName: row.size_type_name,
+      });
+      map.set(row.product_id, current);
+    });
+
+    return map;
   }
 
   private async getPublicSearchCatalog(input?: {
@@ -1138,7 +1750,7 @@ export class ProductsService {
         ...product,
         totalUnitsSold,
         popularityScore: totalUnitsSold * 10 + (product.stock > 0 ? 3 : 0),
-        brand: product.vendor?.shopName ?? null,
+        brandName: product.brand?.name ?? product.vendor?.shopName ?? null,
         tags: this.buildSearchTags(product),
       };
     });
@@ -1319,7 +1931,7 @@ export class ProductsService {
       product.category,
       product.department,
       product.color,
-      product.brand,
+      product.brandName,
       ...product.tags,
     ]);
     const titleTokens = new Set(titleText.split(' ').filter(Boolean));
@@ -1412,10 +2024,10 @@ export class ProductsService {
     return {
       objectID: product.id,
       title: product.title,
-      category: product.category,
-      subcategory: product.category,
-      color: product.color ?? null,
-      brand: product.brand,
+      category: product.categoryRef?.name ?? product.category,
+      subcategory: product.subcategory?.name ?? product.category,
+      color: product.colors[0]?.name ?? product.color ?? null,
+      brand: product.brandName,
       tags: product.tags,
       department: product.department,
       inStock: product.stock > 0,
@@ -1426,12 +2038,22 @@ export class ProductsService {
   }
 
   private buildSearchTags(product: PublicCatalogProduct) {
-    const aliasTags = SEARCH_CATEGORY_ALIASES[product.category] ?? [];
+    const categoryToken = this.normalizeCategoryValue(
+      product.subcategory?.name ?? product.categoryRef?.name ?? product.category,
+    );
+    const aliasTags = SEARCH_CATEGORY_ALIASES[categoryToken] ?? [];
     return [...new Set([
       product.department,
       product.category,
-      ...(product.color ? [product.color] : []),
-      ...(product.size ? [product.size] : []),
+      ...(product.brand?.name ? [product.brand.name] : []),
+      ...(product.categoryRef?.name ? [product.categoryRef.name] : []),
+      ...(product.subcategory?.name ? [product.subcategory.name] : []),
+      ...(product.colors.length ? product.colors.map((entry) => entry.name) : product.color ? [product.color] : []),
+      ...(product.sizeVariants.length
+        ? product.sizeVariants.map((entry) => entry.label)
+        : product.size
+          ? [product.size]
+          : []),
       ...aliasTags,
     ])];
   }
@@ -1641,6 +2263,7 @@ export class ProductsService {
   }
 
   private async getVendorForUser(userId: string) {
+    const access = await this.vendorAccessService.requireVendorAccess(userId);
     const result = await this.databaseService.query<{
       id: string;
       email: string;
@@ -1655,7 +2278,7 @@ export class ProductsService {
     }>(
       `SELECT TOP 1
          v.id,
-         u.email,
+         owner.email,
          v.shop_name,
          v.is_active,
          v.is_verified,
@@ -1665,14 +2288,10 @@ export class ProductsService {
          v.subscription_override_status,
          v.subscription_override_ends_at
        FROM vendors v
-       INNER JOIN users u ON u.id = v.user_id
-       WHERE user_id = $1`,
-      [userId],
+       INNER JOIN users owner ON owner.id = v.user_id
+       WHERE v.id = $1`,
+      [access.id],
     );
-
-    if (!result.rows[0]) {
-      throw new ForbiddenException('Vendor profile not found');
-    }
 
     return result.rows[0];
   }
@@ -1781,29 +2400,218 @@ export class ProductsService {
 
   private normalizeProductMutationDto(dto: ProductMutationDto) {
     return {
-      ...dto,
       title: dto.title.trim(),
       description: dto.description.trim(),
-      department: dto.department?.trim().toLowerCase() || 'unisex',
-      category: dto.category.trim().toLowerCase(),
-      color: this.normalizeColorValue(dto.color),
-      size: this.normalizeSizeValue(dto.size),
+      price: Number(dto.price),
+      stock: Number(dto.stock),
+      brandId: dto.brandId.trim(),
+      categoryId: dto.categoryId.trim(),
+      subcategoryId: dto.subcategoryId.trim(),
+      genderGroupId: dto.genderGroupId?.trim() || null,
+      sizeTypeId: dto.sizeTypeId?.trim() || null,
+      colorIds: [...new Set((dto.colorIds ?? []).map((entry) => entry.trim()).filter(Boolean))],
+      sizeVariants: (dto.sizeVariants ?? [])
+        .map((entry) => ({
+          sizeId: typeof entry?.sizeId === 'string' ? entry.sizeId.trim() : '',
+          stock: Number(entry?.stock ?? 0),
+        }))
+        .filter((entry) => entry.sizeId.length > 0),
     };
   }
 
   private normalizeProductUpdateDto(dto: ProductUpdateDto) {
     return {
-      ...dto,
       title: dto.title?.trim(),
       description: dto.description?.trim(),
-      department: dto.department?.trim().toLowerCase(),
-      category: dto.category?.trim().toLowerCase(),
-      color:
-        dto.color === undefined
+      price: dto.price === undefined ? undefined : Number(dto.price),
+      stock: dto.stock === undefined ? undefined : Number(dto.stock),
+      brandId: dto.brandId?.trim(),
+      categoryId: dto.categoryId?.trim(),
+      subcategoryId: dto.subcategoryId?.trim(),
+      genderGroupId:
+        dto.genderGroupId === undefined ? undefined : dto.genderGroupId?.trim() || null,
+      sizeTypeId:
+        dto.sizeTypeId === undefined ? undefined : dto.sizeTypeId?.trim() || null,
+      colorIds:
+        dto.colorIds === undefined
           ? undefined
-          : this.normalizeColorValue(dto.color),
-      size:
-        dto.size === undefined ? undefined : this.normalizeSizeValue(dto.size),
+          : [...new Set(dto.colorIds.map((entry) => entry.trim()).filter(Boolean))],
+      sizeVariants:
+        dto.sizeVariants === undefined
+          ? undefined
+          : dto.sizeVariants
+              .map((entry) => ({
+                sizeId: typeof entry?.sizeId === 'string' ? entry.sizeId.trim() : '',
+                stock: Number(entry?.stock ?? 0),
+              }))
+              .filter((entry) => entry.sizeId.length > 0),
+      replaceImages: dto.replaceImages,
+    };
+  }
+
+  private async resolveStructuredProductSelection(input: {
+    title: string;
+    description: string;
+    price: number;
+    stock: number;
+    brandId: string;
+    categoryId: string;
+    subcategoryId: string;
+    genderGroupId?: string | null;
+    sizeTypeId?: string | null;
+    colorIds?: string[];
+    sizeVariants?: Array<{ sizeId: string; stock: number }>;
+  }) {
+    const [brandResult, categoryResult, subcategoryResult] = await Promise.all([
+      this.databaseService.query<{ id: string; name: string; is_active: boolean }>(
+        `SELECT TOP 1 id, name, is_active FROM brands WHERE id = $1`,
+        [input.brandId],
+      ),
+      this.databaseService.query<{ id: string; name: string; is_active: boolean }>(
+        `SELECT TOP 1 id, name, is_active FROM categories WHERE id = $1`,
+        [input.categoryId],
+      ),
+      this.databaseService.query<{
+        id: string;
+        category_id: string;
+        name: string;
+        is_active: boolean;
+      }>(
+        `SELECT TOP 1 id, category_id, name, is_active FROM subcategories WHERE id = $1`,
+        [input.subcategoryId],
+      ),
+    ]);
+
+    const brand = brandResult.rows[0];
+    if (!brand || !brand.is_active) {
+      throw new BadRequestException('Select a valid active brand');
+    }
+
+    const categoryEntity = categoryResult.rows[0];
+    if (!categoryEntity || !categoryEntity.is_active) {
+      throw new BadRequestException('Select a valid active category');
+    }
+
+    const subcategory = subcategoryResult.rows[0];
+    if (
+      !subcategory ||
+      !subcategory.is_active ||
+      subcategory.category_id !== categoryEntity.id
+    ) {
+      throw new BadRequestException(
+        'Select a valid active subcategory under the chosen category',
+      );
+    }
+
+    let genderGroup:
+      | { id: string; name: string; is_active: boolean }
+      | undefined;
+    if (input.genderGroupId) {
+      const genderResult = await this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+      }>(`SELECT TOP 1 id, name, is_active FROM gender_groups WHERE id = $1`, [
+        input.genderGroupId,
+      ]);
+      genderGroup = genderResult.rows[0];
+      if (!genderGroup || !genderGroup.is_active) {
+        throw new BadRequestException('Select a valid active gender group');
+      }
+    }
+
+    const colorIds = [...new Set((input.colorIds ?? []).filter(Boolean))];
+    if (!colorIds.length) {
+      throw new BadRequestException('Select at least one color');
+    }
+    const colorResult = await this.databaseService.query<{
+      id: string;
+      name: string;
+      is_active: boolean;
+    }>(
+      `SELECT id, name, is_active
+       FROM colors
+       WHERE id IN (${this.buildGuidLiteralClause(colorIds)})`,
+    );
+    const colors = colorResult.rows.filter((row) => row.is_active);
+    if (colors.length !== colorIds.length) {
+      throw new BadRequestException(
+        'One or more selected colors are not available yet',
+      );
+    }
+
+    const sizeVariants = input.sizeVariants ?? [];
+    let resolvedSizeVariants: Array<{
+      id: string;
+      label: string;
+      stock: number;
+      sizeTypeId: string;
+      sizeTypeName: string;
+    }> = [];
+
+    if (sizeVariants.length) {
+      const sizeIds = [...new Set(sizeVariants.map((entry) => entry.sizeId))];
+      const sizeResult = await this.databaseService.query<{
+        id: string;
+        label: string;
+        is_active: boolean;
+        size_type_id: string;
+        size_type_name: string;
+      }>(
+        `SELECT s.id, s.label, s.is_active, st.id AS size_type_id, st.name AS size_type_name
+         FROM sizes s
+         INNER JOIN size_types st ON st.id = s.size_type_id
+         WHERE s.id IN (${this.buildGuidLiteralClause(sizeIds)})`,
+      );
+      if (sizeResult.rows.filter((row) => row.is_active).length !== sizeIds.length) {
+        throw new BadRequestException(
+          'One or more selected sizes are not available yet',
+        );
+      }
+
+      const sizeMap = new Map(sizeResult.rows.map((row) => [row.id, row]));
+      const sizeTypeId = input.sizeTypeId ?? sizeResult.rows[0]?.size_type_id ?? null;
+      if (
+        sizeTypeId &&
+        sizeResult.rows.some((row) => row.size_type_id !== sizeTypeId)
+      ) {
+        throw new BadRequestException(
+          'Selected sizes must belong to the same size type',
+        );
+      }
+
+      resolvedSizeVariants = sizeVariants.map((entry) => {
+        const sizeRow = sizeMap.get(entry.sizeId);
+        if (!sizeRow) {
+          throw new BadRequestException('A selected size could not be found');
+        }
+
+        return {
+          id: sizeRow.id,
+          label: sizeRow.label,
+          stock: Math.max(0, Number(entry.stock ?? 0)),
+          sizeTypeId: sizeRow.size_type_id,
+          sizeTypeName: sizeRow.size_type_name,
+        };
+      });
+    }
+
+    return {
+      brand,
+      categoryEntity,
+      subcategory,
+      genderGroup,
+      colors,
+      sizeVariants: resolvedSizeVariants,
+      totalStock: resolvedSizeVariants.length
+        ? resolvedSizeVariants.reduce((sum, entry) => sum + entry.stock, 0)
+        : Math.max(0, Number(input.stock ?? 0)),
+      department: this.normalizeDepartmentFromGenderGroup(
+        genderGroup?.name ?? null,
+      ),
+      category: this.normalizeCategoryValue(subcategory.name),
+      primaryColor: this.normalizeColorValue(colors[0]?.name) ?? null,
+      primarySize: this.normalizeSizeValue(resolvedSizeVariants[0]?.label) ?? null,
     };
   }
 
@@ -1850,25 +2658,131 @@ export class ProductsService {
     return aliasMap[compact] ?? normalized.replace(/[^a-z0-9]+/g, '-');
   }
 
-  private assertValidCatalogPlacement(department: string, category: string) {
+  private normalizeCategoryValue(value?: string | null) {
+    const normalized = value?.trim().toLowerCase();
+    if (!normalized) {
+      return 'catalog';
+    }
+
+    return normalized.replace(/[^a-z0-9]+/g, '');
+  }
+
+  private normalizeDepartmentFromGenderGroup(value?: string | null) {
+    const normalized = value?.trim().toLowerCase();
+    if (normalized === 'women') return 'women';
+    if (normalized === 'kids') return 'kids';
+    if (normalized === 'babies') return 'babies';
+    return 'men';
+  }
+
+  private normalizeCatalogRequestType(
+    value: string,
+  ): 'category' | 'subcategory' | 'brand' | 'size' | 'color' {
+    const normalized = value.trim().toLowerCase();
     if (
-      !PRODUCT_DEPARTMENTS.includes(
-        department as (typeof PRODUCT_DEPARTMENTS)[number],
-      )
+      normalized === 'category' ||
+      normalized === 'subcategory' ||
+      normalized === 'brand' ||
+      normalized === 'size' ||
+      normalized === 'color'
     ) {
-      throw new BadRequestException('Invalid product gender');
+      return normalized;
     }
 
-    const allowedCategories =
-      PRODUCT_CATEGORY_GROUPS[
-        department as (typeof PRODUCT_DEPARTMENTS)[number]
-      ] ?? [];
+    throw new BadRequestException('Unsupported request type');
+  }
 
-    if (!allowedCategories.includes(category)) {
-      throw new BadRequestException(
-        `Category "${category}" is not available under the ${department} gender`,
-      );
+  private normalizeCatalogRequestLookupValue(
+    requestType: 'category' | 'subcategory' | 'brand' | 'size' | 'color',
+    value?: string | null,
+  ) {
+    const normalized = value?.trim();
+    if (!normalized) {
+      return null;
     }
+
+    if (requestType === 'color') {
+      return this.normalizeColorValue(normalized);
+    }
+
+    if (requestType === 'size') {
+      return this.normalizeSizeValue(normalized);
+    }
+
+    return normalized.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  private async getResolvedCatalogOptions() {
+    const [categories, colors, sizes, brands, subcategories] = await Promise.all([
+      this.databaseService.query<{ name: string }>(
+        `SELECT name FROM categories WHERE is_active = 1`,
+      ),
+      this.databaseService.query<{ name: string }>(
+        `SELECT name FROM colors WHERE is_active = 1`,
+      ),
+      this.databaseService.query<{ label: string }>(
+        `SELECT label FROM sizes WHERE is_active = 1`,
+      ),
+      this.databaseService.query<{ name: string }>(
+        `SELECT name FROM brands WHERE is_active = 1`,
+      ),
+      this.databaseService.query<{ name: string }>(
+        `SELECT name FROM subcategories WHERE is_active = 1`,
+      ),
+    ]);
+
+    return {
+      categories: new Set(
+        categories.rows.map((row) =>
+          this.normalizeCatalogRequestLookupValue('category', row.name) ?? '',
+        ),
+      ),
+      colors: new Set(
+        colors.rows.map((row) =>
+          this.normalizeCatalogRequestLookupValue('color', row.name) ?? '',
+        ),
+      ),
+      sizes: new Set(
+        sizes.rows.map((row) =>
+          this.normalizeCatalogRequestLookupValue('size', row.label) ?? '',
+        ),
+      ),
+      brands: new Set(
+        brands.rows.map((row) =>
+          this.normalizeCatalogRequestLookupValue('brand', row.name) ?? '',
+        ),
+      ),
+      subcategories: new Set(
+        subcategories.rows.map((row) =>
+          this.normalizeCatalogRequestLookupValue('subcategory', row.name) ?? '',
+        ),
+      ),
+    };
+  }
+
+  private async catalogRequestMatchesExistingOption(
+    requestType: 'category' | 'subcategory' | 'brand' | 'size' | 'color',
+    lookupValue: string,
+  ) {
+    const resolved = await this.getResolvedCatalogOptions();
+
+    if (requestType === 'category') {
+      return resolved.categories.has(lookupValue);
+    }
+
+    if (requestType === 'color') {
+      return resolved.colors.has(lookupValue);
+    }
+
+    if (requestType === 'size') {
+      return resolved.sizes.has(lookupValue);
+    }
+
+    if (requestType === 'brand') {
+      return resolved.brands.has(lookupValue);
+    }
+
+    return resolved.subcategories.has(lookupValue);
   }
 
   private generateProductCode(

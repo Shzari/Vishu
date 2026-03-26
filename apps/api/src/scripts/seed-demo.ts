@@ -15,7 +15,7 @@ type DemoVendorSeed = {
     description: string;
     price: number;
     stock: number;
-    department: 'men' | 'women' | 'unisex';
+    department: 'men' | 'women';
     category: string;
     color: string | null;
     size: string | null;

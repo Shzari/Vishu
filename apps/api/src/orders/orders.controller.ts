@@ -19,6 +19,7 @@ import {
   VendorOrderStatusDto,
 } from './dto';
 import { OrdersService } from './orders.service';
+import { Public } from '../common/decorators/public.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
@@ -32,6 +33,12 @@ export class OrdersController {
     @Body() dto: CreateOrderDto,
   ) {
     return this.ordersService.createOrder(req.user.sub, dto);
+  }
+
+  @Public()
+  @Post('orders/guest')
+  createGuestOrder(@Body() dto: CreateOrderDto) {
+    return this.ordersService.createGuestOrder(dto);
   }
 
   @Roles('customer')

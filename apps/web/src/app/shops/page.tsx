@@ -7,6 +7,7 @@ import {
   PRODUCT_DEPARTMENTS,
   formatCatalogLabel,
   getCatalogCategoriesForDepartment,
+  getCatalogDepartmentDisplayLabel,
   getCatalogGenderLabel,
 } from "@/lib/catalog";
 import type { PublicVendorSummary } from "@/lib/types";
@@ -60,10 +61,7 @@ export default function ShopsPage() {
     };
   }, []);
 
-  const storefrontDepartments = useMemo(
-    () => PRODUCT_DEPARTMENTS.filter((entry) => entry !== "unisex"),
-    [],
-  );
+  const storefrontDepartments = useMemo(() => PRODUCT_DEPARTMENTS, []);
   const categoryOptions = useMemo(
     () => ["all", ...getCatalogCategoriesForDepartment(department === "all" ? undefined : department)],
     [department],
@@ -209,7 +207,9 @@ export default function ShopsPage() {
           <div className="chip-row">
             {search.trim() ? <span className="chip">Search: {search.trim()}</span> : null}
             {department !== "all" ? (
-              <span className="chip">{getCatalogGenderLabel()}: {formatCatalogLabel(department)}</span>
+              <span className="chip">
+                {getCatalogGenderLabel()}: {getCatalogDepartmentDisplayLabel(department)}
+              </span>
             ) : null}
             {category !== "all" ? <span className="chip">{formatCatalogLabel(category)}</span> : null}
             {productOnly ? <span className="chip">With products only</span> : null}

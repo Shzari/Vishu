@@ -201,3 +201,197 @@ export class PromotionUpdateDto {
   @IsBoolean()
   clearMobileImage?: boolean;
 }
+
+export class ReviewCatalogRequestDto {
+  @IsIn(['approved', 'rejected'])
+  status!: 'approved' | 'rejected';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  adminNote?: string;
+}
+
+export class CategoryMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class SubcategoryMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  categoryId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class BrandMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class ColorMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class SizeTypeMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class SizeMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  sizeTypeId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  label!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class GenderGroupMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}
+
+export class CatalogMasterDataMutationDto {
+  @IsIn(['category', 'subcategory', 'brand', 'size', 'color'])
+  optionType!:
+    | 'category'
+    | 'subcategory'
+    | 'brand'
+    | 'size'
+    | 'color';
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  @MaxLength(80)
+  department?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  @MaxLength(120)
+  parentValue?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  value!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  sortOrder?: number;
+}

@@ -4,6 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
 import {
   COMMISSION_RATE,
   OrderStatus,
@@ -18,6 +20,7 @@ import {
   VendorOrderStatusDto,
 } from './dto';
 import { MailService } from '../mail/mail.service';
+import { VendorAccessService } from '../vendor-access/vendor-access.service';
 
 interface OrderProductRow {
   id: string;
@@ -63,11 +66,28 @@ interface CheckoutPaymentMethodRow {
   last4: string;
 }
 
+interface CheckoutSnapshotInput {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  city: string;
+  addressLine1: string;
+  apartmentOrNote: string | null;
+  specialRequest: string | null;
+}
+
+interface GuestCustomerResolution {
+  customerId: string | null;
+  activationUserId: string | null;
+  sendActivationEmail: boolean;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
+    private readonly vendorAccessService: VendorAccessService,
   ) {}
 
   private readonly productRowGuard = (
@@ -82,6 +102,17 @@ export class OrdersService {
   };
 
   async createOrder(customerId: string, dto: CreateOrderDto) {
+    return this.createOrderFromCheckout(customerId, dto);
+  }
+
+  async createGuestOrder(dto: CreateOrderDto) {
+    return this.createOrderFromCheckout(null, dto);
+  }
+
+  private async createOrderFromCheckout(
+    customerId: string | null,
+    dto: CreateOrderDto,
+  ) {
     const lowStockAlerts: {
       email: string;
       shopName: string;
@@ -93,17 +124,20 @@ export class OrdersService {
 
     const createdOrder = await this.databaseService.withTransaction(
       async (client) => {
+        const checkout = this.normalizeCheckoutInput(dto);
+        const isGuestCheckout = !customerId;
+        const guestCustomer = isGuestCheckout
+          ? await this.resolveGuestCheckoutCustomer(client, checkout)
+          : null;
+        const linkedCustomerId = customerId ?? guestCustomer?.customerId ?? null;
         const paymentMethod: PaymentMethod =
-          dto.paymentMethod ?? 'cash_on_delivery';
+          customerId && dto.paymentMethod === 'card'
+            ? 'card'
+            : 'cash_on_delivery';
         const paymentStatus: PaymentStatus =
           paymentMethod === 'cash_on_delivery' ? 'cod_pending' : 'paid';
-        const address = await this.loadCheckoutAddress(
-          client,
-          customerId,
-          dto.addressId,
-        );
         const savedPaymentMethod =
-          paymentMethod === 'card'
+          customerId && paymentMethod === 'card'
             ? await this.loadCheckoutPaymentMethod(
                 client,
                 customerId,
@@ -146,7 +180,7 @@ export class OrdersService {
         );
         const order = await client.query<{ id: string }>(
           `INSERT INTO orders (
-           customer_id, total_price, special_request,
+           customer_id, guest_email, guest_phone_number, total_price, special_request,
            shipping_address_id, shipping_label, shipping_full_name, shipping_phone_number,
            shipping_line1, shipping_line2, shipping_city, shipping_state_region,
            shipping_postal_code, shipping_country,
@@ -155,21 +189,19 @@ export class OrdersService {
            payment_method, payment_status, status
          )
          OUTPUT INSERTED.id
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'pending')`,
+         VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, $12, $13, $14, $15, $16, $17, $18, 'pending')`,
           [
-            customerId,
+            linkedCustomerId,
+            isGuestCheckout ? checkout.email : null,
+            isGuestCheckout ? checkout.phoneNumber : null,
             totalPrice,
-            dto.specialRequest?.trim() || null,
-            address.id,
-            address.label,
-            address.full_name,
-            address.phone_number,
-            address.line1,
-            address.line2,
-            address.city,
-            address.state_region,
-            address.postal_code,
-            address.country,
+            checkout.specialRequest,
+            isGuestCheckout ? 'Guest checkout' : 'Checkout details',
+            checkout.fullName,
+            checkout.phoneNumber,
+            checkout.addressLine1,
+            checkout.apartmentOrNote,
+            checkout.city,
             savedPaymentMethod?.id ?? null,
             savedPaymentMethod?.nickname ?? null,
             savedPaymentMethod?.cardholder_name ?? null,
@@ -228,15 +260,22 @@ export class OrdersService {
           }
         }
 
-        await client.query(
-          `DELETE ci
-         FROM cart_items ci
-         INNER JOIN carts c ON c.id = ci.cart_id
-         WHERE c.customer_id = $1`,
-          [customerId],
-        );
+        if (customerId) {
+          await client.query(
+            `DELETE ci
+           FROM cart_items ci
+           INNER JOIN carts c ON c.id = ci.cart_id
+           WHERE c.customer_id = $1`,
+            [customerId],
+          );
+        }
 
-        return order.rows[0];
+        return {
+          id: order.rows[0].id,
+          checkout,
+          guestCustomer,
+          isGuestCheckout,
+        };
       },
     );
 
@@ -244,7 +283,43 @@ export class OrdersService {
       await this.mailService.sendVendorLowStockAlert(alert);
     }
 
-    return this.getCustomerOrderById(createdOrder.id, customerId);
+    const placedOrder = createdOrder.isGuestCheckout
+      ? await this.getOrderSnapshotById(createdOrder.id)
+      : await this.getCustomerOrderById(createdOrder.id, customerId as string);
+
+    if (createdOrder.isGuestCheckout) {
+      await this.mailService.sendGuestOrderConfirmationEmail({
+        email: createdOrder.checkout.email,
+        fullName: createdOrder.checkout.fullName,
+        orderId: placedOrder.id,
+        totalPrice: placedOrder.totalPrice,
+        placedAt: placedOrder.createdAt,
+        shippingAddress: placedOrder.shippingAddress,
+        items: placedOrder.items.map((item) => ({
+          title: item.product.title,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          color: item.product.color,
+          size: item.product.size,
+        })),
+      });
+
+      if (
+        createdOrder.guestCustomer?.sendActivationEmail &&
+        createdOrder.guestCustomer.activationUserId
+      ) {
+        const token = await this.issueCustomerActivationToken(
+          createdOrder.guestCustomer.activationUserId,
+        );
+        await this.mailService.sendCustomerActivationEmail({
+          email: createdOrder.checkout.email,
+          fullName: createdOrder.checkout.fullName,
+          token,
+        });
+      }
+    }
+
+    return placedOrder;
   }
 
   async getCustomerCart(customerId: string) {
@@ -350,9 +425,9 @@ export class OrdersService {
          o.cancel_requested_at,
          o.status,
          o.created_at,
-         u.email AS customer_email
+         COALESCE(u.email, o.guest_email) AS customer_email
        FROM orders o
-       INNER JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users u ON u.id = o.customer_id
        INNER JOIN order_items oi ON oi.order_id = o.id
        WHERE oi.vendor_id = $1
        ORDER BY o.created_at DESC`,
@@ -698,9 +773,9 @@ export class OrdersService {
          o.cancel_requested_at,
          o.status,
          o.created_at,
-         u.email AS customer_email
+         COALESCE(u.email, o.guest_email) AS customer_email
        FROM orders o
-       INNER JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users u ON u.id = o.customer_id
        ORDER BY o.created_at DESC`,
     );
 
@@ -982,6 +1057,384 @@ export class OrdersService {
     };
   }
 
+  private async getOrderSnapshotById(orderId: string) {
+    const orderResult = await this.databaseService.query<{
+      id: string;
+      total_price: number | string;
+      special_request: string | null;
+      confirmed_at: Date | null;
+      shipped_at: Date | null;
+      delivered_at: Date | null;
+      shipping_label: string | null;
+      shipping_full_name: string | null;
+      shipping_phone_number: string | null;
+      shipping_line1: string | null;
+      shipping_line2: string | null;
+      shipping_city: string | null;
+      shipping_state_region: string | null;
+      shipping_postal_code: string | null;
+      shipping_country: string | null;
+      payment_card_nickname: string | null;
+      payment_cardholder_name: string | null;
+      payment_card_brand: string | null;
+      payment_card_last4: string | null;
+      payment_method: PaymentMethod;
+      payment_status: PaymentStatus;
+      cod_status_note: string | null;
+      cod_updated_at: Date | null;
+      cancel_request_status: string;
+      cancel_request_note: string | null;
+      cancel_requested_at: Date | null;
+      status: OrderStatus;
+      created_at: Date;
+    }>(
+      `SELECT TOP 1
+         id,
+         total_price,
+         special_request,
+         confirmed_at,
+         shipped_at,
+         delivered_at,
+         shipping_label,
+         shipping_full_name,
+         shipping_phone_number,
+         shipping_line1,
+         shipping_line2,
+         shipping_city,
+         shipping_state_region,
+         shipping_postal_code,
+         shipping_country,
+         payment_card_nickname,
+         payment_cardholder_name,
+         payment_card_brand,
+         payment_card_last4,
+         payment_method,
+         payment_status,
+         cod_status_note,
+         cod_updated_at,
+         cancel_request_status,
+         cancel_request_note,
+         cancel_requested_at,
+         status,
+         created_at
+       FROM orders
+       WHERE id = $1`,
+      [orderId],
+    );
+
+    const order = orderResult.rows[0];
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const items = await this.databaseService.query<{
+      id: string;
+      quantity: number;
+      unit_price: number | string;
+      status: OrderStatus;
+      shipping_carrier: string | null;
+      tracking_number: string | null;
+      shipped_at: Date | null;
+      product_id: string;
+      title: string;
+      category: string;
+      color: string | null;
+      size: string | null;
+    }>(
+      `SELECT
+         oi.id,
+         oi.quantity,
+         oi.unit_price,
+         oi.status,
+         oi.shipping_carrier,
+         oi.tracking_number,
+         oi.shipped_at,
+         p.id AS product_id,
+         p.title,
+         p.category,
+         p.color,
+         p.size
+       FROM order_items oi
+       INNER JOIN products p ON p.id = oi.product_id
+       WHERE oi.order_id = $1`,
+      [orderId],
+    );
+
+    const imageRows = await this.getImagesForProducts(
+      items.rows.map((item) => item.product_id),
+    );
+    const imageMap = new Map<string, string[]>();
+
+    for (const image of imageRows) {
+      const current = imageMap.get(image.product_id) ?? [];
+      current.push(image.image_url);
+      imageMap.set(image.product_id, current);
+    }
+
+    return {
+      id: order.id,
+      totalPrice: Number(order.total_price),
+      specialRequest: order.special_request,
+      fulfillment: {
+        placedAt: order.created_at,
+        confirmedAt: order.confirmed_at,
+        shippedAt: order.shipped_at,
+        deliveredAt: order.delivered_at,
+      },
+      shippingAddress: order.shipping_line1
+        ? {
+            label: order.shipping_label,
+            fullName: order.shipping_full_name,
+            phoneNumber: order.shipping_phone_number,
+            line1: order.shipping_line1,
+            line2: order.shipping_line2,
+            city: order.shipping_city,
+            stateRegion: order.shipping_state_region,
+            postalCode: order.shipping_postal_code,
+            country: order.shipping_country,
+          }
+        : null,
+      paymentCard:
+        order.payment_method === 'card' && order.payment_card_last4
+          ? {
+              nickname: order.payment_card_nickname,
+              cardholderName: order.payment_cardholder_name,
+              brand: order.payment_card_brand,
+              last4: order.payment_card_last4,
+            }
+          : null,
+      paymentMethod: order.payment_method,
+      paymentStatus: order.payment_status,
+      codStatusNote: order.cod_status_note,
+      codUpdatedAt: order.cod_updated_at,
+      cancelRequest: {
+        status: order.cancel_request_status,
+        note: order.cancel_request_note,
+        requestedAt: order.cancel_requested_at,
+      },
+      status: order.status,
+      createdAt: order.created_at,
+      items: items.rows.map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unitPrice: Number(item.unit_price),
+        status: item.status,
+        shipment: {
+          shippingCarrier: item.shipping_carrier,
+          trackingNumber: item.tracking_number,
+          shippedAt: item.shipped_at,
+        },
+        product: {
+          id: item.product_id,
+          title: item.title,
+          category: item.category,
+          color: item.color,
+          size: item.size,
+          images: imageMap.get(item.product_id) ?? [],
+        },
+      })),
+    };
+  }
+
+  private normalizeCheckoutInput(dto: CreateOrderDto): CheckoutSnapshotInput {
+    return {
+      fullName: dto.fullName.trim(),
+      email: dto.email.trim().toLowerCase(),
+      phoneNumber: dto.phoneNumber.trim(),
+      city: dto.city.trim(),
+      addressLine1: dto.addressLine1.trim(),
+      apartmentOrNote: dto.apartmentOrNote?.trim() || null,
+      specialRequest: dto.specialRequest?.trim() || null,
+    };
+  }
+
+  private async resolveGuestCheckoutCustomer(
+    client: QueryRunner,
+    checkout: CheckoutSnapshotInput,
+  ): Promise<GuestCustomerResolution> {
+    const existing = await client.query<{
+      id: string;
+      role: 'admin' | 'vendor' | 'customer';
+      email_verified_at: Date | null;
+      full_name: string | null;
+      phone_number: string | null;
+    }>(
+      `SELECT TOP 1
+         id,
+         role,
+         email_verified_at,
+         full_name,
+         phone_number
+       FROM users
+       WHERE email = $1`,
+      [checkout.email],
+    );
+
+    const existingUser = existing.rows[0];
+    if (!existingUser) {
+      const passwordHash = await bcrypt.hash(randomUUID(), 10);
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO users (
+           email,
+           full_name,
+           phone_number,
+           password_hash,
+           role,
+           email_verified_at,
+           is_active
+         )
+         OUTPUT INSERTED.id
+         VALUES ($1, $2, $3, $4, 'customer', NULL, 1)`,
+        [checkout.email, checkout.fullName, checkout.phoneNumber, passwordHash],
+      );
+
+      await this.upsertGuestCustomerAddress(
+        client,
+        created.rows[0].id,
+        checkout,
+        false,
+      );
+
+      return {
+        customerId: created.rows[0].id,
+        activationUserId: created.rows[0].id,
+        sendActivationEmail: true,
+      };
+    }
+
+    if (existingUser.role !== 'customer') {
+      return {
+        customerId: null,
+        activationUserId: null,
+        sendActivationEmail: false,
+      };
+    }
+
+    await client.query(
+      `UPDATE users
+       SET full_name = CASE
+             WHEN NULLIF(LTRIM(RTRIM(ISNULL(full_name, ''))), '') IS NULL THEN $1
+             ELSE full_name
+           END,
+           phone_number = CASE
+             WHEN NULLIF(LTRIM(RTRIM(ISNULL(phone_number, ''))), '') IS NULL THEN $2
+             ELSE phone_number
+           END,
+           updated_at = SYSDATETIME()
+       WHERE id = $3`,
+      [checkout.fullName, checkout.phoneNumber, existingUser.id],
+    );
+
+    if (!existingUser.email_verified_at) {
+      await this.upsertGuestCustomerAddress(
+        client,
+        existingUser.id,
+        checkout,
+        true,
+      );
+    }
+
+    return {
+      customerId: existingUser.id,
+      activationUserId: existingUser.email_verified_at ? null : existingUser.id,
+      sendActivationEmail: !existingUser.email_verified_at,
+    };
+  }
+
+  private async upsertGuestCustomerAddress(
+    client: QueryRunner,
+    customerId: string,
+    checkout: CheckoutSnapshotInput,
+    overwriteExisting: boolean,
+  ) {
+    const existing = await client.query<{ id: string }>(
+      `SELECT TOP 1 id
+       FROM customer_addresses
+       WHERE customer_id = $1
+       ORDER BY is_default DESC, created_at ASC`,
+      [customerId],
+    );
+
+    if (!existing.rows[0]) {
+      await client.query(
+        `INSERT INTO customer_addresses (
+           customer_id,
+           label,
+           full_name,
+           phone_number,
+           line1,
+           line2,
+           city,
+           state_region,
+           postal_code,
+           country,
+           is_default
+         )
+         VALUES ($1, 'Default delivery', $2, $3, $4, $5, $6, NULL, '-', 'Local marketplace', 1)`,
+        [
+          customerId,
+          checkout.fullName,
+          checkout.phoneNumber,
+          checkout.addressLine1,
+          checkout.apartmentOrNote,
+          checkout.city,
+        ],
+      );
+      return;
+    }
+
+    if (!overwriteExisting) {
+      return;
+    }
+
+    await client.query(
+      `UPDATE customer_addresses
+       SET label = 'Default delivery',
+           full_name = $1,
+           phone_number = $2,
+           line1 = $3,
+           line2 = $4,
+           city = $5,
+           state_region = NULL,
+           postal_code = '-',
+           country = 'Local marketplace',
+           is_default = 1,
+           updated_at = SYSDATETIME()
+       WHERE id = $6`,
+      [
+        checkout.fullName,
+        checkout.phoneNumber,
+        checkout.addressLine1,
+        checkout.apartmentOrNote,
+        checkout.city,
+        existing.rows[0].id,
+      ],
+    );
+  }
+
+  private async issueCustomerActivationToken(userId: string) {
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE password_resets
+         SET used_at = COALESCE(used_at, SYSDATETIME())
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [userId],
+      );
+
+      await client.query(
+        `INSERT INTO password_resets (user_id, token, expires_at)
+         VALUES ($1, $2, $3)`,
+        [userId, token, expiresAt],
+      );
+    });
+
+    return token;
+  }
+
   private async syncOrderStatus(client: QueryRunner, orderId: string) {
     const rows = await client.query<{ status: OrderStatus }>(
       'SELECT status FROM order_items WHERE order_id = $1',
@@ -1152,6 +1605,7 @@ export class OrdersService {
   }
 
   private async getVendorByUserId(userId: string) {
+    const access = await this.vendorAccessService.requireVendorAccess(userId);
     const result = await this.databaseService.query<{
       id: string;
       is_active: boolean;
@@ -1159,13 +1613,9 @@ export class OrdersService {
     }>(
       `SELECT TOP 1 id, is_active, is_verified
        FROM vendors
-       WHERE user_id = $1`,
-      [userId],
+       WHERE id = $1`,
+      [access.id],
     );
-
-    if (!result.rows[0]) {
-      throw new ForbiddenException('Vendor profile not found');
-    }
 
     return result.rows[0];
   }

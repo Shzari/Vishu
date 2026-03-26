@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { AuthenticatedUser } from '../common/types';
 import { DatabaseService } from '../database/database.service';
+import { VendorAccessService } from '../vendor-access/vendor-access.service';
 import {
   LoginDto,
   PasswordResetConfirmDto,
@@ -27,13 +28,39 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly vendorAccessService: VendorAccessService,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
     const email = dto.email.trim().toLowerCase();
     const fullName = dto.fullName?.trim() || null;
     const phoneNumber = dto.phoneNumber?.trim() || null;
-    await this.ensureEmailAvailable(email);
+    const existing = await this.databaseService.query<{
+      id: string;
+      role: 'admin' | 'vendor' | 'customer';
+      email_verified_at: Date | null;
+    }>(
+      `SELECT TOP 1 id, role, email_verified_at
+       FROM users
+       WHERE email = $1`,
+      [email],
+    );
+
+    if (existing.rows[0]) {
+      const existingUser = existing.rows[0];
+      if (
+        existingUser.role === 'customer' &&
+        !existingUser.email_verified_at
+      ) {
+        throw new BadRequestException(
+          'An account already exists for this email from a recent purchase. Activate it from your email or use reset password to finish setup.',
+        );
+      }
+
+      throw new BadRequestException(
+        'An account already exists for this email. Sign in or reset your password instead.',
+      );
+    }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const result = await this.databaseService.query<{
@@ -43,13 +70,27 @@ export class AuthService {
     }>(
       `INSERT INTO users (email, full_name, phone_number, password_hash, role, email_verified_at)
        OUTPUT INSERTED.id, INSERTED.email, INSERTED.role
-       VALUES ($1, $2, $3, $4, 'customer', SYSDATETIME())`,
+       VALUES ($1, $2, $3, $4, 'customer', NULL)`,
       [email, fullName, phoneNumber, passwordHash],
     );
 
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    await this.databaseService.query(
+      `INSERT INTO password_resets (user_id, token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [result.rows[0].id, token, expiresAt],
+    );
+
+    await this.mailService.sendCustomerActivationEmail({
+      email,
+      fullName,
+      token,
+    });
+
     return {
-      message: 'Customer account created. You can start shopping right away.',
-      ...this.buildAuthResponse(result.rows[0]),
+      message:
+        'Customer account created. Check your email to activate it and set your password.',
     };
   }
 
@@ -81,6 +122,14 @@ export class AuthService {
           `INSERT INTO vendors (user_id, shop_name, is_active, is_verified)
          VALUES ($1, $2, 0, 0)`,
           [createdUser.rows[0].id, shopName],
+        );
+
+        await client.query(
+          `INSERT INTO vendor_team_members (vendor_id, user_id, role, status, invited_by_user_id, joined_at)
+           SELECT TOP 1 id, $1, 'shop_holder', 'active', $1, SYSDATETIME()
+           FROM vendors
+           WHERE user_id = $1`,
+          [createdUser.rows[0].id],
         );
 
         await client.query(
@@ -259,8 +308,25 @@ export class AuthService {
       throw new UnauthorizedException('User account is disabled');
     }
 
-    if (user.role === 'vendor' && !user.vendor_is_verified) {
-      throw new UnauthorizedException('Verify your email before signing in');
+    if (user.role === 'customer' && !user.email_verified_at) {
+      throw new UnauthorizedException(
+        'Activate your account from the email we sent you, or use reset password to finish setup.',
+      );
+    }
+
+    if (user.role === 'vendor') {
+      await this.vendorAccessService.activatePendingInvitesForUser(
+        user.id,
+        user.email,
+      );
+
+      const vendorAccess = await this.vendorAccessService.getVendorAccessForUser(
+        user.id,
+      );
+
+      if (!vendorAccess && !user.vendor_is_verified) {
+        throw new UnauthorizedException('Verify your email before signing in');
+      }
     }
 
     return this.buildAuthResponse(user);
@@ -376,7 +442,14 @@ export class AuthService {
 
       const passwordHash = await bcrypt.hash(dto.newPassword, 10);
       await client.query(
-        'UPDATE users SET password_hash = $1, updated_at = SYSDATETIME() WHERE id = $2',
+        `UPDATE users
+         SET password_hash = $1,
+             email_verified_at = CASE
+               WHEN role = 'customer' THEN ISNULL(email_verified_at, SYSDATETIME())
+               ELSE email_verified_at
+             END,
+             updated_at = SYSDATETIME()
+         WHERE id = $2`,
         [passwordHash, record.user_id],
       );
       await client.query(
@@ -445,10 +518,31 @@ export class AuthService {
       is_active: boolean;
       is_verified: boolean;
       approved_at: Date | null;
+      access_role: 'shop_holder' | 'employee';
+      is_primary_owner: boolean;
     }>(
-      `SELECT id, shop_name, is_active, is_verified, approved_at
-       FROM vendors
-       WHERE user_id = $1`,
+      `SELECT TOP 1
+         v.id,
+         v.shop_name,
+         v.is_active,
+         v.is_verified,
+         v.approved_at,
+         CASE
+           WHEN v.user_id = $1 THEN 'shop_holder'
+           ELSE tm.role
+         END AS access_role,
+         CASE
+           WHEN v.user_id = $1 THEN CAST(1 AS BIT)
+           ELSE CAST(0 AS BIT)
+         END AS is_primary_owner
+       FROM vendors v
+       LEFT JOIN vendor_team_members tm
+         ON tm.vendor_id = v.id
+        AND tm.user_id = $1
+        AND tm.status = 'active'
+       WHERE v.user_id = $1
+          OR tm.id IS NOT NULL
+       ORDER BY CASE WHEN v.user_id = $1 THEN 0 ELSE 1 END`,
       [user.sub],
     );
 
