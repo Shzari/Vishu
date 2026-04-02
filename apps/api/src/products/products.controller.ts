@@ -13,13 +13,16 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
-import { join } from 'path';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import {
+  buildSafeUploadedImageName,
+  ensureTemporaryUploadDir,
+  isAllowedImageMimeType,
+} from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import {
   ProductBulkStockDto,
@@ -34,30 +37,14 @@ function productUploadInterceptor() {
   return FilesInterceptor('images', 6, {
     storage: diskStorage({
       destination: (_req, _file, callback) => {
-        const uploadDir = join(process.cwd(), 'uploads', 'tmp');
-        if (!existsSync(uploadDir)) {
-          mkdirSync(uploadDir, { recursive: true });
-        }
-        callback(null, uploadDir);
+        callback(null, ensureTemporaryUploadDir());
       },
       filename: (_req, file, callback) => {
-        const extension = file.originalname.includes('.')
-          ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-          : '.jpg';
-        callback(
-          null,
-          `${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`,
-        );
+        callback(null, buildSafeUploadedImageName('product-image', file.mimetype));
       },
     }),
     fileFilter: (_req, file, callback) => {
-      const allowedMimeTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-        'image/gif',
-      ];
-      if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      if (!isAllowedImageMimeType(file.mimetype)) {
         callback(new Error('Only image uploads are allowed'), false);
         return;
       }

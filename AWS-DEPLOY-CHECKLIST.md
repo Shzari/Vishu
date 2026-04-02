@@ -1,6 +1,6 @@
 # Vishu AWS Deploy Checklist
 
-Last updated: 2026-03-26
+Last updated: 2026-04-02
 
 Use this file when moving the real project to AWS. Read it together with `PROJECT-STATUS.md` and `DATABASE-STRUCTURE.md`.
 
@@ -23,6 +23,7 @@ Set these in the production API environment:
 ```env
 PORT=3000
 JWT_SECRET=replace-with-strong-secret
+PLATFORM_SECRET_ENCRYPTION_KEY=replace-with-separate-secret
 JWT_EXPIRES_IN=7d
 CORS_ORIGIN=https://vishu.shop,https://www.vishu.shop
 APP_BASE_URL=https://vishu.shop
@@ -45,6 +46,8 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=
 SMTP_PASS=
+STRIPE_TEST_SECRET_KEY=
+STRIPE_LIVE_SECRET_KEY=
 
 ALGOLIA_APP_ID=
 ALGOLIA_ADMIN_API_KEY=
@@ -66,14 +69,27 @@ NEXT_PUBLIC_SITE_URL=https://vishu.shop
   - vendor verification emails use it
   - customer password reset emails use it
   - guest checkout account activation emails use it
+- `CORS_ORIGIN` must be exact and must match the real web origins.
+  - cookie-authenticated write requests now also rely on trusted origin / referer checks
 - SMTP must be configured before relying on:
   - vendor verification
   - password reset
   - guest checkout account activation
   - guest order confirmation emails
+- In production, prefer env-managed secrets over DB-managed secrets:
+  - `SMTP_PASS`
+  - `STRIPE_TEST_SECRET_KEY`
+  - `STRIPE_LIVE_SECRET_KEY`
+- Set `PLATFORM_SECRET_ENCRYPTION_KEY` before first production boot.
+  - do not rely on `JWT_SECRET` as the long-term encryption fallback
+  - if encrypted platform secrets already exist, do not rotate `JWT_SECRET` unless `PLATFORM_SECRET_ENCRYPTION_KEY` is set and stable
 - `UPLOAD_DIR` must be persistent across restarts and deployments.
 - The API schema bootstrap still applies additive SQL changes on startup.
   - API startup is part of deployment verification
+- API startup now also migrates any old plaintext platform secrets into encrypted storage.
+  - watch startup logs for migration or decryption errors
+- Reverse proxy must forward the real host/protocol correctly.
+  - secure cookie behavior depends on production HTTPS
 
 ## 4. Build And Start
 
@@ -105,7 +121,20 @@ Recommended public routing:
 
 Also enable HTTPS before public use.
 
-## 6. Database Checks After Pull
+## 6. Security Migration Checks
+
+Before calling a migration or deploy complete, verify:
+
+- login sets the auth cookie and authenticated pages still work after refresh
+- logout clears the auth cookie and session cleanly
+- state-changing requests from the real web app succeed
+- cross-site or mismatched-origin requests are rejected with `403`
+- admin settings still show SMTP state correctly
+- SMTP test email still works when secrets are env-managed
+- Stripe-backed payment flows only rely on env secrets if those vars are set
+- if old plaintext platform secrets existed, confirm they were upgraded to encrypted values after API startup
+
+## 7. Database Checks After Pull
 
 Because schema changes are bootstrapped on API startup, always verify:
 
@@ -125,7 +154,7 @@ Because schema changes are bootstrapped on API startup, always verify:
 - admin settings structure screens load
 - vendor product form loads admin-managed options
 
-## 7. Guest Checkout / Customer Activation Checks
+## 8. Guest Checkout / Customer Activation Checks
 
 This is now a required production smoke test:
 
@@ -149,7 +178,7 @@ Also test:
   - order attaches to the same customer
   - activation email is resent
 
-## 8. Search Checks
+## 9. Search Checks
 
 If Algolia is configured:
 
@@ -165,7 +194,7 @@ Then verify:
 
 If Algolia is not configured, confirm the database fallback still works.
 
-## 9. Admin / Vendor / Storefront Smoke Tests
+## 10. Admin / Vendor / Storefront Smoke Tests
 
 - admin login works
 - vendor login works
@@ -174,16 +203,36 @@ If Algolia is not configured, confirm the database fallback still works.
 - category navigation works
 - product detail pages load
 - cart and checkout work
+- customer session still survives refresh through secure cookie auth
 - vendor request system works
+
+## 11. Phase 10 Production Hardening Checks
+
+Verify after deploy:
+
+- `Content-Security-Policy` header is present on API responses (check with curl or browser DevTools)
+- `Content-Security-Policy` header is present on web responses
+- `/sitemap.xml` loads and contains product and shop URLs
+- `/robots.txt` correctly disallows `/admin/`, `/vendor/`, `/account/`, `/checkout`
+- `/terms`, `/privacy`, `/contact` pages render correctly
+- Product detail page `<title>` includes the product name (check page source)
+- Product detail page has `<script type="application/ld+json">` with Product schema
+- Shop detail page `<title>` includes the shop name
+- Storefront footer links to Terms, Privacy, Contact
+- Account activation email links to `/reset-password?mode=activate` (check via Mailtrap)
+- Vendor dashboard shows "pending approval" banner when vendor is verified but not yet active
+- Admin reports page shows Export vendors/customers/orders download links
+- Error pages: test `/not-found-page` to confirm 404 page renders
 - admin requests screen loads
 - admin promotions screen loads
 
-## 10. Files To Recheck Before Every AWS Deploy
+## 11. Files To Recheck Before Every AWS Deploy
 
 - `PROJECT-STATUS.md`
 - `DATABASE-STRUCTURE.md`
 - `apps/api/src/database/schema.ts`
 - `apps/api/.env.example`
 - `apps/web/.env.example`
+- `WEB-APP-ENGINEERING-PLAYBOOK.md`
 
 If a change touches SQL tables, auth, mail, uploads, or search, update this file too.

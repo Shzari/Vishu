@@ -57,7 +57,7 @@ export default function AdminOrderDetailPage() {
       <div className="stack">
       <section className="panel hero-panel">
         <span className="chip">Order detail</span>
-        <h1 className="hero-title">Order {detail.id}</h1>
+        <h1 className="hero-title">Order {detail.orderNumber}</h1>
         <p className="hero-copy">
           Inspect customer identity, line items, vendor attribution, COD state, and commission details in one place.
         </p>

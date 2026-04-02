@@ -175,6 +175,7 @@ export interface OrderItem {
 
 export interface CustomerOrder {
   id: string;
+  orderNumber: string;
   totalPrice: number;
   specialRequest?: string | null;
   fulfillment?: {
@@ -254,6 +255,7 @@ export interface AdminOrderItem {
 
 export interface AdminOrderRow {
   id: string;
+  orderNumber: string;
   totalPrice: number;
   specialRequest?: string | null;
   paymentMethod: string;
@@ -282,6 +284,19 @@ export interface AdminActivityLogEntry {
   createdAt: string;
   adminUserId: string;
   adminEmail: string;
+}
+
+export interface AdminPaymentLogEntry {
+  id: string;
+  provider: string;
+  mode: "test" | "live";
+  eventType: string;
+  eventStatus: string;
+  eventSource: string;
+  message: string | null;
+  referenceId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface AdminReportingSnapshot {
@@ -316,8 +331,6 @@ export interface AdminOverview {
     totalAdmins: number;
     totalVendors: number;
     activeVendors: number;
-    subscribedVendors: number;
-    subscriptionsExpiringSoon: number;
     pendingVendorApprovals: number;
     unreadNotifications: number;
     totalOrders: number;
@@ -372,6 +385,7 @@ export interface AdminOverview {
   }[];
   recentOrders: {
     id: string;
+    orderNumber: string;
     totalPrice: number;
     paymentMethod: string;
     paymentStatus: string;
@@ -413,6 +427,7 @@ export interface AdminUserDetail {
     totalSpend: number;
     recentOrders: {
       id: string;
+      orderNumber: string;
       totalPrice: number;
       status: string;
       specialRequest: string | null;
@@ -451,11 +466,38 @@ export interface AdminPlatformSettings {
     smtpSecure: boolean;
     smtpUser: string | null;
     smtpPasswordConfigured: boolean;
+    smtpPasswordManagedByEnv?: boolean;
     mailFrom: string | null;
     appBaseUrl: string | null;
     vendorVerificationEmailsEnabled: boolean;
     adminVendorApprovalEmailsEnabled: boolean;
     passwordResetEmailsEnabled: boolean;
+  };
+  payment: {
+    mode: "test" | "live";
+    cashOnDeliveryEnabled: boolean;
+    cardPaymentsEnabled: boolean;
+    guestCheckoutEnabled: boolean;
+    stripe: {
+      test: {
+        publishableKey: string | null;
+        secretKeyConfigured: boolean;
+        webhookSigningSecretConfigured: boolean;
+      };
+      live: {
+        publishableKey: string | null;
+        secretKeyConfigured: boolean;
+        webhookSigningSecretConfigured: boolean;
+      };
+    };
+    status: {
+      activeMode: "test" | "live";
+      activePublishableKey: string | null;
+      activeConfigurationComplete: boolean;
+      activeWebhookConfigured: boolean;
+      lastEvent: AdminPaymentLogEntry | null;
+    };
+    logs: AdminPaymentLogEntry[];
   };
   homepageHero: {
     autoRotate: boolean;
@@ -463,6 +505,19 @@ export interface AdminPlatformSettings {
     slides: AdminPromotion[];
   };
   activityLog: AdminActivityLogEntry[];
+}
+
+export interface CheckoutPaymentSettings {
+  mode: "test" | "live";
+  cashOnDeliveryEnabled: boolean;
+  cardPaymentsEnabled: boolean;
+  guestCheckoutEnabled: boolean;
+  activeStripePublishableKey: string | null;
+}
+
+export interface CheckoutStripeSession {
+  sessionId: string;
+  url: string;
 }
 
 export interface AdminCatalogRequest {
@@ -624,27 +679,6 @@ export interface AdminVendorDetail {
     email: string;
     isActive: boolean;
   };
-  subscription: {
-    planType: "monthly" | "yearly" | null;
-    status: "inactive" | "active" | "expired";
-    startedAt: string | null;
-    endsAt: string | null;
-    source: "automatic" | "manual_override";
-  };
-  automaticSubscription: {
-    planType: "monthly" | "yearly" | null;
-    status: "inactive" | "active" | "expired";
-    startedAt: string | null;
-    endsAt: string | null;
-  };
-  manualOverride: {
-    planType: "monthly" | "yearly" | null;
-    status: "active" | "expired";
-    startedAt: string | null;
-    endsAt: string | null;
-    note: string | null;
-    updatedAt: string | null;
-  } | null;
   metrics: {
     productCount: number;
     inventoryUnits: number;
@@ -662,6 +696,7 @@ export interface AdminVendorDetail {
   }[];
   recentOrderItems: {
     orderId: string;
+    orderNumber: string;
     productTitle: string;
     productCode?: string | null;
     quantity: number;
@@ -681,17 +716,23 @@ export interface AdminVendorDetail {
     note: string | null;
     paidAt: string;
   }[];
-  subscriptionHistory: {
-    id: string;
-    planType: "monthly" | "yearly";
-    status: "active" | "expired";
-    amount: number;
-    adminNote: string | null;
-    adminEmail: string | null;
-    startsAt: string;
-    endsAt: string;
-    createdAt: string;
-  }[];
+}
+
+export interface AdminVendorOrderActivity {
+  orderId: string;
+  orderNumber: string;
+  customerEmail: string;
+  productTitle: string;
+  productCode?: string | null;
+  quantity: number;
+  vendorEarnings: number;
+  status: string;
+  shipment?: {
+    shippingCarrier: string | null;
+    trackingNumber: string | null;
+    shippedAt: string | null;
+  };
+  createdAt: string;
 }
 
 export interface CustomerAddress {
@@ -711,7 +752,7 @@ export interface CustomerAddress {
 export interface CustomerPaymentMethod {
   id: string;
   nickname: string | null;
-  cardholderName: string;
+  cardholderName: string | null;
   brand: string;
   last4: string;
   expMonth: number;
@@ -731,6 +772,14 @@ export interface CustomerAccount {
   };
   addresses: CustomerAddress[];
   paymentMethods: CustomerPaymentMethod[];
+  stats: {
+    orderCount: number;
+    cartItemCount: number;
+  };
+  emailPreferences: {
+    orderUpdatesEnabled: boolean;
+    marketingEmailsEnabled: boolean;
+  };
   cart: {
     itemCount: number;
     items: {
@@ -745,6 +794,7 @@ export interface CustomerAccount {
   };
   recentOrders: {
     id: string;
+    orderNumber: string;
     totalPrice: number;
     specialRequest: string | null;
     status: string;
@@ -784,40 +834,6 @@ export interface AccountSettingsProfile {
     businessHours: string | null;
     shippingNotes: string | null;
     lowStockThreshold: number;
-    subscription: {
-      planType: "monthly" | "yearly" | null;
-      status: "inactive" | "active" | "expired";
-      startedAt: string | null;
-      endsAt: string | null;
-      source: "automatic" | "manual_override";
-      monthlyPrice: number;
-      yearlyPrice: number;
-    };
-    automaticSubscription: {
-      planType: "monthly" | "yearly" | null;
-      status: "inactive" | "active" | "expired";
-      startedAt: string | null;
-      endsAt: string | null;
-    };
-    manualOverride: {
-      planType: "monthly" | "yearly" | null;
-      status: "active" | "expired";
-      startedAt: string | null;
-      endsAt: string | null;
-      note: string | null;
-      updatedAt: string | null;
-    } | null;
-    subscriptionHistory: {
-      id: string;
-      planType: "monthly" | "yearly";
-      status: "active" | "expired";
-      amount: number;
-      adminNote: string | null;
-      adminEmail: string | null;
-      startsAt: string;
-      endsAt: string;
-      createdAt: string;
-    }[];
     payoutSummary: {
       pendingBalance: number;
       shippedBalance: number;

@@ -15,12 +15,15 @@ import {
 import {
   FileFieldsInterceptor,
 } from '@nestjs/platform-express';
-import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
-import { join } from 'path';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import {
+  buildSafeUploadedImageName,
+  ensureTemporaryUploadDir,
+  isAllowedImageMimeType,
+} from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import { AdminService } from './admin.service';
 import { AdminCodStatusDto } from '../orders/dto';
@@ -40,7 +43,6 @@ import {
   SubcategoryMutationDto,
   UpdatePromotionSettingsDto,
   UpdatePlatformSettingsDto,
-  UpdateVendorSubscriptionDto,
 } from './dto';
 
 function promotionUploadInterceptor() {
@@ -52,30 +54,14 @@ function promotionUploadInterceptor() {
     {
       storage: diskStorage({
         destination: (_req, _file, callback) => {
-          const uploadDir = join(process.cwd(), 'uploads', 'tmp');
-          if (!existsSync(uploadDir)) {
-            mkdirSync(uploadDir, { recursive: true });
-          }
-          callback(null, uploadDir);
+          callback(null, ensureTemporaryUploadDir());
         },
         filename: (_req, file, callback) => {
-          const extension = file.originalname.includes('.')
-            ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-            : '.jpg';
-          callback(
-            null,
-            `promotion-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`,
-          );
+          callback(null, buildSafeUploadedImageName('promotion', file.mimetype));
         },
       }),
       fileFilter: (_req, file, callback) => {
-        const allowedMimeTypes = [
-          'image/jpeg',
-          'image/png',
-          'image/webp',
-          'image/gif',
-        ];
-        if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+        if (!isAllowedImageMimeType(file.mimetype)) {
           callback(new Error('Only image uploads are allowed'), false);
           return;
         }
@@ -490,6 +476,14 @@ export class AdminController {
     return this.adminService.getVendorById(id);
   }
 
+  @Get('vendors/:id/orders')
+  getVendorOrders(
+    @Param('id') id: string,
+    @Query('status') status?: string,
+  ) {
+    return this.adminService.getVendorOrders(id, status);
+  }
+
   @Get('products')
   getProducts() {
     return this.adminService.getProducts();
@@ -522,15 +516,6 @@ export class AdminController {
     @Param('id') id: string,
   ) {
     return this.adminService.resendVendorVerification(req.user.sub, id);
-  }
-
-  @Patch('vendors/:id/subscription')
-  updateVendorSubscription(
-    @Req() req: { user: AuthenticatedUser },
-    @Param('id') id: string,
-    @Body() dto: UpdateVendorSubscriptionDto,
-  ) {
-    return this.adminService.updateVendorSubscription(req.user.sub, id, dto);
   }
 
   @Patch('users/:id/activation')

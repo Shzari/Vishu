@@ -9,8 +9,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiRequest } from "@/lib/api";
-import type { BrandingSettings, CartItem, ProfileResponse, SessionUser } from "@/lib/types";
+import { apiRequest, getCookieSessionToken } from "@/lib/api";
+import type {
+  BrandingSettings,
+  CartItem,
+  Product,
+  ProfileResponse,
+  SessionUser,
+} from "@/lib/types";
 
 interface AuthContextValue {
   token: string | null;
@@ -19,8 +25,9 @@ interface AuthContextValue {
   currentRole: SessionUser["role"] | null;
   isAuthenticated: boolean;
   loading: boolean;
-  setSession: (token: string, user: SessionUser) => void;
+  setSession: (user: SessionUser) => void;
   clearSession: () => void;
+  logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -40,6 +47,13 @@ interface BrandingContextValue {
   branding: BrandingSettings;
 }
 
+interface FavoritesContextValue {
+  items: Product[];
+  isFavorite: (productId: string) => boolean;
+  toggleFavorite: (product: Product) => void;
+  removeFavorite: (productId: string) => void;
+}
+
 interface RemoteCartResponse {
   items: {
     productId: string;
@@ -57,6 +71,7 @@ interface RemoteCartResponse {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const CartContext = createContext<CartContextValue | undefined>(undefined);
 const BrandingContext = createContext<BrandingContextValue | undefined>(undefined);
+const FavoritesContext = createContext<FavoritesContextValue | undefined>(undefined);
 
 const defaultBranding: BrandingSettings = {
   siteName: "Vishu.shop",
@@ -64,18 +79,6 @@ const defaultBranding: BrandingSettings = {
   logoSvg: null,
   logoDataUrl: null,
 };
-
-function parseStoredValue<T>(value: string | null, fallback: T) {
-  if (!value) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function usePersistentState<T>(key: string, fallback: T) {
   const [state, setState] = useState<T>(() => {
@@ -105,18 +108,19 @@ function usePersistentState<T>(key: string, fallback: T) {
 }
 
 export function Providers({ children }: { children: ReactNode }) {
-  const [token, setToken] = usePersistentState<string | null>("vishu-token", null);
-  const [user, setUser] = usePersistentState<SessionUser | null>("vishu-user", null);
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [branding, setBranding] = useState<BrandingSettings>(defaultBranding);
   const [loading, setLoading] = useState(true);
   const [items, setItems] = usePersistentState<CartItem[]>("vishu-cart", []);
+  const [favoriteItems, setFavoriteItems] = usePersistentState<Product[]>("vishu-favorites", []);
   const [isCartOpen, setCartOpen] = useState(false);
   const [cartReady, setCartReady] = useState(false);
   const currentRole = profile?.role ?? user?.role ?? null;
   const isAuthenticated = !loading && Boolean(token && currentRole);
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     setToken(null);
     setUser(null);
     setProfile(null);
@@ -124,19 +128,26 @@ export function Providers({ children }: { children: ReactNode }) {
     setCartOpen(false);
     setCartReady(false);
     setLoading(false);
-  };
+  }, [setItems]);
 
-  const refreshProfile = async () => {
-    if (!token) {
-      setProfile(null);
-      setLoading(false);
-      return;
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest<{ message: string }>("/auth/logout", {
+        method: "POST",
+      });
+    } catch {
+      // Local state still clears even if the network request fails.
+    } finally {
+      clearSession();
     }
+  }, [clearSession]);
 
+  const refreshProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const nextProfile = await apiRequest<ProfileResponse>("/auth/me", undefined, token);
+      const nextProfile = await apiRequest<ProfileResponse>("/auth/me");
       setProfile(nextProfile);
+      setToken(getCookieSessionToken());
       setUser({
         sub: nextProfile.id,
         email: nextProfile.email,
@@ -147,38 +158,34 @@ export function Providers({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [clearSession]);
 
   useEffect(() => {
     void refreshProfile();
-  }, [token]);
+  }, [refreshProfile]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (!token) {
       return;
     }
 
-    const syncSession = (event: StorageEvent) => {
-      if (!event.key) {
-        return;
-      }
-
-      if (event.key === "vishu-token") {
-        setToken(parseStoredValue<string | null>(event.newValue, null));
-      }
-
-      if (event.key === "vishu-user") {
-        setUser(parseStoredValue<SessionUser | null>(event.newValue, null));
-      }
-
-      if (event.key === "vishu-cart") {
-        setItems(parseStoredValue<CartItem[]>(event.newValue, []));
+    const handleWindowFocus = () => {
+      void refreshProfile();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshProfile();
       }
     };
 
-    window.addEventListener("storage", syncSession);
-    return () => window.removeEventListener("storage", syncSession);
-  }, [setItems, setToken, setUser]);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshProfile, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,17 +314,19 @@ export function Providers({ children }: { children: ReactNode }) {
       currentRole,
       isAuthenticated,
       loading,
-      setSession: (nextToken, nextUser) => {
+      setSession: (nextUser) => {
         setLoading(true);
         setProfile(null);
         setCartReady(false);
-        setToken(nextToken);
+        setToken(getCookieSessionToken());
         setUser(nextUser);
+        void refreshProfile();
       },
       clearSession,
+      logout,
       refreshProfile,
     }),
-    [currentRole, isAuthenticated, loading, profile, token, user],
+    [clearSession, currentRole, isAuthenticated, loading, logout, profile, refreshProfile, token, user],
   );
 
   const cartValue = useMemo<CartContextValue>(
@@ -366,6 +375,33 @@ export function Providers({ children }: { children: ReactNode }) {
     [closeCart, isCartOpen, items, openCart, setItems, toggleCart],
   );
 
+  const favoriteIds = useMemo(
+    () => new Set(favoriteItems.map((item) => item.id)),
+    [favoriteItems],
+  );
+
+  const favoritesValue = useMemo<FavoritesContextValue>(
+    () => ({
+      items: favoriteItems,
+      isFavorite: (productId) => favoriteIds.has(productId),
+      toggleFavorite: (product) => {
+        setFavoriteItems((current) => {
+          if (current.some((entry) => entry.id === product.id)) {
+            return current.filter((entry) => entry.id !== product.id);
+          }
+
+          return [product, ...current];
+        });
+      },
+      removeFavorite: (productId) => {
+        setFavoriteItems((current) =>
+          current.filter((entry) => entry.id !== productId),
+        );
+      },
+    }),
+    [favoriteIds, favoriteItems, setFavoriteItems],
+  );
+
   const brandingValue = useMemo<BrandingContextValue>(
     () => ({
       branding,
@@ -376,7 +412,9 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <BrandingContext.Provider value={brandingValue}>
       <AuthContext.Provider value={authValue}>
-        <CartContext.Provider value={cartValue}>{children}</CartContext.Provider>
+        <FavoritesContext.Provider value={favoritesValue}>
+          <CartContext.Provider value={cartValue}>{children}</CartContext.Provider>
+        </FavoritesContext.Provider>
       </AuthContext.Provider>
     </BrandingContext.Provider>
   );
@@ -402,6 +440,14 @@ export function useBranding() {
   const value = useContext(BrandingContext);
   if (!value) {
     throw new Error("useBranding must be used within Providers");
+  }
+  return value;
+}
+
+export function useFavorites() {
+  const value = useContext(FavoritesContext);
+  if (!value) {
+    throw new Error("useFavorites must be used within Providers");
   }
   return value;
 }

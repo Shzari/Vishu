@@ -20,9 +20,11 @@ apps/*/.env.*
 
 # local workspace state
 .codex/
+.claude/
 
 # uploads and generated media
 apps/api/uploads/
+apps/api/.tmp/
 
 # logs
 *.log
@@ -39,3 +41,5 @@ Thumbs.db
 cd
 dir
 npm
+tailscale
+tmp_admin_bundle.css

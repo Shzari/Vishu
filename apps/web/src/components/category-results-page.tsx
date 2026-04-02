@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { startTransition, useEffect, useMemo, useState } from "react";
+import { useCart } from "@/components/providers";
+import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { StorefrontCategoryNav } from "@/components/storefront-category-nav";
 import { assetUrl, apiRequest, formatCurrency } from "@/lib/api";
 import {
@@ -74,6 +76,7 @@ export function CategoryResultsPage({
   department?: string;
   category?: string;
 }) {
+  const { addItem } = useCart();
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -342,6 +345,9 @@ export function CategoryResultsPage({
     mode === "new"
       ? "New Arrivals"
       : getStorefrontCategoryHeading(currentDepartment, currentCategory);
+  const visibleInStockCount = visibleProducts.filter(
+    (product) => product.stock > 0,
+  ).length;
   function replaceQuery(updates: Record<string, string | null>) {
     const nextQuery = buildQueryString(searchParams, updates);
     startTransition(() => {
@@ -408,6 +414,25 @@ export function CategoryResultsPage({
       <section className="category-results-head">
         <div className="category-results-head-copy">
           <h1 className="category-results-title">{pageTitle}</h1>
+          <p className="category-results-copy">
+            {mode === "new"
+              ? "Fresh marketplace arrivals with the same catalog controls used across the storefront."
+              : `Browse ${formatCatalogLabel(currentCategory)} with clearer filters, stronger product context, and faster decision points.`}
+          </p>
+          <div className="mini-stats category-results-mini-stats">
+            <div className="mini-stat">
+              <span>Shown now</span>
+              <strong>{visibleProducts.length}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>In stock</span>
+              <strong>{visibleInStockCount}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Brands</span>
+              <strong>{brandOptions.length}</strong>
+            </div>
+          </div>
         </div>
 
         <div className="category-results-controls">
@@ -649,6 +674,7 @@ export function CategoryResultsPage({
             <div className="catalog-grid category-results-grid">
               {visibleProducts.map((product) => (
                 <article key={product.id} className="product-card">
+                  <FavoriteStarButton product={product} className="product-card-favorite" />
                   <Link
                     href={`/products/${product.id}`}
                     className="product-card-link"
@@ -687,8 +713,63 @@ export function CategoryResultsPage({
                           {formatCurrency(product.price)}
                         </span>
                       </div>
+                      <div
+                        className={
+                          product.stock > 0
+                            ? "product-stock-line"
+                            : "product-stock-line product-stock-line-empty"
+                        }
+                      >
+                        {product.stock > 0
+                          ? `${product.stock} available now`
+                          : "Currently unavailable"}
+                      </div>
                     </div>
                   </Link>
+                  <div className="product-card-foot">
+                    {product.vendor ? (
+                      <Link
+                        className="product-card-vendor"
+                        href={`/shops/${product.vendor.id}`}
+                      >
+                        {product.vendor.shopName}
+                      </Link>
+                    ) : (
+                      <span className="product-card-vendor muted">
+                        Marketplace listing
+                      </span>
+                    )}
+                    <div className="product-card-actions">
+                      <Link
+                        className="product-action-button product-action-button-secondary"
+                        href={`/products/${product.id}`}
+                      >
+                        Open product
+                      </Link>
+                      <button
+                        type="button"
+                        className="product-action-button button"
+                        onClick={() =>
+                          addItem({
+                            productId: product.id,
+                            title: product.title,
+                            price: product.price,
+                            image: product.images[0],
+                            color: product.color ?? product.colors[0]?.name ?? null,
+                            size:
+                              product.size ??
+                              product.sizeVariants[0]?.label ??
+                              null,
+                            quantity: 1,
+                            stock: product.stock,
+                          })
+                        }
+                        disabled={product.stock === 0}
+                      >
+                        {product.stock === 0 ? "Sold out" : "Add to cart"}
+                      </button>
+                    </div>
+                  </div>
                 </article>
               ))}
             </div>

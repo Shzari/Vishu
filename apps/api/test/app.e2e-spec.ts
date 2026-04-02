@@ -1,8 +1,17 @@
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, type TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import sql from 'mssql/msnodesqlv8';
 import request from 'supertest';
+import {
+  AUTH_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  CSRF_HEADER_VALUE,
+  hasAuthCookie,
+  isSafeHttpMethod,
+  isTrustedBrowserOrigin,
+} from '../src/common/security/security.utils';
 import { MailService } from '../src/mail/mail.service';
 
 const DB_NAME = 'vishu_e2e';
@@ -34,7 +43,6 @@ async function resetDatabase() {
     'DELETE FROM dbo.admin_activity_logs',
     'DELETE FROM dbo.homepage_hero_slides',
     'DELETE FROM dbo.product_images',
-    'DELETE FROM dbo.vendor_subscriptions',
     'DELETE FROM dbo.vendor_payouts',
     'DELETE FROM dbo.order_items',
     'DELETE FROM dbo.orders',
@@ -99,6 +107,78 @@ async function registerVerifyAndLoginCustomer(
   return { registerResponse, loginResponse };
 }
 
+async function seedVerifiedCustomer(
+  email: string,
+  password: string,
+  options: {
+    fullName?: string;
+    phoneNumber?: string;
+  } = {},
+) {
+  const passwordHash = await bcrypt.hash(password, 10);
+  const pool = await createPool(DB_NAME);
+
+  const createdUser = await pool
+    .request()
+    .input('email', email)
+    .input('fullName', options.fullName ?? null)
+    .input('phoneNumber', options.phoneNumber ?? null)
+    .input('passwordHash', passwordHash).query<{ id: string }>(`
+      INSERT INTO dbo.users (
+        email,
+        full_name,
+        phone_number,
+        password_hash,
+        role,
+        is_active,
+        email_verified_at
+      )
+      OUTPUT INSERTED.id
+      VALUES (
+        @email,
+        @fullName,
+        @phoneNumber,
+        @passwordHash,
+        'customer',
+        1,
+        SYSDATETIME()
+      )
+    `);
+
+  await pool.close();
+  return createdUser.recordset[0].id;
+}
+
+function attachBootstrapSecurityMiddleware(app: INestApplication) {
+  const configService = app.get(ConfigService);
+
+  app.use((req, res, next) => {
+    const hasBearerToken = req.headers.authorization?.startsWith('Bearer ');
+    const hasCookieSession = hasAuthCookie(req.headers.cookie);
+    const requiresCsrfProtection =
+      !isSafeHttpMethod(req.method) && hasCookieSession && !hasBearerToken;
+
+    if (requiresCsrfProtection) {
+      const csrfHeader = req.header(CSRF_HEADER_NAME);
+      const trustedOrigin = isTrustedBrowserOrigin(
+        req.header('origin'),
+        req.header('referer'),
+        configService,
+      );
+
+      if (csrfHeader !== CSRF_HEADER_VALUE || !trustedOrigin) {
+        res.status(403).json({
+          message:
+            'Blocked a state-changing cookie-authenticated request that did not pass origin verification.',
+        });
+        return;
+      }
+    }
+
+    next();
+  });
+}
+
 describe('Marketplace API (e2e)', () => {
   let app: INestApplication;
 
@@ -118,6 +198,7 @@ describe('Marketplace API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    attachBootstrapSecurityMiddleware(app);
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -188,6 +269,65 @@ describe('Marketplace API (e2e)', () => {
     expect(meResponse.body.role).toBe('customer');
   });
 
+  it('supports cookie-based sessions for profile lookups and logout', async () => {
+    const email = 'cookie-session@example.com';
+    const password = 'secret123';
+
+    await seedVerifiedCustomer(email, password, {
+      fullName: 'Cookie Session Customer',
+    });
+
+    const agent = request.agent(app.getHttpServer());
+    const loginResponse = await agent
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(201);
+
+    expect(loginResponse.headers['set-cookie']).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`${AUTH_COOKIE_NAME}=`),
+      ]),
+    );
+
+    const meResponse = await agent.get('/auth/me').expect(200);
+    expect(meResponse.body.email).toBe(email);
+    expect(meResponse.body.role).toBe('customer');
+
+    await agent
+      .post('/auth/logout')
+      .set(CSRF_HEADER_NAME, CSRF_HEADER_VALUE)
+      .set('Origin', 'http://localhost:3001')
+      .expect(201);
+
+    await agent.get('/auth/me').expect(401);
+  });
+
+  it('requires csrf proof for cookie-authenticated profile updates', async () => {
+    const email = 'cookie-csrf@example.com';
+    const password = 'secret123';
+
+    await seedVerifiedCustomer(email, password, {
+      fullName: 'Before Update',
+    });
+
+    const agent = request.agent(app.getHttpServer());
+    await agent.post('/auth/login').send({ email, password }).expect(201);
+
+    await agent
+      .patch('/account/profile')
+      .send({ fullName: 'Blocked Update' })
+      .expect(403);
+
+    await agent
+      .patch('/account/profile')
+      .set(CSRF_HEADER_NAME, CSRF_HEADER_VALUE)
+      .set('Origin', 'http://localhost:3001')
+      .send({ fullName: 'Allowed Update' })
+      .expect(200);
+
+    await agent.get('/auth/me').expect(200);
+  });
+
   it('shows public vendor identity in storefront product and shop responses', async () => {
     const pool = await createPool(DB_NAME);
 
@@ -201,10 +341,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Hidden Shop', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Hidden Shop', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -246,7 +386,7 @@ describe('Marketplace API (e2e)', () => {
     expect(vendorResponse.body.products[0].department).toBe('women');
   });
 
-  it('shows approved subscribed shops publicly even before they upload products', async () => {
+  it('shows approved shops publicly even before they upload products', async () => {
     const pool = await createPool(DB_NAME);
 
     const vendorUser = await pool.request().query<{ id: string }>(`
@@ -259,10 +399,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Fresh Shop', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Fresh Shop', 1, 1, SYSDATETIME())
     `);
 
     await pool.close();
@@ -370,7 +510,7 @@ describe('Marketplace API (e2e)', () => {
     await request(app.getHttpServer()).get('/products/vendor/me').expect(401);
   });
 
-  it('hides products from vendors whose subscription has expired', async () => {
+  it('hides products from vendors who are not active', async () => {
     const pool = await createPool(DB_NAME);
 
     const vendorUser = await pool.request().query<{ id: string }>(`
@@ -383,10 +523,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Expired Subscription Shop', 'monthly', 'expired', DATEADD(MONTH, -2, SYSDATETIME()), DATEADD(DAY, -1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Inactive Shop', 0, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -434,10 +574,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Listing Control Shop', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Listing Control Shop', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -591,10 +731,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, low_stock_threshold, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, low_stock_threshold, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Bulk Stock Shop', 5, 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Bulk Stock Shop', 5, 1, 1, SYSDATETIME())
     `);
 
     const firstProduct = await pool
@@ -670,10 +810,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Order Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Order Vendor', 1, 1, SYSDATETIME())
     `);
 
     const productOne = await pool
@@ -841,10 +981,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, low_stock_threshold, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, low_stock_threshold, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Low Stock Shop', 5, 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Low Stock Shop', 5, 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -945,10 +1085,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Post Purchase Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Post Purchase Vendor', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -1049,10 +1189,6 @@ describe('Marketplace API (e2e)', () => {
       UPDATE dbo.vendors
       SET is_verified = 1,
           is_active = 1,
-          subscription_plan = 'monthly',
-          subscription_status = 'active',
-          subscription_started_at = SYSDATETIME(),
-          subscription_ends_at = DATEADD(MONTH, 1, SYSDATETIME()),
           approved_at = SYSDATETIME()
       WHERE shop_name = 'Images Vendor'
     `);
@@ -1150,10 +1286,6 @@ describe('Marketplace API (e2e)', () => {
       UPDATE dbo.vendors
       SET is_verified = 1,
           is_active = 1,
-          subscription_plan = 'monthly',
-          subscription_status = 'active',
-          subscription_started_at = SYSDATETIME(),
-          subscription_ends_at = DATEADD(MONTH, 1, SYSDATETIME()),
           approved_at = SYSDATETIME()
       WHERE shop_name = 'Department Vendor'
     `);
@@ -1213,10 +1345,6 @@ describe('Marketplace API (e2e)', () => {
       UPDATE dbo.vendors
       SET is_verified = 1,
           is_active = 1,
-          subscription_plan = 'monthly',
-          subscription_status = 'active',
-          subscription_started_at = SYSDATETIME(),
-          subscription_ends_at = DATEADD(MONTH, 1, SYSDATETIME()),
           approved_at = SYSDATETIME()
       WHERE shop_name = 'Normalized Vendor'
     `);
@@ -1278,10 +1406,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Admin Visible Shop', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Admin Visible Shop', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -1362,10 +1490,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Ops Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Ops Vendor', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -1474,43 +1602,6 @@ describe('Marketplace API (e2e)', () => {
     expect(vendorDetail.body.shopName).toBe('Ops Vendor');
     expect(vendorDetail.body.metrics.productCount).toBe(1);
 
-    const grantedSubscription = await request(app.getHttpServer())
-      .patch(`/admin/vendors/${vendor.recordset[0].id}/subscription`)
-      .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
-      .send({
-        status: 'active',
-        planType: 'yearly',
-        note: 'Manual yearly grant',
-      })
-      .expect(200);
-
-    expect(grantedSubscription.body.subscription.planType).toBe('yearly');
-    expect(grantedSubscription.body.subscription.status).toBe('active');
-    expect(grantedSubscription.body.subscriptionHistory[0].planType).toBe(
-      'yearly',
-    );
-    expect(grantedSubscription.body.subscriptionHistory[0].adminNote).toBe(
-      'Manual yearly grant',
-    );
-    expect(grantedSubscription.body.subscriptionHistory[0].adminEmail).toBe(
-      'ops-admin@example.com',
-    );
-
-    const cutSubscription = await request(app.getHttpServer())
-      .patch(`/admin/vendors/${vendor.recordset[0].id}/subscription`)
-      .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
-      .send({
-        status: 'expired',
-        note: 'Contract ended',
-      })
-      .expect(200);
-
-    expect(cutSubscription.body.subscription.status).toBe('expired');
-    expect(cutSubscription.body.subscriptionHistory[0].status).toBe('expired');
-    expect(cutSubscription.body.subscriptionHistory[0].adminNote).toBe(
-      'Contract ended',
-    );
-
     const orderDetail = await request(app.getHttpServer())
       .get(`/admin/orders/${createdOrder.body.id}`)
       .set('Authorization', `Bearer ${adminLogin.body.accessToken}`)
@@ -1540,10 +1631,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Detail Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Detail Vendor', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -1751,9 +1842,9 @@ describe('Marketplace API (e2e)', () => {
 
     await pool.request().query(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
-      SELECT TOP 1 id, 'Settings Vendor Shop', 'monthly', 'expired', DATEADD(MONTH, -2, SYSDATETIME()), DATEADD(DAY, -1, SYSDATETIME()), 1, 1, SYSDATETIME()
+      SELECT TOP 1 id, 'Settings Vendor Shop', 1, 1, SYSDATETIME()
       FROM dbo.users
       WHERE email = 'settings-vendor@example.com'
     `);
@@ -1835,9 +1926,6 @@ describe('Marketplace API (e2e)', () => {
       'Orders dispatch within 2 business days.',
     );
     expect(updatedVendorSettings.body.vendor.lowStockThreshold).toBe(8);
-    expect(updatedVendorSettings.body.vendor.subscription.status).toBe(
-      'expired',
-    );
 
     const imagePayload = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm1cAAAAASUVORK5CYII=',
@@ -1869,26 +1957,6 @@ describe('Marketplace API (e2e)', () => {
     expect(logoUploadResponse.body.vendor.logoUrl).toMatch(
       /^\/media\/vendors\/vendor-.*\/branding\/logo-/,
     );
-
-    const monthlySubscription = await request(app.getHttpServer())
-      .post('/account/vendor-subscription')
-      .set('Authorization', `Bearer ${vendorLogin.body.accessToken}`)
-      .send({ planType: 'monthly' })
-      .expect(201);
-
-    expect(monthlySubscription.body.vendor.subscription.planType).toBe(
-      'monthly',
-    );
-    expect(monthlySubscription.body.vendor.subscription.status).toBe('active');
-    expect(
-      monthlySubscription.body.vendor.subscriptionHistory.length,
-    ).toBeGreaterThan(0);
-
-    await request(app.getHttpServer())
-      .post('/account/vendor-subscription')
-      .set('Authorization', `Bearer ${vendorLogin.body.accessToken}`)
-      .send({ planType: 'yearly' })
-      .expect(400);
 
     await request(app.getHttpServer())
       .get('/account/me')
@@ -2220,11 +2288,10 @@ describe('Marketplace API (e2e)', () => {
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
         user_id, shop_name, bank_account_name, bank_name, bank_iban,
-        subscription_plan, subscription_status, subscription_started_at, subscription_ends_at,
         is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Payout Shop', 'Payout Vendor', 'Raiffeisen', 'AL47212110090000000235698741', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Payout Shop', 'Payout Vendor', 'Raiffeisen', 'AL47212110090000000235698741', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool
@@ -2333,10 +2400,10 @@ describe('Marketplace API (e2e)', () => {
       .request()
       .input('userId', vendorUser.recordset[0].id).query<{ id: string }>(`
       INSERT INTO dbo.vendors (
-        user_id, shop_name, subscription_plan, subscription_status, subscription_started_at, subscription_ends_at, is_active, is_verified, approved_at
+        user_id, shop_name, is_active, is_verified, approved_at
       )
       OUTPUT INSERTED.id
-      VALUES (@userId, 'Workflow Vendor', 'monthly', 'active', SYSDATETIME(), DATEADD(MONTH, 1, SYSDATETIME()), 1, 1, SYSDATETIME())
+      VALUES (@userId, 'Workflow Vendor', 1, 1, SYSDATETIME())
     `);
 
     const product = await pool

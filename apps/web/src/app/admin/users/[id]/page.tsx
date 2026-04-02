@@ -318,7 +318,7 @@ export default function AdminUserDetailPage() {
               <div className="inline-actions" style={{ justifyContent: "space-between" }}>
                 <div>
                   <Link className="table-link" href={`/admin/orders/${order.id}`}>
-                    Order {order.id}
+                    Order {order.orderNumber}
                   </Link>
                   <p className="muted">{new Date(order.createdAt).toLocaleString()}</p>
                   {order.specialRequest && <p className="muted">Request: {order.specialRequest}</p>}

@@ -29,6 +29,16 @@ export class UpdateAccountProfileDto {
   email?: string;
 }
 
+export class UpdateEmailPreferencesDto {
+  @IsOptional()
+  @IsBoolean()
+  orderUpdatesEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  marketingEmailsEnabled?: boolean;
+}
+
 export class ChangePasswordDto {
   @IsString()
   @IsNotEmpty()
@@ -114,12 +124,6 @@ export class UpdateVendorProfileDto {
   @Min(0)
   @Max(999)
   lowStockThreshold?: number;
-}
-
-export class ActivateVendorSubscriptionDto {
-  @IsString()
-  @IsIn(['monthly', 'yearly'])
-  planType!: 'monthly' | 'yearly';
 }
 
 export class CreateVendorTeamInviteDto {
@@ -214,15 +218,6 @@ export class CreatePaymentMethodDto {
 }
 
 export class UpdatePaymentMethodDto {
-  @IsOptional()
-  @IsString()
-  nickname?: string;
-
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  cardholderName?: string;
-
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;

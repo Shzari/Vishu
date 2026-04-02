@@ -41,7 +41,6 @@ This is the always-current SQL Server structure guide for the Vishu project. Use
 - `vendors`
   - one vendor shop profile per owner/shop
   - contains vendor business/profile fields
-  - still contains some older subscription columns, but subscription is not an active product direction right now
 - `vendor_team_members`
   - shop-level access records
   - roles are `shop_holder` and `employee`

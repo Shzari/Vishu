@@ -3,11 +3,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { AuthService } from '../auth/auth.service';
+import {
+  assertStoredImageFileMatchesMimeType,
+  generateOpaqueToken,
+  getSafeImageExtensionForMimeType,
+  hashOpaqueToken,
+} from '../common/security/security.utils';
+import {
+  isStoredSecretProtected,
+  protectStoredSecret,
+} from '../common/security/stored-secrets.utils';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
 import { OrdersService } from '../orders/orders.service';
@@ -24,7 +34,6 @@ import {
   SizeTypeMutationDto,
   SubcategoryMutationDto,
   UpdatePlatformSettingsDto,
-  UpdateVendorSubscriptionDto,
 } from './dto';
 
 const DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS = 6;
@@ -33,6 +42,7 @@ type UploadedFile = Express.Multer.File;
 @Injectable()
 export class AdminService {
   constructor(
+    private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly ordersService: OrdersService,
     private readonly productsService: ProductsService,
@@ -60,8 +70,6 @@ export class AdminService {
         total_admins: number;
         total_vendors: number;
         active_vendors: number;
-        subscribed_vendors: number;
-        subscriptions_expiring_soon: number;
         pending_vendor_approvals: number;
         unread_notifications: number;
       }>(
@@ -71,8 +79,6 @@ export class AdminService {
            SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS total_admins,
            (SELECT COUNT(*) FROM vendors) AS total_vendors,
            (SELECT COUNT(*) FROM vendors WHERE is_active = 1) AS active_vendors,
-           (SELECT COUNT(*) FROM vendors v WHERE ${this.activeSubscriptionClause('v')}) AS subscribed_vendors,
-           (SELECT COUNT(*) FROM vendors v WHERE ${this.activeSubscriptionClause('v')} AND ${this.effectiveEndsAtExpression('v')} < DATEADD(DAY, 14, SYSDATETIME())) AS subscriptions_expiring_soon,
            (SELECT COUNT(*) FROM vendors WHERE is_verified = 1 AND is_active = 0) AS pending_vendor_approvals,
            (SELECT COUNT(*) FROM admin_notifications WHERE read_at IS NULL) AS unread_notifications
          FROM users`,
@@ -177,6 +183,7 @@ export class AdminService {
       ),
       this.databaseService.query<{
         id: string;
+        order_number: string | null;
         total_price: number | string;
         payment_method: string;
         payment_status: string;
@@ -186,7 +193,7 @@ export class AdminService {
         created_at: Date;
         customer_email: string;
       }>(
-        `SELECT TOP 6 o.id, o.total_price, o.payment_method, o.payment_status, o.cod_status_note, o.cod_updated_at, o.status, o.created_at, COALESCE(u.email, o.guest_email) AS customer_email
+        `SELECT TOP 6 o.id, o.order_number, o.total_price, o.payment_method, o.payment_status, o.cod_status_note, o.cod_updated_at, o.status, o.created_at, COALESCE(u.email, o.guest_email) AS customer_email
          FROM orders o
          LEFT JOIN users u ON u.id = o.customer_id
          ORDER BY o.created_at DESC`,
@@ -241,8 +248,6 @@ export class AdminService {
         totalAdmins: totals.total_admins,
         totalVendors: totals.total_vendors,
         activeVendors: totals.active_vendors,
-        subscribedVendors: totals.subscribed_vendors,
-        subscriptionsExpiringSoon: totals.subscriptions_expiring_soon,
         pendingVendorApprovals: totals.pending_vendor_approvals,
         unreadNotifications: totals.unread_notifications,
         totalOrders:
@@ -301,6 +306,7 @@ export class AdminService {
       })),
       recentOrders: recentOrders.rows.map((row) => ({
         id: row.id,
+        orderNumber: row.order_number ?? row.id,
         totalPrice: Number(row.total_price),
         paymentMethod: row.payment_method,
         paymentStatus: row.payment_status,
@@ -489,6 +495,16 @@ export class AdminService {
       vendor_verification_emails_enabled: boolean;
       admin_vendor_approval_emails_enabled: boolean;
       password_reset_emails_enabled: boolean;
+      payment_mode: 'test' | 'live';
+      cash_on_delivery_enabled: boolean;
+      card_payments_enabled: boolean;
+      guest_checkout_enabled: boolean;
+      stripe_test_publishable_key: string | null;
+      stripe_test_secret_key: string | null;
+      stripe_test_webhook_signing_secret: string | null;
+      stripe_live_publishable_key: string | null;
+      stripe_live_secret_key: string | null;
+      stripe_live_webhook_signing_secret: string | null;
       homepage_hero_autoplay_enabled: boolean;
       homepage_hero_interval_seconds: number | null;
     }>(
@@ -503,6 +519,16 @@ export class AdminService {
          vendor_verification_emails_enabled,
          admin_vendor_approval_emails_enabled,
          password_reset_emails_enabled,
+         payment_mode,
+         cash_on_delivery_enabled,
+         card_payments_enabled,
+         guest_checkout_enabled,
+         stripe_test_publishable_key,
+         stripe_test_secret_key,
+         stripe_test_webhook_signing_secret,
+         stripe_live_publishable_key,
+         stripe_live_secret_key,
+         stripe_live_webhook_signing_secret,
          homepage_hero_autoplay_enabled,
          homepage_hero_interval_seconds
        FROM platform_settings
@@ -510,6 +536,51 @@ export class AdminService {
     );
 
     const row = result.rows[0];
+    const paymentMode: 'test' | 'live' =
+      row?.payment_mode === 'live' ? 'live' : 'test';
+    const smtpPasswordManagedByEnv = Boolean(
+      this.configService.get<string>('SMTP_PASS')?.trim(),
+    );
+    const stripeTestPublishableKey =
+      this.configService.get<string>('STRIPE_TEST_PUBLISHABLE_KEY')?.trim() ||
+      row?.stripe_test_publishable_key?.trim() ||
+      null;
+    const stripeLivePublishableKey =
+      this.configService.get<string>('STRIPE_LIVE_PUBLISHABLE_KEY')?.trim() ||
+      row?.stripe_live_publishable_key?.trim() ||
+      null;
+    const stripeTestSecretConfigured = Boolean(
+      this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() ||
+        row?.stripe_test_secret_key,
+    );
+    const stripeLiveSecretConfigured = Boolean(
+      this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() ||
+        row?.stripe_live_secret_key,
+    );
+    const stripeTestWebhookConfigured = Boolean(
+      this.configService
+        .get<string>('STRIPE_TEST_WEBHOOK_SIGNING_SECRET')
+        ?.trim() || row?.stripe_test_webhook_signing_secret,
+    );
+    const stripeLiveWebhookConfigured = Boolean(
+      this.configService
+        .get<string>('STRIPE_LIVE_WEBHOOK_SIGNING_SECRET')
+        ?.trim() || row?.stripe_live_webhook_signing_secret,
+    );
+    if (row?.smtp_pass && !isStoredSecretProtected(row.smtp_pass)) {
+      const protectedSecret = protectStoredSecret(
+        row.smtp_pass,
+        this.configService,
+      );
+      await this.databaseService.query(
+        `UPDATE platform_settings
+         SET smtp_pass = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = 1`,
+        [protectedSecret],
+      );
+      row.smtp_pass = protectedSecret;
+    }
     const heroSlides = await this.getHomepageHeroSlidesForAdmin();
     const activityLog = await this.getRecentAdminActivity(12);
     return {
@@ -518,7 +589,9 @@ export class AdminService {
         smtpPort: row?.smtp_port ?? null,
         smtpSecure: Boolean(row?.smtp_secure),
         smtpUser: row?.smtp_user ?? null,
-        smtpPasswordConfigured: Boolean(row?.smtp_pass),
+        smtpPasswordConfigured:
+          smtpPasswordManagedByEnv || Boolean(row?.smtp_pass),
+        smtpPasswordManagedByEnv,
         mailFrom: row?.mail_from ?? null,
         appBaseUrl: row?.app_base_url ?? null,
         vendorVerificationEmailsEnabled: row
@@ -530,6 +603,43 @@ export class AdminService {
         passwordResetEmailsEnabled: row
           ? Boolean(row.password_reset_emails_enabled)
           : true,
+      },
+      payment: {
+        mode: paymentMode,
+        cashOnDeliveryEnabled: row
+          ? Boolean(row.cash_on_delivery_enabled)
+          : true,
+        cardPaymentsEnabled: row ? Boolean(row.card_payments_enabled) : false,
+        guestCheckoutEnabled: row ? Boolean(row.guest_checkout_enabled) : true,
+        stripe: {
+          test: {
+            publishableKey: stripeTestPublishableKey,
+            secretKeyConfigured: stripeTestSecretConfigured,
+            webhookSigningSecretConfigured: stripeTestWebhookConfigured,
+          },
+          live: {
+            publishableKey: stripeLivePublishableKey,
+            secretKeyConfigured: stripeLiveSecretConfigured,
+            webhookSigningSecretConfigured: stripeLiveWebhookConfigured,
+          },
+        },
+        status: {
+          activeMode: paymentMode,
+          activePublishableKey:
+            paymentMode === 'live'
+              ? stripeLivePublishableKey
+              : stripeTestPublishableKey,
+          activeConfigurationComplete:
+            paymentMode === 'live'
+              ? Boolean(stripeLivePublishableKey && stripeLiveSecretConfigured)
+              : Boolean(stripeTestPublishableKey && stripeTestSecretConfigured),
+          activeWebhookConfigured:
+            paymentMode === 'live'
+              ? stripeLiveWebhookConfigured
+              : stripeTestWebhookConfigured,
+          lastEvent: null,
+        },
+        logs: [],
       },
       homepageHero: {
         autoRotate: row ? Boolean(row.homepage_hero_autoplay_enabled) : true,
@@ -581,7 +691,10 @@ export class AdminService {
     } else if (dto.smtpPassword !== undefined) {
       const normalizedPassword = dto.smtpPassword.trim();
       if (normalizedPassword) {
-        pushUpdate('smtp_pass', normalizedPassword);
+        pushUpdate(
+          'smtp_pass',
+          protectStoredSecret(normalizedPassword, this.configService),
+        );
         changedAreas.push('SMTP password');
       }
     }
@@ -618,6 +731,42 @@ export class AdminService {
         dto.passwordResetEmailsEnabled,
       );
       changedAreas.push('password reset email switch');
+    }
+
+    if (dto.paymentMode !== undefined) {
+      pushUpdate('payment_mode', dto.paymentMode);
+      changedAreas.push('payment mode');
+    }
+
+    if (dto.cashOnDeliveryEnabled !== undefined) {
+      pushUpdate('cash_on_delivery_enabled', dto.cashOnDeliveryEnabled);
+      changedAreas.push('cash on delivery switch');
+    }
+
+    if (dto.cardPaymentsEnabled !== undefined) {
+      pushUpdate('card_payments_enabled', dto.cardPaymentsEnabled);
+      changedAreas.push('card payments switch');
+    }
+
+    if (dto.guestCheckoutEnabled !== undefined) {
+      pushUpdate('guest_checkout_enabled', dto.guestCheckoutEnabled);
+      changedAreas.push('guest checkout switch');
+    }
+
+    if (dto.stripeTestPublishableKey !== undefined) {
+      pushUpdate(
+        'stripe_test_publishable_key',
+        dto.stripeTestPublishableKey.trim() || null,
+      );
+      changedAreas.push('Stripe test publishable key');
+    }
+
+    if (dto.stripeLivePublishableKey !== undefined) {
+      pushUpdate(
+        'stripe_live_publishable_key',
+        dto.stripeLivePublishableKey.trim() || null,
+      );
+      changedAreas.push('Stripe live publishable key');
     }
 
     if (!updates.length) {
@@ -1879,230 +2028,6 @@ export class AdminService {
     }));
   }
 
-  async updateVendorSubscription(
-    adminUserId: string,
-    vendorId: string,
-    dto: UpdateVendorSubscriptionDto,
-  ) {
-    const vendor = await this.databaseService.query<{
-      id: string;
-      shop_name: string;
-      subscription_plan: 'monthly' | 'yearly' | null;
-      subscription_status: 'inactive' | 'active' | 'expired';
-      subscription_started_at: Date | null;
-      subscription_ends_at: Date | null;
-      subscription_override_plan: 'monthly' | 'yearly' | null;
-      subscription_override_status: 'active' | 'expired' | null;
-      subscription_override_started_at: Date | null;
-      subscription_override_ends_at: Date | null;
-      subscription_override_note: string | null;
-      subscription_override_updated_at: Date | null;
-    }>(
-      `SELECT TOP 1
-         id,
-         shop_name,
-         subscription_plan,
-         subscription_status,
-         subscription_started_at,
-         subscription_ends_at,
-         subscription_override_plan,
-         subscription_override_status,
-         subscription_override_started_at,
-         subscription_override_ends_at,
-         subscription_override_note,
-         subscription_override_updated_at
-       FROM vendors
-       WHERE id = $1`,
-      [vendorId],
-    );
-
-    const current = vendor.rows[0];
-    if (!current) {
-      throw new NotFoundException('Vendor not found');
-    }
-
-    const note = dto.note?.trim() || null;
-    const now = new Date();
-    const nowSql = this.formatSqlDateTime(now);
-
-    await this.databaseService.withTransaction(async (client) => {
-      if (dto.status === 'auto') {
-        await client.query(
-          `UPDATE vendors
-           SET subscription_override_plan = NULL,
-               subscription_override_status = NULL,
-               subscription_override_started_at = NULL,
-               subscription_override_ends_at = NULL,
-               subscription_override_note = NULL,
-               subscription_override_updated_at = SYSDATETIME(),
-               updated_at = SYSDATETIME()
-           WHERE id = $1`,
-          [vendorId],
-        );
-        await this.recordAdminActivity(
-          adminUserId,
-          {
-            actionType: 'vendor_subscription_override_updated',
-            entityType: 'vendor',
-            entityId: vendorId,
-            entityLabel: current.shop_name,
-            description:
-              'Returned vendor subscription control to automatic mode.',
-            metadata: {
-              status: dto.status,
-              note,
-            },
-          },
-          client,
-        );
-        return;
-      }
-
-      if (dto.status === 'active') {
-        if (!dto.planType) {
-          throw new BadRequestException(
-            'Plan type is required when enabling a subscription',
-          );
-        }
-
-        const currentEffective = this.resolveEffectiveSubscription(current);
-        const activeUntil =
-          currentEffective.status === 'active' &&
-          currentEffective.endsAt &&
-          currentEffective.endsAt > now
-            ? currentEffective.endsAt
-            : null;
-        const chargeStartsAt = activeUntil ?? now;
-        const nextEndsAt = new Date(chargeStartsAt.getTime());
-
-        if (dto.planType === 'yearly') {
-          nextEndsAt.setFullYear(nextEndsAt.getFullYear() + 1);
-        } else {
-          nextEndsAt.setMonth(nextEndsAt.getMonth() + 1);
-        }
-
-        const normalizedStartedAt = this.formatSqlDateTime(
-          activeUntil ? (currentEffective.startedAt ?? now) : now,
-        );
-        const normalizedChargeStartsAt = this.formatSqlDateTime(chargeStartsAt);
-        const normalizedEndsAt = this.formatSqlDateTime(nextEndsAt);
-
-        await client.query(
-          `UPDATE vendors
-           SET subscription_override_plan = $1,
-               subscription_override_status = 'active',
-               subscription_override_started_at = $2,
-               subscription_override_ends_at = $3,
-               subscription_override_note = $4,
-               subscription_override_updated_at = SYSDATETIME(),
-               updated_at = SYSDATETIME()
-           WHERE id = $5`,
-          [dto.planType, normalizedStartedAt, normalizedEndsAt, note, vendorId],
-        );
-
-        await client.query(
-          `INSERT INTO vendor_subscriptions (
-             vendor_id,
-             plan_type,
-             status,
-             amount,
-             admin_user_id,
-             admin_note,
-             starts_at,
-             ends_at
-           )
-           VALUES ($1, $2, 'active', 0, $3, $4, $5, $6)`,
-          [
-            vendorId,
-            dto.planType,
-            adminUserId,
-            note,
-            normalizedChargeStartsAt,
-            normalizedEndsAt,
-          ],
-        );
-
-        await this.recordAdminActivity(
-          adminUserId,
-          {
-            actionType: 'vendor_subscription_override_updated',
-            entityType: 'vendor',
-            entityId: vendorId,
-            entityLabel: current.shop_name,
-            description: `Applied a manual ${dto.planType} subscription override for the vendor.`,
-            metadata: {
-              status: dto.status,
-              planType: dto.planType,
-              note,
-            },
-          },
-          client,
-        );
-
-        return;
-      }
-
-      await client.query(
-        `UPDATE vendors
-         SET subscription_override_plan = $1,
-             subscription_override_status = 'expired',
-             subscription_override_started_at = COALESCE(subscription_override_started_at, $2),
-             subscription_override_ends_at = $2,
-             subscription_override_note = $3,
-             subscription_override_updated_at = SYSDATETIME(),
-             updated_at = SYSDATETIME()
-         WHERE id = $4`,
-        [
-          current.subscription_override_plan ?? current.subscription_plan,
-          nowSql,
-          note,
-          vendorId,
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO vendor_subscriptions (
-           vendor_id,
-           plan_type,
-           status,
-           amount,
-           admin_user_id,
-           admin_note,
-           starts_at,
-           ends_at
-         )
-         VALUES ($1, $2, 'expired', 0, $3, $4, $5, $5)`,
-        [
-          vendorId,
-          current.subscription_override_plan ??
-            current.subscription_plan ??
-            'monthly',
-          adminUserId,
-          note,
-          nowSql,
-        ],
-      );
-
-      await this.recordAdminActivity(
-        adminUserId,
-        {
-          actionType: 'vendor_subscription_override_updated',
-          entityType: 'vendor',
-          entityId: vendorId,
-          entityLabel: current.shop_name,
-          description: 'Marked the vendor subscription override as expired.',
-          metadata: {
-            status: dto.status,
-            note,
-          },
-        },
-        client,
-      );
-    });
-
-    return this.getVendorById(vendorId);
-  }
-
   async getVendorPayouts() {
     const result = await this.databaseService.query<{
       vendor_id: string;
@@ -2300,12 +2225,13 @@ export class AdminService {
         ),
         this.databaseService.query<{
           id: string;
+          order_number: string | null;
           total_price: number | string;
           status: string;
           special_request: string | null;
           created_at: Date;
         }>(
-          `SELECT TOP 8 id, total_price, status, special_request, created_at
+          `SELECT TOP 8 id, order_number, total_price, status, special_request, created_at
          FROM orders
          WHERE customer_id = $1
          ORDER BY created_at DESC`,
@@ -2373,6 +2299,7 @@ export class AdminService {
         totalSpend: Number(customerOrders.rows[0].total_spend),
         recentOrders: recentOrders.rows.map((row) => ({
           id: row.id,
+          orderNumber: row.order_number ?? row.id,
           totalPrice: Number(row.total_price),
           status: row.status,
           specialRequest: row.special_request,
@@ -2413,16 +2340,6 @@ export class AdminService {
       shop_name: string;
       is_active: boolean;
       is_verified: boolean;
-      subscription_plan: 'monthly' | 'yearly' | null;
-      subscription_status: 'inactive' | 'active' | 'expired';
-      subscription_started_at: Date | null;
-      subscription_ends_at: Date | null;
-      subscription_override_plan: 'monthly' | 'yearly' | null;
-      subscription_override_status: 'active' | 'expired' | null;
-      subscription_override_started_at: Date | null;
-      subscription_override_ends_at: Date | null;
-      subscription_override_note: string | null;
-      subscription_override_updated_at: Date | null;
       approved_at: Date | null;
       created_at: Date;
       updated_at: Date;
@@ -2435,16 +2352,6 @@ export class AdminService {
          v.shop_name,
          v.is_active,
          v.is_verified,
-         v.subscription_plan,
-         v.subscription_status,
-         v.subscription_started_at,
-         v.subscription_ends_at,
-         v.subscription_override_plan,
-         v.subscription_override_status,
-         v.subscription_override_started_at,
-         v.subscription_override_ends_at,
-         v.subscription_override_note,
-         v.subscription_override_updated_at,
          v.approved_at,
          v.created_at,
          v.updated_at,
@@ -2467,7 +2374,6 @@ export class AdminService {
       categoryRows,
       recentOrders,
       payoutHistory,
-      subscriptionHistory,
     ] = await Promise.all([
       this.databaseService.query<{
         product_count: number;
@@ -2511,6 +2417,7 @@ export class AdminService {
       ),
       this.databaseService.query<{
         order_id: string;
+        order_number: string | null;
         quantity: number;
         vendor_earnings: number | string;
         status: string;
@@ -2523,6 +2430,7 @@ export class AdminService {
       }>(
         `SELECT TOP 6
           oi.order_id,
+          o.order_number,
           oi.quantity,
           oi.vendor_earnings,
           oi.status,
@@ -2533,6 +2441,7 @@ export class AdminService {
           oi.shipped_at,
           oi.created_at
          FROM order_items oi
+         INNER JOIN orders o ON o.id = oi.order_id
          INNER JOIN products p ON p.id = oi.product_id
          WHERE oi.vendor_id = $1
          ORDER BY oi.created_at DESC`,
@@ -2551,33 +2460,6 @@ export class AdminService {
          ORDER BY paid_at DESC`,
         [vendorId],
       ),
-      this.databaseService.query<{
-        id: string;
-        plan_type: 'monthly' | 'yearly';
-        status: 'active' | 'expired';
-        amount: number | string;
-        admin_note: string | null;
-        admin_email: string | null;
-        starts_at: Date;
-        ends_at: Date;
-        created_at: Date;
-      }>(
-        `SELECT TOP 8
-           s.id,
-           s.plan_type,
-           s.status,
-           s.amount,
-           s.admin_note,
-           u.email AS admin_email,
-           s.starts_at,
-           s.ends_at,
-           s.created_at
-         FROM vendor_subscriptions s
-         LEFT JOIN users u ON u.id = s.admin_user_id
-         WHERE s.vendor_id = $1
-         ORDER BY s.created_at DESC`,
-        [vendorId],
-      ),
     ]);
 
     return {
@@ -2593,9 +2475,6 @@ export class AdminService {
         email: record.user_email,
         isActive: record.user_active,
       },
-      subscription: this.resolveEffectiveSubscription(record),
-      automaticSubscription: this.resolveAutomaticSubscription(record),
-      manualOverride: this.resolveManualOverride(record),
       metrics: {
         productCount: metrics.rows[0].product_count,
         inventoryUnits: metrics.rows[0].inventory_units,
@@ -2616,6 +2495,7 @@ export class AdminService {
       })),
       recentOrderItems: recentOrders.rows.map((row) => ({
         orderId: row.order_id,
+        orderNumber: row.order_number ?? row.order_id,
         productTitle: row.product_title,
         productCode: row.product_code,
         quantity: row.quantity,
@@ -2635,21 +2515,80 @@ export class AdminService {
         note: row.note,
         paidAt: row.paid_at,
       })),
-      subscriptionHistory: subscriptionHistory.rows.map((row) => ({
-        id: row.id,
-        planType: row.plan_type,
-        status:
-          row.status === 'active' && row.ends_at < new Date()
-            ? 'expired'
-            : row.status,
-        amount: Number(row.amount),
-        adminNote: row.admin_note,
-        adminEmail: row.admin_email,
-        startsAt: row.starts_at,
-        endsAt: row.ends_at,
-        createdAt: row.created_at,
-      })),
     };
+  }
+
+  async getVendorOrders(vendorId: string, status?: string) {
+    const vendor = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE id = $1',
+      [vendorId],
+    );
+
+    if (!vendor.rows[0]) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const normalizedStatus = status?.trim().toLowerCase() || 'all';
+    const filters: string[] = ['oi.vendor_id = $1'];
+    const values: Array<string> = [vendorId];
+
+    if (normalizedStatus !== 'all') {
+      filters.push(`oi.status = $${values.length + 1}`);
+      values.push(normalizedStatus);
+    }
+
+    const orders = await this.databaseService.query<{
+      order_id: string;
+      order_number: string | null;
+      customer_email: string | null;
+      quantity: number;
+      vendor_earnings: number | string;
+      status: string;
+      product_title: string;
+      product_code: string | null;
+      shipping_carrier: string | null;
+      tracking_number: string | null;
+      shipped_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT
+         oi.order_id,
+         o.order_number,
+         COALESCE(u.email, o.guest_email) AS customer_email,
+         oi.quantity,
+         oi.vendor_earnings,
+         oi.status,
+         p.title AS product_title,
+         p.product_code,
+         oi.shipping_carrier,
+         oi.tracking_number,
+         oi.shipped_at,
+         oi.created_at
+       FROM order_items oi
+       INNER JOIN orders o ON o.id = oi.order_id
+       INNER JOIN products p ON p.id = oi.product_id
+       LEFT JOIN users u ON u.id = o.user_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY oi.created_at DESC`,
+      values,
+    );
+
+    return orders.rows.map((row) => ({
+      orderId: row.order_id,
+      orderNumber: row.order_number ?? row.order_id,
+      customerEmail: row.customer_email ?? 'Guest checkout',
+      productTitle: row.product_title,
+      productCode: row.product_code,
+      quantity: row.quantity,
+      vendorEarnings: Number(row.vendor_earnings),
+      status: row.status,
+      shipment: {
+        shippingCarrier: row.shipping_carrier,
+        trackingNumber: row.tracking_number,
+        shippedAt: row.shipped_at,
+      },
+      createdAt: row.created_at,
+    }));
   }
 
   async getOrderById(orderId: string) {
@@ -2917,7 +2856,7 @@ export class AdminService {
       throw new BadRequestException('Vendor is already verified');
     }
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
     await this.databaseService.withTransaction(async (client) => {
@@ -2932,7 +2871,7 @@ export class AdminService {
       await client.query(
         `INSERT INTO email_verifications (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-        [vendor.user_id, token, expiresAt],
+        [vendor.user_id, hashOpaqueToken(token), expiresAt],
       );
 
       await this.recordAdminActivity(
@@ -3167,10 +3106,11 @@ export class AdminService {
       };
     }
 
-    const result = await this.databaseService.query<{
-      id: string;
-      customer_email: string;
-      status: string;
+      const result = await this.databaseService.query<{
+        id: string;
+        order_number: string | null;
+        customer_email: string;
+        status: string;
       payment_method: string;
       payment_status: string;
       total_price: number | string;
@@ -3178,6 +3118,7 @@ export class AdminService {
     }>(
       `SELECT
          o.id,
+         o.order_number,
          COALESCE(u.email, o.guest_email) AS customer_email,
          o.status,
          o.payment_method,
@@ -3191,7 +3132,7 @@ export class AdminService {
 
     const csv = this.toCsv([
       [
-        'Order ID',
+        'Order number',
         'Customer email',
         'Status',
         'Payment method',
@@ -3200,7 +3141,7 @@ export class AdminService {
         'Created at',
       ],
       ...result.rows.map((row) => [
-        row.id,
+        row.order_number ?? row.id,
         row.customer_email,
         row.status,
         row.payment_method,
@@ -3307,9 +3248,7 @@ export class AdminService {
       mkdirSync(targetDir, { recursive: true });
     }
 
-    const extension = file.originalname.includes('.')
-      ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-      : '.jpg';
+    const extension = getSafeImageExtensionForMimeType(file.mimetype);
     const fileName = `promotion-${variant}-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
     const targetPath = join(targetDir, fileName);
 
@@ -3317,6 +3256,7 @@ export class AdminService {
       throw new BadRequestException('Uploaded promotion image could not be processed');
     }
 
+    assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
     renameSync(file.path, targetPath);
     return `/media/homepage-promotions/${fileName}`;
   }
@@ -3370,12 +3310,31 @@ export class AdminService {
 
     return {
       internalName,
-      customUrl,
+      customUrl: this.normalizePromotionTargetUrl(customUrl),
       isActive: input.isActive,
       displayOrder: input.displayOrder,
       startsAt: startsAt ? this.formatSqlDateTime(startsAt) : null,
       endsAt: endsAt ? this.formatSqlDateTime(endsAt) : null,
     };
+  }
+
+  private normalizePromotionTargetUrl(value: string) {
+    const normalized = value.trim();
+    let parsed: URL;
+
+    try {
+      parsed = new URL(normalized, 'https://vishu.shop');
+    } catch {
+      throw new BadRequestException('Promotion URL is invalid');
+    }
+
+    if (parsed.origin !== 'https://vishu.shop') {
+      throw new BadRequestException(
+        'Promotion URLs must stay within this marketplace',
+      );
+    }
+
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   }
 
   private async getPromotionRow(promotionId: string) {
@@ -3747,113 +3706,6 @@ export class AdminService {
 
   private formatSqlDateTime(value: Date) {
     return value.toISOString().replace('T', ' ').replace('Z', '');
-  }
-
-  private activeSubscriptionClause(vendorAlias: string) {
-    return `CASE
-      WHEN ${vendorAlias}.subscription_override_status = 'expired' THEN 0
-      WHEN ${vendorAlias}.subscription_override_status = 'active'
-        AND ${vendorAlias}.subscription_override_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_override_ends_at >= SYSDATETIME()
-        THEN 1
-      WHEN ${vendorAlias}.subscription_status = 'active'
-        AND ${vendorAlias}.subscription_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_ends_at >= SYSDATETIME()
-        THEN 1
-      ELSE 0
-    END = 1`;
-  }
-
-  private effectiveEndsAtExpression(vendorAlias: string) {
-    return `CASE
-      WHEN ${vendorAlias}.subscription_override_status = 'active'
-        AND ${vendorAlias}.subscription_override_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_override_ends_at >= SYSDATETIME()
-        THEN ${vendorAlias}.subscription_override_ends_at
-      ELSE ${vendorAlias}.subscription_ends_at
-    END`;
-  }
-
-  private resolveAutomaticSubscription(vendor: {
-    subscription_plan: 'monthly' | 'yearly' | null;
-    subscription_status: 'inactive' | 'active' | 'expired';
-    subscription_started_at: Date | null;
-    subscription_ends_at: Date | null;
-  }) {
-    return {
-      planType: vendor.subscription_plan,
-      status:
-        vendor.subscription_status === 'active' &&
-        vendor.subscription_ends_at &&
-        vendor.subscription_ends_at >= new Date()
-          ? 'active'
-          : vendor.subscription_plan
-            ? 'expired'
-            : 'inactive',
-      startedAt: vendor.subscription_started_at,
-      endsAt: vendor.subscription_ends_at,
-    } as const;
-  }
-
-  private resolveManualOverride(vendor: {
-    subscription_override_plan: 'monthly' | 'yearly' | null;
-    subscription_override_status: 'active' | 'expired' | null;
-    subscription_override_started_at: Date | null;
-    subscription_override_ends_at: Date | null;
-    subscription_override_note?: string | null;
-    subscription_override_updated_at?: Date | null;
-  }) {
-    if (!vendor.subscription_override_status) {
-      return null;
-    }
-
-    return {
-      planType: vendor.subscription_override_plan,
-      status:
-        vendor.subscription_override_status === 'active' &&
-        vendor.subscription_override_ends_at &&
-        vendor.subscription_override_ends_at >= new Date()
-          ? 'active'
-          : 'expired',
-      startedAt: vendor.subscription_override_started_at,
-      endsAt: vendor.subscription_override_ends_at,
-      note: vendor.subscription_override_note,
-      updatedAt: vendor.subscription_override_updated_at,
-    } as const;
-  }
-
-  private resolveEffectiveSubscription(vendor: {
-    subscription_plan: 'monthly' | 'yearly' | null;
-    subscription_status: 'inactive' | 'active' | 'expired';
-    subscription_started_at: Date | null;
-    subscription_ends_at: Date | null;
-    subscription_override_plan: 'monthly' | 'yearly' | null;
-    subscription_override_status: 'active' | 'expired' | null;
-    subscription_override_started_at: Date | null;
-    subscription_override_ends_at: Date | null;
-    subscription_override_note: string | null;
-    subscription_override_updated_at: Date | null;
-  }) {
-    const manualOverride = this.resolveManualOverride(vendor);
-    if (
-      manualOverride &&
-      (vendor.subscription_override_status === 'expired' ||
-        manualOverride.status === 'active')
-    ) {
-      return {
-        planType: manualOverride.planType ?? vendor.subscription_plan,
-        status: manualOverride.status,
-        startedAt: manualOverride.startedAt,
-        endsAt: manualOverride.endsAt,
-        source: 'manual_override' as const,
-      };
-    }
-
-    const automatic = this.resolveAutomaticSubscription(vendor);
-    return {
-      ...automatic,
-      source: 'automatic' as const,
-    };
   }
 
   private buildGuidLiteralClause(ids: string[]) {

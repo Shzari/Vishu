@@ -159,15 +159,15 @@ export default function OrdersPage() {
 
   return (
     <RequireRole requiredRole="customer">
-      <div className="stack">
-        <section className="panel hero-panel">
+      <div className="stack customer-orders-page">
+        <section className="panel hero-panel customer-orders-hero">
           <span className="chip">Customer history</span>
           <h1 className="hero-title">Track every order in one place.</h1>
           <p className="hero-copy">
             Each order stays customer-safe: you can review items, pricing, and shipping progress
             without exposing vendor identity in the storefront experience.
           </p>
-          <div className="mini-stats" style={{ marginTop: "1.4rem" }}>
+          <div className="mini-stats customer-orders-stats">
             <div className="mini-stat">
               <strong>{orders.length}</strong>
               <span className="muted">Orders placed</span>
@@ -196,10 +196,10 @@ export default function OrdersPage() {
         {error && <div className="message error">{error}</div>}
         {orders.length === 0 && <div className="empty">No orders yet.</div>}
         {orders.map((order) => (
-          <div key={order.id} className="form-card stack">
-            <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-              <div>
-                <strong>Order {order.id}</strong>
+          <article key={order.id} className="form-card stack customer-order-card">
+            <div className="customer-order-head">
+              <div className="customer-order-head-main">
+                <strong>Order {order.orderNumber}</strong>
                 <p className="muted">{new Date(order.createdAt).toLocaleString()}</p>
                 {order.specialRequest && <p className="muted">Request: {order.specialRequest}</p>}
                 <p className="muted">
@@ -222,20 +222,20 @@ export default function OrdersPage() {
                   </p>
                 )}
               </div>
-              <div className="chip-row">
+              <div className="chip-row customer-order-head-side">
                 <StatusBadge status={order.status} />
                 <span className="chip">{formatCurrency(order.totalPrice)}</span>
               </div>
             </div>
 
-            {timelineFor(order)}
+            <div className="customer-order-timeline">{timelineFor(order)}</div>
 
-            <div className="message">{progressNote(order)}</div>
+            <div className="message customer-order-note">{progressNote(order)}</div>
 
             {(order.shippingAddress || order.paymentCard) && (
-              <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+              <div className="customer-order-summary-grid">
                 {order.shippingAddress && (
-                  <div className="card stack" style={{ gap: "0.25rem" }}>
+                  <div className="card stack customer-order-summary-card">
                     <strong>Delivery address</strong>
                     <span className="muted">
                       {order.shippingAddress.label || "Saved address"}
@@ -256,7 +256,7 @@ export default function OrdersPage() {
                   </div>
                 )}
                 {order.paymentCard && (
-                  <div className="card stack" style={{ gap: "0.25rem" }}>
+                  <div className="card stack customer-order-summary-card">
                     <strong>Saved card snapshot</strong>
                     <span className="muted">
                       {order.paymentCard.nickname || `${order.paymentCard.brand} card`}
@@ -270,46 +270,51 @@ export default function OrdersPage() {
               </div>
             )}
 
-            {order.items.map((item) => (
-              <div
-                key={item.id}
-                className="card"
-                style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "1rem" }}
-              >
-                <div style={{ borderRadius: "18px", overflow: "hidden", minHeight: "120px" }}>
-                  <ProductMedia
-                    title={item.product.title}
-                    image={assetUrl(item.product.images[0])}
-                    subtitle={`${item.product.category} order item`}
-                    className="card-image"
-                  />
-                </div>
-                <div className="stack">
-                  <div className="inline-actions" style={{ justifyContent: "space-between" }}>
-                    <Link href={`/products/${item.product.id}`} className="product-title-link">
+            <div className="customer-order-items">
+              {order.items.map((item) => (
+                <div key={item.id} className="customer-order-item">
+                  <Link href={`/products/${item.product.id}`} className="customer-order-item-media">
+                    <div className="product-thumb customer-order-product-thumb">
+                      <div className="product-media-shell">
+                        <ProductMedia
+                          title={item.product.title}
+                          image={assetUrl(item.product.images[0])}
+                          subtitle={`${item.product.category} order item`}
+                        />
+                      </div>
+                    </div>
+                  </Link>
+                  <div className="customer-order-item-content">
+                    <Link href={`/products/${item.product.id}`} className="product-title-link customer-order-item-title">
                       {item.product.title}
                     </Link>
-                    <StatusBadge status={item.status} />
-                  </div>
-                  <p className="muted">
-                    {item.product.category} | {item.quantity} x {formatCurrency(item.unitPrice)}
-                  </p>
-                  {item.shipment?.trackingNumber && (
-                    <p className="muted">
-                      Shipment: {item.shipment.shippingCarrier || "Carrier pending"} |{" "}
-                      {item.shipment.trackingNumber}
-                      {item.shipment.shippedAt
-                        ? ` | ${new Date(item.shipment.shippedAt).toLocaleString()}`
-                        : ""}
+                    <p className="muted customer-order-item-copy">
+                      {item.product.category} | Qty {item.quantity} | {formatCurrency(item.unitPrice)}
                     </p>
-                  )}
-                  <strong>{formatCurrency(item.unitPrice * item.quantity)}</strong>
+                    {item.shipment?.trackingNumber && (
+                      <p className="muted customer-order-item-copy">
+                        Shipment: {item.shipment.shippingCarrier || "Carrier pending"} |{" "}
+                        {item.shipment.trackingNumber}
+                        {item.shipment.shippedAt
+                          ? ` | ${new Date(item.shipment.shippedAt).toLocaleString()}`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                  <div className="customer-order-item-side">
+                    <strong className="customer-order-item-total">
+                      {formatCurrency(item.unitPrice * item.quantity)}
+                    </strong>
+                    <div className="customer-order-item-status">
+                      <StatusBadge status={item.status} />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
 
-            <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div className="stack" style={{ gap: "0.35rem", minWidth: "280px", flex: "1 1 320px" }}>
+            <div className="customer-order-footer">
+              <div className="stack customer-order-footer-main">
                 {order.status === "pending" && order.cancelRequest?.status !== "requested" && (
                   <>
                     <div className="field">
@@ -349,7 +354,7 @@ export default function OrdersPage() {
                 {activeAction === `reorder-${order.id}` ? "Adding..." : "Reorder to cart"}
               </button>
             </div>
-          </div>
+          </article>
         ))}
       </div>
     </RequireRole>

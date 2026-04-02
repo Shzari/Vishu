@@ -36,7 +36,8 @@ export function RequireRole({ requiredRole, children }: RequireRoleProps) {
 
     if (!token) {
       if (pathname !== loginPath) {
-        router.replace(loginPath);
+        const nextPath = encodeURIComponent(pathname);
+        router.replace(`${loginPath}?next=${nextPath}`);
       }
       return;
     }

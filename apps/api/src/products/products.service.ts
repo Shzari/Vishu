@@ -9,6 +9,10 @@ import { algoliasearch } from 'algoliasearch';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { AuthenticatedUser } from '../common/types';
+import {
+  assertStoredImageFileMatchesMimeType,
+  getSafeImageExtensionForMimeType,
+} from '../common/security/security.utils';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
 import { VendorAccessService } from '../vendor-access/vendor-access.service';
@@ -585,11 +589,6 @@ export class ProductsService {
     return {
       vendor: {
         ...vendor,
-        has_active_subscription: this.isVendorSubscriptionActive(vendor),
-        is_publicly_visible:
-          vendor.is_active &&
-          vendor.is_verified &&
-          this.isVendorSubscriptionActive(vendor),
       },
       products: await this.attachImages(result.rows),
     };
@@ -2271,10 +2270,6 @@ export class ProductsService {
       is_active: boolean;
       is_verified: boolean;
       low_stock_threshold: number;
-      subscription_status: 'inactive' | 'active' | 'expired';
-      subscription_ends_at: Date | null;
-      subscription_override_status: 'active' | 'expired' | null;
-      subscription_override_ends_at: Date | null;
     }>(
       `SELECT TOP 1
          v.id,
@@ -2282,11 +2277,7 @@ export class ProductsService {
          v.shop_name,
          v.is_active,
          v.is_verified,
-         v.low_stock_threshold,
-         v.subscription_status,
-         v.subscription_ends_at,
-         v.subscription_override_status,
-         v.subscription_override_ends_at
+         v.low_stock_threshold
        FROM vendors v
        INNER JOIN users owner ON owner.id = v.user_id
        WHERE v.id = $1`,
@@ -2294,31 +2285,6 @@ export class ProductsService {
     );
 
     return result.rows[0];
-  }
-
-  private isVendorSubscriptionActive(vendor: {
-    subscription_status: 'inactive' | 'active' | 'expired';
-    subscription_ends_at: Date | null;
-    subscription_override_status: 'active' | 'expired' | null;
-    subscription_override_ends_at: Date | null;
-  }) {
-    if (
-      vendor.subscription_override_status === 'active' &&
-      vendor.subscription_override_ends_at &&
-      vendor.subscription_override_ends_at >= new Date()
-    ) {
-      return true;
-    }
-
-    if (vendor.subscription_override_status === 'expired') {
-      return false;
-    }
-
-    return (
-      vendor.subscription_status === 'active' &&
-      vendor.subscription_ends_at !== null &&
-      vendor.subscription_ends_at >= new Date()
-    );
   }
 
   private assertVendorReady(vendor: {
@@ -2362,9 +2328,7 @@ export class ProductsService {
       mkdirSync(targetDir, { recursive: true });
     }
 
-    const extension = file.originalname.includes('.')
-      ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-      : '.jpg';
+    const extension = getSafeImageExtensionForMimeType(file.mimetype);
     const fileName = `${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
     const targetPath = join(targetDir, fileName);
 
@@ -2372,6 +2336,7 @@ export class ProductsService {
       throw new BadRequestException('Uploaded file could not be processed');
     }
 
+    assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
     renameSync(file.path, targetPath);
     return `/media/vendors/${safeShop}-${vendor.id}/${safeCategory}/${fileName}`;
   }
@@ -2893,8 +2858,7 @@ export class ProductsService {
 
   private publicVendorVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
-      AND ${vendorAlias}.is_verified = 1
-      AND ${this.activeSubscriptionClause(vendorAlias)}`;
+      AND ${vendorAlias}.is_verified = 1`;
   }
 
   private publicProductVisibilityClause(
@@ -2903,21 +2867,6 @@ export class ProductsService {
   ) {
     return `${productAlias}.is_listed = 1
       AND ${this.publicVendorVisibilityClause(vendorAlias)}`;
-  }
-
-  private activeSubscriptionClause(vendorAlias: string) {
-    return `CASE
-      WHEN ${vendorAlias}.subscription_override_status = 'expired' THEN 0
-      WHEN ${vendorAlias}.subscription_override_status = 'active'
-        AND ${vendorAlias}.subscription_override_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_override_ends_at >= SYSDATETIME()
-        THEN 1
-      WHEN ${vendorAlias}.subscription_status = 'active'
-        AND ${vendorAlias}.subscription_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_ends_at >= SYSDATETIME()
-        THEN 1
-      ELSE 0
-    END = 1`;
   }
 
   private assertGuid(value: string) {

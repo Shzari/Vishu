@@ -1,12 +1,12 @@
 # Vishu Project Status
 
-Last updated: 2026-03-26
+Last updated: 2026-04-02
 
 This file is the handoff reference for any account or agent continuing work on this repo.
 
 ## Current Position
 
-- Current active phase: `Phase 9`
+- Current active phase: `Phase 10`
 - App state: `working local MVP-plus`
 - Main local URLs:
   - web: `http://localhost:3001`
@@ -245,6 +245,52 @@ This file is the handoff reference for any account or agent continuing work on t
 - when localhost looks unstyled:
   - compare the CSS chunk referenced in page HTML with files in `apps/web/.next/static/chunks`
   - if they differ, restart the web server cleanly
+- auth and recovery security were hardened on 2026-03-29
+  - JWT secret now fails closed instead of allowing a default weak secret
+  - auth session now supports secure `HttpOnly` cookie handling
+  - logout endpoint added for server-side session cleanup
+  - password reset, verification, and guest-order claim tokens are now hashed at rest with compatibility for previously issued links
+  - public auth and guest claim flows now have app-level rate limiting
+  - upload validation now checks actual image content instead of trusting extension and MIME alone
+  - admin promotion links are now restricted to internal marketplace URLs
+  - stronger security headers were added in API, Next.js, and Caddy
+- a senior engineering guidance document was added:
+  - `WEB-APP-ENGINEERING-PLAYBOOK.md`
+- Phase 10 production hardening completed on 2026-04-02:
+  - rate limiting verified on all auth endpoints
+  - Content-Security-Policy headers added to API and Next.js
+  - Next.js error boundary pages added: `not-found.tsx`, `error.tsx`, `global-error.tsx`, admin/vendor/account error pages
+  - Caddyfile updated for `vishu.shop` with static asset caching
+  - Product detail page converted to server component with `generateMetadata` + JSON-LD Product schema
+  - Shop detail page converted to server component with `generateMetadata`
+  - JSON-LD Organization schema added to root layout
+  - `sitemap.ts` dynamically generates sitemap including all product and shop URLs
+  - `robots.ts` blocks admin/vendor/account/checkout from crawlers
+  - `/terms`, `/privacy`, `/contact` static pages added
+  - Site footer with links to legal pages added to storefront shell
+  - Customer activation email now links to `/reset-password?mode=activate` for distinct UX
+  - Vendor approval waiting state banner added to vendor dashboard
+  - Export download links for vendors/customers/orders added to admin reports page
+  - `.env.example` files updated with `NODE_ENV` and `SENTRY_DSN` guidance
+  - Web build passes cleanly with zero TypeScript errors
+
+### Phase 9: Admin Reporting + Advanced Tools
+
+- Status: `Done`
+- Completed:
+  - admin reports page: revenue, orders, AOV, new customers/vendors, commission
+  - vendor performance table with payouts and commission breakdown
+  - vendor monthly fee table
+  - top shop and top category highlights
+  - export endpoints for vendors, customers, and orders (`GET /admin/exports/:resource`)
+  - export download links wired into admin reports UI
+
+### Phase 10: Production Hardening
+
+- Status: `Done`
+- Completed:
+  - see "Recent Local Work" entry dated 2026-04-02 above
+
 
 ### Phase 7: Fulfillment Workflow
 
@@ -263,16 +309,14 @@ This file is the handoff reference for any account or agent continuing work on t
   - customer order history now shows a fulfillment progress note, not just status chips
   - e2e coverage now proves fulfillment timestamps are present after the vendor workflow completes
 
-### Phase 8: Subscription System
+### Phase 8: Vendor Commercial Model
 
-- Status: `Deferred by product decision`
-- Already present:
-  - monthly/yearly vendor subscription
-  - manual admin override
-  - active subscription gates public visibility
-- Important rule:
-  - do not expand subscription work for now
-  - wait for the later `fee per purchase` business model guide before changing this area further
+- Status: `Subscription removed`
+- Current rule:
+  - public visibility depends on vendor activation and verification only
+  - no subscription plan, override, or vendor contract gating remains in the active product
+- Next business-model work:
+  - if monetization returns later, design it as a fresh feature instead of reviving the old subscription flow
 
 ### Phase 9: Admin Operations
 
@@ -363,16 +407,16 @@ This file is the handoff reference for any account or agent continuing work on t
   - vendor still needs admin approval
 - Product visibility:
   - no per-product admin approval
-  - visibility depends on vendor account state and subscription state
+  - visibility depends on vendor account state only
   - a hidden product should not hide the whole shop publicly
 - COD / finance:
   - COD admin panel was removed from active admin UI
   - payout UI was removed from active UI
-  - subscriptions are a stronger business direction than payouts
 - Data storage direction:
   - prefer database-first storage for business data and workflow state
   - keep moving important state out of browser/local app storage when practical
   - browser storage should be minimal and temporary, not the source of truth
+  - authentication should be server-driven and cookie-backed rather than browser token storage
   - normalized catalog tables are now the source of truth for marketplace structure
   - compatibility text fields on `products` still exist, but new work should prefer relations first
 - AWS deployment rule:

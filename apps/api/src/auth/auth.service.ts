@@ -6,9 +6,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { AuthenticatedUser } from '../common/types';
+import {
+  generateOpaqueToken,
+  getJwtSecret,
+  hashOpaqueToken,
+} from '../common/security/security.utils';
 import { DatabaseService } from '../database/database.service';
 import { VendorAccessService } from '../vendor-access/vendor-access.service';
 import {
@@ -74,12 +78,12 @@ export class AuthService {
       [email, fullName, phoneNumber, passwordHash],
     );
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
     await this.databaseService.query(
       `INSERT INTO password_resets (user_id, token, expires_at)
        VALUES ($1, $2, $3)`,
-      [result.rows[0].id, token, expiresAt],
+      [result.rows[0].id, hashOpaqueToken(token), expiresAt],
     );
 
     await this.mailService.sendCustomerActivationEmail({
@@ -102,7 +106,7 @@ export class AuthService {
     await this.ensureEmailAvailable(email);
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
     const vendorUser = await this.databaseService.withTransaction(
@@ -135,7 +139,7 @@ export class AuthService {
         await client.query(
           `INSERT INTO email_verifications (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-          [createdUser.rows[0].id, token, expiresAt],
+          [createdUser.rows[0].id, hashOpaqueToken(token), expiresAt],
         );
 
         return createdUser.rows[0];
@@ -151,20 +155,22 @@ export class AuthService {
   }
 
   async verifyEmail(dto: VerifyEmailDto) {
+    const hashedToken = hashOpaqueToken(dto.token);
     const result = await this.databaseService.withTransaction(
       async (client) => {
         const verification = await client.query<{
+          id: string;
           user_id: string;
           expires_at: Date;
           used_at: Date | null;
           role: 'vendor' | 'customer';
           email: string;
         }>(
-          `SELECT ev.user_id, ev.expires_at, ev.used_at, u.role, u.email
+          `SELECT ev.id, ev.user_id, ev.expires_at, ev.used_at, u.role, u.email
          FROM email_verifications ev
          INNER JOIN users u ON u.id = ev.user_id
-         WHERE token = $1`,
-          [dto.token],
+         WHERE token IN ($1, $2)`,
+          [dto.token, hashedToken],
         );
 
         const record = verification.rows[0];
@@ -179,8 +185,8 @@ export class AuthService {
         }
 
         await client.query(
-          'UPDATE email_verifications SET used_at = SYSDATETIME() WHERE token = $1',
-          [dto.token],
+          'UPDATE email_verifications SET used_at = SYSDATETIME() WHERE id = $1',
+          [record.id],
         );
         await client.query(
           'UPDATE users SET email_verified_at = ISNULL(email_verified_at, SYSDATETIME()), updated_at = SYSDATETIME() WHERE id = $1',
@@ -366,7 +372,7 @@ export class AuthService {
       };
     }
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
     await this.databaseService.withTransaction(async (client) => {
       await client.query(
@@ -380,7 +386,7 @@ export class AuthService {
       await client.query(
         `INSERT INTO email_verifications (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-        [user.id, token, expiresAt],
+        [user.id, hashOpaqueToken(token), expiresAt],
       );
     });
 
@@ -405,13 +411,13 @@ export class AuthService {
       return { message: 'If the account exists, a reset email has been sent.' };
     }
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
 
     await this.databaseService.query(
       `INSERT INTO password_resets (user_id, token, expires_at)
        VALUES ($1, $2, $3)`,
-      [user.id, token, expiresAt],
+      [user.id, hashOpaqueToken(token), expiresAt],
     );
 
     await this.mailService.sendPasswordResetEmail(user.email, token);
@@ -419,16 +425,18 @@ export class AuthService {
   }
 
   async resetPassword(dto: PasswordResetConfirmDto) {
+    const hashedToken = hashOpaqueToken(dto.token);
     await this.databaseService.withTransaction(async (client) => {
       const reset = await client.query<{
+        id: string;
         user_id: string;
         expires_at: Date;
         used_at: Date | null;
       }>(
-        `SELECT user_id, expires_at, used_at
+        `SELECT id, user_id, expires_at, used_at
          FROM password_resets
-         WHERE token = $1`,
-        [dto.token],
+         WHERE token IN ($1, $2)`,
+        [dto.token, hashedToken],
       );
 
       const record = reset.rows[0];
@@ -453,8 +461,8 @@ export class AuthService {
         [passwordHash, record.user_id],
       );
       await client.query(
-        'UPDATE password_resets SET used_at = SYSDATETIME() WHERE token = $1',
-        [dto.token],
+        'UPDATE password_resets SET used_at = SYSDATETIME() WHERE id = $1',
+        [record.id],
       );
     });
 
@@ -472,12 +480,12 @@ export class AuthService {
       throw new BadRequestException('User not found');
     }
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
     await this.databaseService.query(
       `INSERT INTO password_resets (user_id, token, expires_at)
        VALUES ($1, $2, $3)`,
-      [user.id, token, expiresAt],
+      [user.id, hashOpaqueToken(token), expiresAt],
     );
 
     await this.mailService.sendPasswordResetEmail(user.email, token);
@@ -579,7 +587,7 @@ export class AuthService {
 
     return {
       accessToken: this.jwtService.sign(payload, {
-        secret: this.configService.get<string>('JWT_SECRET', 'change-me'),
+        secret: getJwtSecret(this.configService),
         expiresIn: this.configService.get<string>(
           'JWT_EXPIRES_IN',
           '7d',

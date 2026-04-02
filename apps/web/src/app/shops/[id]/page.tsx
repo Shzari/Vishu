@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/components/providers";
+import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { ProductMedia } from "@/components/product-media";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
@@ -141,6 +142,14 @@ export default function ShopDetailPage() {
             <div className="storefront-label">Vendor shop</div>
             <h1 className="storefront-title">{shop.shopName}</h1>
             {shop.shopDescription && <p className="storefront-copy">{shop.shopDescription}</p>}
+            <div className="storefront-actions">
+              <Link className="button" href="#shop-products">
+                Browse this shop
+              </Link>
+              <Link className="storefront-secondary-action" href="/shops">
+                Back to all shops
+              </Link>
+            </div>
           </div>
         </div>
         <div className="shop-hero-stats">
@@ -184,7 +193,7 @@ export default function ShopDetailPage() {
             </div>
         </aside>
 
-        <div className="catalog-main">
+        <div className="catalog-main" id="shop-products">
           <div className="catalog-toolbar">
             <div>
               <h2>{shop.shopName} products</h2>
@@ -240,25 +249,19 @@ export default function ShopDetailPage() {
           <div className="catalog-grid">
             {visibleProducts.map((product) => (
               <article key={product.id} className="product-card">
-                <button
-                  type="button"
-                  className="product-thumb product-thumb-button"
-                  onClick={() => openQuickView(product)}
-                >
+                <FavoriteStarButton product={product} className="product-card-favorite" />
+                <Link href={`/products/${product.id}`} className="product-thumb">
                   <div className="product-media-shell">
                     <ProductMedia image={assetUrl(product.images[0])} title={product.title} />
                   </div>
-                </button>
+                </Link>
                 <div className="product-card-body">
-                  <button
-                    type="button"
-                    className="product-title-link product-title-button"
-                    onClick={() => openQuickView(product)}
-                  >
+                  <Link href={`/products/${product.id}`} className="product-title-link">
                     {product.title}
-                  </button>
+                  </Link>
                   <div className="product-card-foot">
-                    <span className="product-vendor-link">{shop.shopName}</span>
+                    <span className="product-card-vendor">{shop.shopName}</span>
+                    <span className="product-card-badge">{formatCatalogLabel(product.category)}</span>
                   </div>
                   <div className="product-price-row product-price-row-stacked">
                     <span className="price">{formatCurrency(product.price)}</span>
@@ -275,14 +278,10 @@ export default function ShopDetailPage() {
                   >
                     {product.stock > 0 ? `${product.stock} available now` : "Currently unavailable"}
                   </div>
-                  <div className="product-actions">
-                    <button
-                      type="button"
-                      className="button-ghost product-action-link"
-                      onClick={() => openQuickView(product)}
-                    >
-                      See options
-                    </button>
+                  <div className="product-actions product-card-actions">
+                    <Link href={`/products/${product.id}`} className="button-ghost product-action-link">
+                      Open product
+                    </Link>
                     <button
                       type="button"
                       className="button product-action-button"
@@ -306,6 +305,13 @@ export default function ShopDetailPage() {
                       {product.stock === 0 ? "Sold out" : "Add to cart"}
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    className="product-inline-action"
+                    onClick={() => openQuickView(product)}
+                  >
+                    Quick view
+                  </button>
                 </div>
               </article>
             ))}

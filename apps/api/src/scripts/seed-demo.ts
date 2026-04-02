@@ -459,14 +459,6 @@ async function ensureVendor(
             is_active = 1,
             is_verified = 1,
             approved_at = ISNULL(approved_at, SYSDATETIME()),
-            subscription_plan = 'monthly',
-            subscription_status = 'active',
-            subscription_started_at = ISNULL(subscription_started_at, SYSDATETIME()),
-            subscription_ends_at = CASE
-              WHEN subscription_ends_at IS NULL OR subscription_ends_at < SYSDATETIME()
-                THEN DATEADD(day, 365, SYSDATETIME())
-              ELSE subscription_ends_at
-            END,
             updated_at = SYSDATETIME()
         WHERE id = @id
       `);
@@ -489,11 +481,7 @@ async function ensureVendor(
         banner_url,
         is_active,
         is_verified,
-        approved_at,
-        subscription_plan,
-        subscription_status,
-        subscription_started_at,
-        subscription_ends_at
+        approved_at
       )
       OUTPUT INSERTED.id
       VALUES (
@@ -504,11 +492,7 @@ async function ensureVendor(
         @bannerUrl,
         1,
         1,
-        SYSDATETIME(),
-        'monthly',
-        'active',
-        SYSDATETIME(),
-        DATEADD(day, 365, SYSDATETIME())
+        SYSDATETIME()
       )
     `);
 

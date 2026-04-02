@@ -11,6 +11,7 @@ import {
   getCatalogDepartmentDisplayLabel,
   isCatalogDepartmentVisible,
 } from "@/lib/catalog";
+import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { ProductMedia } from "@/components/product-media";
 import type { Product } from "@/lib/types";
 
@@ -82,9 +83,15 @@ export default function ProductDetailPage() {
         <Link className="table-link" href={categoryBrowseHref}>
           Back to {formatCatalogLabel(product.category)}
         </Link>
-        <Link className="table-link" href="/shops">
-          Browse shops
-        </Link>
+        {product.vendor ? (
+          <Link className="table-link" href={`/shops/${product.vendor.id}`}>
+            Visit {product.vendor.shopName}
+          </Link>
+        ) : (
+          <Link className="table-link" href="/shops">
+            Browse shops
+          </Link>
+        )}
       </div>
 
       <div className="product-detail-card">
@@ -121,11 +128,34 @@ export default function ProductDetailPage() {
               : formatCatalogLabel(product.category)}
           </div>
           <h1 className="product-detail-title">{product.title}</h1>
+          {product.vendor ? (
+            <div className="product-detail-shop-link">
+              <span>Sold by</span>
+              <Link className="table-link" href={`/shops/${product.vendor.id}`}>
+                {product.vendor.shopName}
+              </Link>
+            </div>
+          ) : null}
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
           <div className="product-stock detail-stock">
             {product.stock > 0 ? `In stock: ${product.stock}` : "Currently unavailable"}
           </div>
           <p className="product-detail-copy">{product.description}</p>
+
+          <div className="mini-stats product-detail-mini-stats">
+            <div className="mini-stat">
+              <span>Availability</span>
+              <strong>{product.stock > 0 ? "Ready" : "Paused"}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Category</span>
+              <strong>{formatCatalogLabel(product.category)}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Shop</span>
+              <strong>{product.vendor?.shopName ?? "Marketplace"}</strong>
+            </div>
+          </div>
 
           <div className="product-detail-actions">
             <button
@@ -147,6 +177,11 @@ export default function ProductDetailPage() {
             >
               {product.stock === 0 ? "Sold Out" : "Add to Cart"}
             </button>
+            {product.vendor ? (
+              <Link className="button-secondary" href={`/shops/${product.vendor.id}`}>
+                Visit shop
+              </Link>
+            ) : null}
             <Link className="button-secondary" href="/cart">
               Go to Cart
             </Link>
@@ -177,6 +212,14 @@ export default function ProductDetailPage() {
               <span>Category</span>
               <strong>{formatCatalogLabel(product.category)}</strong>
             </div>
+            {product.vendor ? (
+              <div className="meta-row">
+                <span>Shop</span>
+                <Link className="table-link" href={`/shops/${product.vendor.id}`}>
+                  {product.vendor.shopName}
+                </Link>
+              </div>
+            ) : null}
             {product.color && (
               <div className="meta-row">
                 <span>Color</span>
@@ -191,7 +234,7 @@ export default function ProductDetailPage() {
             )}
             <div className="meta-row">
               <span>Storefront</span>
-              <strong>Unified marketplace listing</strong>
+              <strong>Marketplace listing with shop context</strong>
             </div>
           </div>
         </div>
@@ -208,6 +251,7 @@ export default function ProductDetailPage() {
           <div className="catalog-grid related-products-grid">
             {relatedProducts.map((entry) => (
               <article key={entry.id} className="product-card compact-product-card">
+                <FavoriteStarButton product={entry} className="product-card-favorite" />
                 <Link href={`/products/${entry.id}`} className="product-thumb">
                   <div className="product-media-shell">
                     <ProductMedia

@@ -11,7 +11,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { branding } = useBranding();
-  const { currentRole, isAuthenticated, loading, clearSession, profile } = useAuth();
+  const { currentRole, isAuthenticated, loading, logout, profile } = useAuth();
   const {
     items,
     isCartOpen,
@@ -73,9 +73,9 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     };
   }, [closeCart, isCartOpen]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     const nextPath = currentRole === "admin" ? "/admin/login" : "/";
-    clearSession();
+    await logout();
     router.replace(nextPath);
   };
 
@@ -220,7 +220,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               </>
             )}
             {isAuthenticated && (
-              <button type="button" onClick={handleLogout}>
+              <button type="button" onClick={() => void handleLogout()}>
                 {isAdminRoute ? "Sign out" : "Logout"}
               </button>
             )}

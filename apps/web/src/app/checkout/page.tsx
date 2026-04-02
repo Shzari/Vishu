@@ -151,8 +151,8 @@ export default function CheckoutPage() {
 
           <div className="checkout-success-meta">
             <div className="checkout-success-row">
-              <span>Order ID</span>
-              <strong>{placedOrder.id}</strong>
+              <span>Order number</span>
+              <strong>{placedOrder.orderNumber}</strong>
             </div>
             <div className="checkout-success-row">
               <span>Total</span>

@@ -1,20 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
 import type { SessionUser } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setSession } = useAuth();
+  const searchParams = useSearchParams();
+  const { currentRole, isAuthenticated, loading, setSession } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resendingVerification, setResendingVerification] = useState(false);
+  const requestedNextPath = searchParams.get("next");
+
+  useEffect(() => {
+    if (loading || !isAuthenticated || !currentRole) {
+      return;
+    }
+
+    if (currentRole === "admin") {
+      router.replace("/admin/dashboard");
+      return;
+    }
+
+    router.replace(getSafeNextPath(requestedNextPath, currentRole));
+  }, [currentRole, isAuthenticated, loading, requestedNextPath, router]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,12 +45,11 @@ export default function LoginPage() {
         },
       );
 
-      setSession(response.accessToken, response.user);
+      setSession(response.user);
       setMessage("Logged in successfully.");
 
       if (response.user.role === "admin") router.push("/admin/dashboard");
-      else if (response.user.role === "vendor") router.push("/vendor/dashboard");
-      else router.push("/");
+      else router.push(getSafeNextPath(requestedNextPath, response.user.role));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Login failed.");
     }
@@ -112,4 +126,17 @@ export default function LoginPage() {
       </form>
     </div>
   );
+}
+
+function getSafeNextPath(nextPath: string | null, role: SessionUser["role"]) {
+  if (
+    nextPath &&
+    nextPath.startsWith("/") &&
+    !nextPath.startsWith("//") &&
+    !nextPath.startsWith("/admin")
+  ) {
+    return nextPath;
+  }
+
+  return role === "vendor" ? "/vendor/dashboard" : "/";
 }

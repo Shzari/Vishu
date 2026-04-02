@@ -4,11 +4,17 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../../database/database.service';
 import { AuthenticatedUser } from '../types';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import {
+  AUTH_COOKIE_NAME,
+  getJwtSecret,
+  readCookieValue,
+} from '../security/security.utils';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -16,6 +22,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
+    private readonly configService: ConfigService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -30,9 +37,14 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const authorization = request.headers.authorization;
-    const token = authorization?.startsWith('Bearer ')
+    const bearerToken = authorization?.startsWith('Bearer ')
       ? authorization.slice(7)
       : null;
+    const cookieToken = readCookieValue(
+      request.headers.cookie,
+      AUTH_COOKIE_NAME,
+    );
+    const token = bearerToken ?? cookieToken;
 
     if (!token) {
       throw new UnauthorizedException('Missing bearer token');
@@ -42,7 +54,7 @@ export class JwtAuthGuard implements CanActivate {
       const payload = await this.jwtService.verifyAsync<AuthenticatedUser>(
         token,
         {
-          secret: process.env.JWT_SECRET || 'change-me',
+          secret: getJwtSecret(this.configService),
         },
       );
 

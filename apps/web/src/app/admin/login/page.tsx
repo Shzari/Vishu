@@ -1,20 +1,35 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuth, useBranding } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
 import type { SessionUser } from "@/lib/types";
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { branding } = useBranding();
-  const { setSession } = useAuth();
+  const { currentRole, isAuthenticated, loading, logout, setSession } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const logoSrc = branding.logoDataUrl ?? "/vishu-tab-logo.png";
+  const requestedNextPath = searchParams.get("next");
+
+  useEffect(() => {
+    if (loading || !isAuthenticated || !currentRole) {
+      return;
+    }
+
+    if (currentRole === "admin") {
+      router.replace(getSafeAdminNextPath(requestedNextPath));
+      return;
+    }
+
+    router.replace(currentRole === "vendor" ? "/vendor/dashboard" : "/");
+  }, [currentRole, isAuthenticated, loading, requestedNextPath, router]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,12 +45,13 @@ export default function AdminLoginPage() {
       });
 
       if (response.user.role !== "admin") {
+        await logout();
         setError("This login page is for admin accounts only.");
         return;
       }
 
-      setSession(response.accessToken, response.user);
-      router.push("/admin/dashboard");
+      setSession(response.user);
+      router.push(getSafeAdminNextPath(requestedNextPath));
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -105,4 +121,16 @@ export default function AdminLoginPage() {
       </form>
     </div>
   );
+}
+
+function getSafeAdminNextPath(nextPath: string | null) {
+  if (
+    nextPath &&
+    nextPath.startsWith("/admin") &&
+    !nextPath.startsWith("//")
+  ) {
+    return nextPath;
+  }
+
+  return "/admin/dashboard";
 }

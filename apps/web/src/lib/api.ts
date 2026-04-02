@@ -1,4 +1,7 @@
 const EXPLICIT_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
+const COOKIE_SESSION_TOKEN = "__cookie_session__";
+const CSRF_HEADER_NAME = "X-Vishu-Csrf";
+const CSRF_HEADER_VALUE = "1";
 
 export function getApiBaseUrl() {
   if (EXPLICIT_API_BASE_URL) {
@@ -40,17 +43,23 @@ export async function apiRequest<T>(
   token?: string | null,
 ): Promise<T> {
   const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
 
   if (!(init?.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
-  if (token) {
+  if (token && token !== COOKIE_SESSION_TOKEN) {
     headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    headers.set(CSRF_HEADER_NAME, CSRF_HEADER_VALUE);
   }
 
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
+    credentials: "include",
     headers,
   });
 
@@ -62,6 +71,10 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export function getCookieSessionToken() {
+  return COOKIE_SESSION_TOKEN;
 }
 
 function tryParseJson(text: string) {

@@ -9,10 +9,6 @@ export interface VendorAccessContext {
   is_active: boolean;
   is_verified: boolean;
   low_stock_threshold: number;
-  subscription_status: 'inactive' | 'active' | 'expired';
-  subscription_ends_at: Date | null;
-  subscription_override_status: 'active' | 'expired' | null;
-  subscription_override_ends_at: Date | null;
   access_role: VendorTeamRole;
   is_primary_owner: boolean;
 }
@@ -83,10 +79,6 @@ export class VendorAccessService {
          v.is_active,
          v.is_verified,
          v.low_stock_threshold,
-         v.subscription_status,
-         v.subscription_ends_at,
-         v.subscription_override_status,
-         v.subscription_override_ends_at,
          CASE
            WHEN v.user_id = $1 THEN 'shop_holder'
            ELSE tm.role

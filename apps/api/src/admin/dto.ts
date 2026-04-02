@@ -12,7 +12,6 @@ import {
   MaxLength,
   Min,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -33,20 +32,6 @@ export class CreateAdminUserDto {
   @IsString()
   @MinLength(6)
   password!: string;
-}
-
-export class UpdateVendorSubscriptionDto {
-  @IsIn(['auto', 'active', 'expired'])
-  status!: 'auto' | 'active' | 'expired';
-
-  @ValidateIf((dto: UpdateVendorSubscriptionDto) => dto.status === 'active')
-  @IsIn(['monthly', 'yearly'])
-  planType?: 'monthly' | 'yearly';
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  note?: string;
 }
 
 export class UpdatePlatformSettingsDto {
@@ -100,6 +85,31 @@ export class UpdatePlatformSettingsDto {
   @IsBoolean()
   passwordResetEmailsEnabled?: boolean;
 
+  @IsOptional()
+  @IsIn(['test', 'live'])
+  paymentMode?: 'test' | 'live';
+
+  @IsOptional()
+  @IsBoolean()
+  cashOnDeliveryEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cardPaymentsEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  guestCheckoutEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  stripeTestPublishableKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  stripeLivePublishableKey?: string;
 }
 
 export class SendPlatformTestEmailDto {

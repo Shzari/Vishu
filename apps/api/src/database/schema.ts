@@ -35,12 +35,22 @@ BEGIN
     smtp_port INT NULL,
     smtp_secure BIT NOT NULL DEFAULT 0,
     smtp_user NVARCHAR(255) NULL,
-    smtp_pass NVARCHAR(255) NULL,
+    smtp_pass NVARCHAR(1024) NULL,
     mail_from NVARCHAR(255) NULL,
     app_base_url NVARCHAR(255) NULL,
     vendor_verification_emails_enabled BIT NOT NULL DEFAULT 1,
     admin_vendor_approval_emails_enabled BIT NOT NULL DEFAULT 1,
     password_reset_emails_enabled BIT NOT NULL DEFAULT 1,
+    payment_mode NVARCHAR(10) NOT NULL DEFAULT 'test',
+    cash_on_delivery_enabled BIT NOT NULL DEFAULT 1,
+    card_payments_enabled BIT NOT NULL DEFAULT 0,
+    guest_checkout_enabled BIT NOT NULL DEFAULT 1,
+    stripe_test_publishable_key NVARCHAR(255) NULL,
+    stripe_test_secret_key NVARCHAR(255) NULL,
+    stripe_test_webhook_signing_secret NVARCHAR(255) NULL,
+    stripe_live_publishable_key NVARCHAR(255) NULL,
+    stripe_live_secret_key NVARCHAR(255) NULL,
+    stripe_live_webhook_signing_secret NVARCHAR(255) NULL,
     homepage_hero_autoplay_enabled BIT NOT NULL DEFAULT 1,
     homepage_hero_interval_seconds INT NOT NULL DEFAULT 6,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
@@ -80,7 +90,12 @@ END;
 
 IF COL_LENGTH('dbo.platform_settings', 'smtp_pass') IS NULL
 BEGIN
-  ALTER TABLE dbo.platform_settings ADD smtp_pass NVARCHAR(255) NULL;
+  ALTER TABLE dbo.platform_settings ADD smtp_pass NVARCHAR(1024) NULL;
+END;
+
+ELSE IF COL_LENGTH('dbo.platform_settings', 'smtp_pass') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN smtp_pass NVARCHAR(1024) NULL;
 END;
 
 IF COL_LENGTH('dbo.platform_settings', 'mail_from') IS NULL
@@ -108,6 +123,80 @@ BEGIN
   ALTER TABLE dbo.platform_settings ADD password_reset_emails_enabled BIT NOT NULL CONSTRAINT df_platform_settings_password_reset_emails_enabled DEFAULT 1;
 END;
 
+IF COL_LENGTH('dbo.platform_settings', 'payment_mode') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD payment_mode NVARCHAR(10) NOT NULL CONSTRAINT df_platform_settings_payment_mode DEFAULT 'test';
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'cash_on_delivery_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD cash_on_delivery_enabled BIT NOT NULL CONSTRAINT df_platform_settings_cash_on_delivery_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'card_payments_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD card_payments_enabled BIT NOT NULL CONSTRAINT df_platform_settings_card_payments_enabled DEFAULT 0;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'guest_checkout_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD guest_checkout_enabled BIT NOT NULL CONSTRAINT df_platform_settings_guest_checkout_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_test_publishable_key') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_test_publishable_key NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_test_publishable_key') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_test_publishable_key NVARCHAR(1024) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_test_secret_key') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_test_secret_key NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_test_secret_key') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_test_secret_key NVARCHAR(1024) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_test_webhook_signing_secret') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_test_webhook_signing_secret NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_test_webhook_signing_secret') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_test_webhook_signing_secret NVARCHAR(1024) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_live_publishable_key') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_live_publishable_key NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_live_publishable_key') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_live_publishable_key NVARCHAR(1024) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_live_secret_key') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_live_secret_key NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_live_secret_key') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_live_secret_key NVARCHAR(1024) NULL;
+END;
+
+IF COL_LENGTH('dbo.platform_settings', 'stripe_live_webhook_signing_secret') IS NULL
+BEGIN
+  ALTER TABLE dbo.platform_settings ADD stripe_live_webhook_signing_secret NVARCHAR(255) NULL;
+END;
+ELSE IF COL_LENGTH('dbo.platform_settings', 'stripe_live_webhook_signing_secret') < 2048
+BEGIN
+  ALTER TABLE dbo.platform_settings ALTER COLUMN stripe_live_webhook_signing_secret NVARCHAR(1024) NULL;
+END;
+
 IF COL_LENGTH('dbo.platform_settings', 'homepage_hero_autoplay_enabled') IS NULL
 BEGIN
   ALTER TABLE dbo.platform_settings ADD homepage_hero_autoplay_enabled BIT NOT NULL CONSTRAINT df_platform_settings_homepage_hero_autoplay_enabled DEFAULT 1;
@@ -124,6 +213,22 @@ BEGIN
   VALUES (1);
 END;
 
+IF OBJECT_ID('dbo.payment_event_logs', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.payment_event_logs (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    provider NVARCHAR(40) NOT NULL DEFAULT 'stripe',
+    mode NVARCHAR(10) NOT NULL DEFAULT 'test',
+    event_type NVARCHAR(120) NOT NULL,
+    event_status NVARCHAR(20) NOT NULL DEFAULT 'info',
+    event_source NVARCHAR(40) NOT NULL DEFAULT 'system',
+    message NVARCHAR(500) NULL,
+    reference_id NVARCHAR(255) NULL,
+    metadata_json NVARCHAR(MAX) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
 IF OBJECT_ID('dbo.users', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.users (
@@ -131,6 +236,10 @@ BEGIN
     email NVARCHAR(255) NOT NULL UNIQUE,
     full_name NVARCHAR(255) NULL,
     phone_number NVARCHAR(40) NULL,
+    order_updates_enabled BIT NOT NULL DEFAULT 1,
+    marketing_emails_enabled BIT NOT NULL DEFAULT 0,
+    stripe_test_customer_id NVARCHAR(255) NULL,
+    stripe_live_customer_id NVARCHAR(255) NULL,
     password_hash NVARCHAR(255) NOT NULL,
     role NVARCHAR(20) NOT NULL CHECK (role IN ('admin', 'vendor', 'customer')),
     email_verified_at DATETIME2 NULL,
@@ -196,16 +305,6 @@ BEGIN
     business_hours NVARCHAR(500) NULL,
     shipping_notes NVARCHAR(1000) NULL,
     low_stock_threshold INT NOT NULL DEFAULT 5,
-    subscription_plan NVARCHAR(20) NULL,
-    subscription_status NVARCHAR(20) NOT NULL DEFAULT 'inactive',
-    subscription_started_at DATETIME2 NULL,
-    subscription_ends_at DATETIME2 NULL,
-    subscription_override_plan NVARCHAR(20) NULL,
-    subscription_override_status NVARCHAR(20) NULL,
-    subscription_override_started_at DATETIME2 NULL,
-    subscription_override_ends_at DATETIME2 NULL,
-    subscription_override_note NVARCHAR(500) NULL,
-    subscription_override_updated_at DATETIME2 NULL,
     bank_account_name NVARCHAR(255) NULL,
     bank_name NVARCHAR(255) NULL,
     bank_iban NVARCHAR(64) NULL,
@@ -214,22 +313,6 @@ BEGIN
     approved_at DATETIME2 NULL,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
-  );
-END;
-
-IF OBJECT_ID('dbo.vendor_subscriptions', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.vendor_subscriptions (
-    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
-    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
-    plan_type NVARCHAR(20) NOT NULL CHECK (plan_type IN ('monthly', 'yearly')),
-    status NVARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired')),
-    amount DECIMAL(10, 2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
-    admin_user_id UNIQUEIDENTIFIER NULL,
-    admin_note NVARCHAR(500) NULL,
-    starts_at DATETIME2 NOT NULL,
-    ends_at DATETIME2 NOT NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
 END;
 
@@ -993,6 +1076,7 @@ IF OBJECT_ID('dbo.orders', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.orders (
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    order_number NVARCHAR(32) NULL,
     customer_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
     guest_email NVARCHAR(255) NULL,
     guest_phone_number NVARCHAR(40) NULL,
@@ -1015,6 +1099,8 @@ BEGIN
     payment_cardholder_name NVARCHAR(255) NULL,
     payment_card_brand NVARCHAR(40) NULL,
     payment_card_last4 NVARCHAR(4) NULL,
+    stripe_checkout_session_id NVARCHAR(255) NULL,
+    stripe_payment_intent_id NVARCHAR(255) NULL,
     payment_method NVARCHAR(30) NOT NULL DEFAULT 'cash_on_delivery' CHECK (payment_method IN ('cash_on_delivery', 'card')),
     payment_status NVARCHAR(30) NOT NULL DEFAULT 'cod_pending' CHECK (payment_status IN ('cod_pending', 'paid', 'cod_collected', 'cod_refused')),
     confirmed_at DATETIME2 NULL,
@@ -1116,6 +1202,12 @@ IF COL_LENGTH('dbo.orders', 'payment_card_brand') IS NULL
 
 IF COL_LENGTH('dbo.orders', 'payment_card_last4') IS NULL
   ALTER TABLE dbo.orders ADD payment_card_last4 NVARCHAR(4) NULL;
+
+IF COL_LENGTH('dbo.orders', 'stripe_checkout_session_id') IS NULL
+  ALTER TABLE dbo.orders ADD stripe_checkout_session_id NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'stripe_payment_intent_id') IS NULL
+  ALTER TABLE dbo.orders ADD stripe_payment_intent_id NVARCHAR(255) NULL;
 
 IF COL_LENGTH('dbo.orders', 'confirmed_at') IS NULL
   ALTER TABLE dbo.orders ADD confirmed_at DATETIME2 NULL;
@@ -1317,9 +1409,34 @@ BEGIN
   ALTER TABLE dbo.users ADD full_name NVARCHAR(255) NULL;
 END;
 
+IF COL_LENGTH('dbo.users', 'order_updates_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD order_updates_enabled BIT NOT NULL CONSTRAINT df_users_order_updates_enabled DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.users', 'marketing_emails_enabled') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD marketing_emails_enabled BIT NOT NULL CONSTRAINT df_users_marketing_emails_enabled DEFAULT 0;
+END;
+
+IF COL_LENGTH('dbo.users', 'stripe_test_customer_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD stripe_test_customer_id NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.users', 'stripe_live_customer_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD stripe_live_customer_id NVARCHAR(255) NULL;
+END;
+
 IF COL_LENGTH('dbo.orders', 'special_request') IS NULL
 BEGIN
   ALTER TABLE dbo.orders ADD special_request NVARCHAR(MAX) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'order_number') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD order_number NVARCHAR(32) NULL;
 END;
 
 IF COL_LENGTH('dbo.orders', 'payment_method') IS NULL
@@ -1357,59 +1474,39 @@ BEGIN
   ALTER TABLE dbo.orders ADD cancel_requested_at DATETIME2 NULL;
 END;
 
+IF OBJECT_ID('dbo.payment_checkout_sessions', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.payment_checkout_sessions (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    provider NVARCHAR(40) NOT NULL DEFAULT 'stripe',
+    mode NVARCHAR(10) NOT NULL DEFAULT 'test',
+    customer_id UNIQUEIDENTIFIER NULL,
+    stripe_session_id NVARCHAR(255) NOT NULL,
+    stripe_payment_intent_id NVARCHAR(255) NULL,
+    order_id UNIQUEIDENTIFIER NULL,
+    status NVARCHAR(30) NOT NULL DEFAULT 'created',
+    amount_total DECIMAL(10, 2) NULL,
+    currency NVARCHAR(10) NULL,
+    checkout_payload_json NVARCHAR(MAX) NOT NULL,
+    completed_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.order_number_counters', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.order_number_counters (
+    order_date_key CHAR(6) NOT NULL PRIMARY KEY,
+    last_value INT NOT NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
 IF COL_LENGTH('dbo.vendors', 'bank_account_name') IS NULL
 BEGIN
   ALTER TABLE dbo.vendors ADD bank_account_name NVARCHAR(255) NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_plan') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_plan NVARCHAR(20) NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_status') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_status NVARCHAR(20) NOT NULL CONSTRAINT df_vendors_subscription_status DEFAULT 'inactive';
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_started_at') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_started_at DATETIME2 NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_ends_at') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_ends_at DATETIME2 NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_plan') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_plan NVARCHAR(20) NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_status') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_status NVARCHAR(20) NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_started_at') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_started_at DATETIME2 NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_ends_at') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_ends_at DATETIME2 NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_note') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_note NVARCHAR(500) NULL;
-END;
-
-IF COL_LENGTH('dbo.vendors', 'subscription_override_updated_at') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendors ADD subscription_override_updated_at DATETIME2 NULL;
 END;
 
 IF COL_LENGTH('dbo.vendors', 'support_email') IS NULL
@@ -1456,62 +1553,6 @@ IF COL_LENGTH('dbo.vendors', 'shipping_notes') IS NULL
 BEGIN
   ALTER TABLE dbo.vendors ADD shipping_notes NVARCHAR(1000) NULL;
 END;
-
-IF COL_LENGTH('dbo.vendor_subscriptions', 'admin_user_id') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendor_subscriptions ADD admin_user_id UNIQUEIDENTIFIER NULL;
-END;
-
-IF COL_LENGTH('dbo.vendor_subscriptions', 'admin_note') IS NULL
-BEGIN
-  ALTER TABLE dbo.vendor_subscriptions ADD admin_note NVARCHAR(500) NULL;
-END;
-
-EXEC sp_executesql N'
-UPDATE dbo.vendors
-SET
-  subscription_plan = COALESCE(subscription_plan, ''yearly''),
-  subscription_status = ''active'',
-  subscription_started_at = COALESCE(subscription_started_at, approved_at, created_at, SYSDATETIME()),
-  subscription_ends_at = COALESCE(subscription_ends_at, DATEADD(YEAR, 1, SYSDATETIME()))
-WHERE is_active = 1 AND is_verified = 1 AND (
-  subscription_status <> ''active''
-  OR subscription_ends_at IS NULL
-  OR subscription_plan IS NULL
-);
-
-UPDATE dbo.vendors
-SET subscription_status = ''expired''
-WHERE subscription_status = ''active''
-  AND subscription_ends_at IS NOT NULL
-  AND subscription_ends_at < SYSDATETIME();
-
-INSERT INTO dbo.vendor_subscriptions (vendor_id, plan_type, status, amount, starts_at, ends_at)
-SELECT
-  v.id,
-  COALESCE(v.subscription_plan, ''yearly''),
-  CASE
-    WHEN v.subscription_status = ''active''
-      AND v.subscription_ends_at IS NOT NULL
-      AND v.subscription_ends_at >= SYSDATETIME()
-      THEN ''active''
-    ELSE ''expired''
-  END,
-  CASE COALESCE(v.subscription_plan, ''yearly'')
-    WHEN ''monthly'' THEN 29.00
-    ELSE 290.00
-  END,
-  COALESCE(v.subscription_started_at, v.approved_at, v.created_at, SYSDATETIME()),
-  COALESCE(v.subscription_ends_at, DATEADD(YEAR, 1, SYSDATETIME()))
-FROM dbo.vendors v
-WHERE v.is_active = 1
-  AND v.is_verified = 1
-  AND NOT EXISTS (
-    SELECT 1
-    FROM dbo.vendor_subscriptions s
-    WHERE s.vendor_id = v.id
-  );
-';
 
 IF COL_LENGTH('dbo.vendors', 'low_stock_threshold') IS NULL
 BEGIN
@@ -1672,6 +1713,55 @@ BEGIN
   ALTER TABLE dbo.order_items ADD updated_at DATETIME2 NOT NULL CONSTRAINT df_order_items_updated_at DEFAULT SYSDATETIME();
 END;
 
+EXEC sp_executesql N'
+;WITH ordered_orders AS (
+  SELECT
+    o.id,
+    date_key =
+      RIGHT(''0'' + CAST(DAY(o.created_at) AS NVARCHAR(2)), 2) +
+      RIGHT(''0'' + CAST(MONTH(o.created_at) AS NVARCHAR(2)), 2) +
+      RIGHT(CAST(YEAR(o.created_at) AS NVARCHAR(4)), 2),
+    sequence_number = ROW_NUMBER() OVER (
+      PARTITION BY CAST(o.created_at AS DATE)
+      ORDER BY o.created_at ASC, o.id ASC
+    )
+  FROM dbo.orders o
+  WHERE o.order_number IS NULL
+)
+UPDATE o
+SET order_number = CONCAT(
+  ''VSH-'',
+  ordered_orders.date_key,
+  ''-'',
+  RIGHT(CONCAT(''0000'', CAST(ordered_orders.sequence_number AS NVARCHAR(10))), 4)
+)
+FROM dbo.orders o
+INNER JOIN ordered_orders ON ordered_orders.id = o.id;
+';
+
+MERGE dbo.order_number_counters AS target
+USING (
+  SELECT
+    RIGHT('0' + CAST(DAY(created_at) AS NVARCHAR(2)), 2) +
+    RIGHT('0' + CAST(MONTH(created_at) AS NVARCHAR(2)), 2) +
+    RIGHT(CAST(YEAR(created_at) AS NVARCHAR(4)), 2) AS order_date_key,
+    COUNT(*) AS last_value
+  FROM dbo.orders
+  WHERE order_number IS NOT NULL
+  GROUP BY CAST(created_at AS DATE),
+    RIGHT('0' + CAST(DAY(created_at) AS NVARCHAR(2)), 2) +
+    RIGHT('0' + CAST(MONTH(created_at) AS NVARCHAR(2)), 2) +
+    RIGHT(CAST(YEAR(created_at) AS NVARCHAR(4)), 2)
+) AS source
+ON target.order_date_key = source.order_date_key
+WHEN MATCHED THEN
+  UPDATE
+  SET last_value = source.last_value,
+      updated_at = SYSDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (order_date_key, last_value, created_at, updated_at)
+  VALUES (source.order_date_key, source.last_value, SYSDATETIME(), SYSDATETIME());
+
 DECLARE @ordersStatusConstraint NVARCHAR(128);
 DECLARE @ordersStatusSql NVARCHAR(MAX);
 SELECT TOP 1 @ordersStatusConstraint = cc.name
@@ -1717,6 +1807,11 @@ BEGIN
   CREATE INDEX idx_orders_customer_id ON dbo.orders(customer_id);
 END;
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'uq_orders_order_number' AND object_id = OBJECT_ID('dbo.orders'))
+BEGIN
+  EXEC sp_executesql N'CREATE UNIQUE INDEX uq_orders_order_number ON dbo.orders(order_number) WHERE order_number IS NOT NULL;';
+END;
+
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_orders_guest_email' AND object_id = OBJECT_ID('dbo.orders'))
 BEGIN
   CREATE INDEX idx_orders_guest_email ON dbo.orders(guest_email);
@@ -1755,6 +1850,16 @@ END;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_customer_payment_methods_customer_id' AND object_id = OBJECT_ID('dbo.customer_payment_methods'))
 BEGIN
   CREATE INDEX idx_customer_payment_methods_customer_id ON dbo.customer_payment_methods(customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'uq_payment_checkout_sessions_stripe_session_id' AND object_id = OBJECT_ID('dbo.payment_checkout_sessions'))
+BEGIN
+  CREATE UNIQUE INDEX uq_payment_checkout_sessions_stripe_session_id ON dbo.payment_checkout_sessions(stripe_session_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_payment_checkout_sessions_order_id' AND object_id = OBJECT_ID('dbo.payment_checkout_sessions'))
+BEGIN
+  CREATE INDEX idx_payment_checkout_sessions_order_id ON dbo.payment_checkout_sessions(order_id);
 END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_guest_order_claim_tokens_user_id' AND object_id = OBJECT_ID('dbo.guest_order_claim_tokens'))

@@ -8,7 +8,9 @@ import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { BrandingService } from './branding/branding.service';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { PlatformSecretsService } from './common/security/platform-secrets.service';
 import { DatabaseModule } from './database/database.module';
 import { MailModule } from './mail/mail.module';
 import { OrdersModule } from './orders/orders.module';
@@ -38,6 +40,12 @@ import { ProductsModule } from './products/products.module';
     AdminModule,
   ],
   controllers: [AppController],
-  providers: [JwtAuthGuard, RolesGuard, BrandingService],
+  providers: [
+    JwtAuthGuard,
+    RolesGuard,
+    RateLimitGuard,
+    BrandingService,
+    PlatformSecretsService,
+  ],
 })
 export class AppModule {}

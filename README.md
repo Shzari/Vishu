@@ -80,6 +80,7 @@ For current phase progress, completed work, and remaining tasks, see:
 - `PROJECT-STATUS.md`
 - `DATABASE-STRUCTURE.md`
 - `AWS-DEPLOY-CHECKLIST.md`
+- `WEB-APP-ENGINEERING-PLAYBOOK.md`
 
 ## AWS deploy reminder
 

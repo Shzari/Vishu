@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import {
+  isStoredSecretProtected,
+  protectStoredSecret,
+  unprotectStoredSecret,
+} from '../common/security/stored-secrets.utils';
 import { DatabaseService } from '../database/database.service';
 
 @Injectable()
@@ -55,6 +60,20 @@ export class MailService {
     );
 
     const row = stored.rows[0];
+    if (row?.smtp_pass && !isStoredSecretProtected(row.smtp_pass)) {
+      const protectedSecret = protectStoredSecret(
+        row.smtp_pass,
+        this.configService,
+      );
+      await this.databaseService.query(
+        `UPDATE platform_settings
+         SET smtp_pass = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = 1`,
+        [protectedSecret],
+      );
+      row.smtp_pass = protectedSecret;
+    }
 
     return {
       host:
@@ -67,7 +86,9 @@ export class MailService {
       user:
         row?.smtp_user || this.configService.get<string>('SMTP_USER') || null,
       pass:
-        row?.smtp_pass || this.configService.get<string>('SMTP_PASS') || null,
+        this.configService.get<string>('SMTP_PASS') ||
+        unprotectStoredSecret(row?.smtp_pass, this.configService) ||
+        null,
       mailFrom:
         row?.mail_from ||
         this.configService.get<string>('MAIL_FROM', this.getDefaultMailFrom()),
@@ -206,7 +227,7 @@ export class MailService {
   async sendGuestOrderConfirmationEmail(payload: {
     email: string;
     fullName?: string | null;
-    orderId: string;
+    orderNumber: string;
     totalPrice: number;
     placedAt: Date;
     shippingAddress: {
@@ -251,10 +272,10 @@ export class MailService {
     const info = await transporter.sendMail({
       from: settings.mailFrom,
       to: payload.email,
-      subject: `Order confirmation ${payload.orderId}`,
+      subject: `Order confirmation ${payload.orderNumber}`,
       html: `<p>${greeting}</p>
 <p>Thank you for your order.</p>
-<p><strong>Order number:</strong> ${payload.orderId}</p>
+<p><strong>Order number:</strong> ${payload.orderNumber}</p>
 <p><strong>Placed:</strong> ${new Date(payload.placedAt).toLocaleString('en-GB')}</p>
 <ul>${itemsHtml}</ul>
 <p><strong>Total:</strong> ${payload.totalPrice.toFixed(2)} EUR</p>

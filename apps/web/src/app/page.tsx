@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/components/providers";
+import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { StorefrontCategoryNav } from "@/components/storefront-category-nav";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
@@ -515,6 +516,11 @@ export default function HomePage() {
     setSelectedQuickViewImage(undefined);
   }
 
+  function openQuickView(product: Product) {
+    setQuickViewProduct(product);
+    setSelectedQuickViewImage(product.images[0]);
+  }
+
   function showPreviousHeroSlide() {
     if (homepageHero.slides.length <= 1) {
       return;
@@ -755,6 +761,7 @@ export default function HomePage() {
         <div className="catalog-grid">
           {displayProducts.map((product) => (
             <article key={product.id} className="product-card">
+              <FavoriteStarButton product={product} className="product-card-favorite" />
               <Link
                 href={`/products/${product.id}`}
                 className="product-card-link"
@@ -799,6 +806,46 @@ export default function HomePage() {
                   </div>
                 </div>
               </Link>
+              <div className="product-card-foot">
+                {product.vendor ? (
+                  <Link
+                    className="product-card-vendor"
+                    href={`/shops/${product.vendor.id}`}
+                  >
+                    {product.vendor.shopName}
+                  </Link>
+                ) : (
+                  <span className="product-card-vendor muted">Marketplace listing</span>
+                )}
+                <div className="product-card-actions">
+                  <button
+                    type="button"
+                    className="product-action-button product-action-button-secondary"
+                    onClick={() => openQuickView(product)}
+                  >
+                    Quick view
+                  </button>
+                  <button
+                    type="button"
+                    className="product-action-button button"
+                    onClick={() =>
+                      addItem({
+                        productId: product.id,
+                        title: product.title,
+                        price: product.price,
+                        image: product.images[0],
+                        color: product.color ?? product.colors[0]?.name ?? null,
+                        size: product.size ?? product.sizeVariants[0]?.label ?? null,
+                        quantity: 1,
+                        stock: product.stock,
+                      })
+                    }
+                    disabled={product.stock === 0}
+                  >
+                    {product.stock === 0 ? "Sold out" : "Add to cart"}
+                  </button>
+                </div>
+              </div>
             </article>
           ))}
         </div>

@@ -12,21 +12,24 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
-import { join } from 'path';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import {
+  buildSafeUploadedImageName,
+  ensureTemporaryUploadDir,
+  isAllowedImageMimeType,
+} from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import { AccountService } from './account.service';
 import {
-  ActivateVendorSubscriptionDto,
   ChangePasswordDto,
   CreateVendorTeamInviteDto,
   CreatePaymentMethodDto,
   RequestGuestOrderClaimDto,
   UpdateAccountProfileDto,
+  UpdateEmailPreferencesDto,
   UpdatePaymentMethodDto,
   UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
@@ -35,35 +38,21 @@ import {
   VerifyGuestOrderClaimDto,
 } from './dto';
 import { Public } from '../common/decorators/public.decorator';
+import { RateLimit } from '../common/decorators/rate-limit.decorator';
+import { RateLimitGuard } from '../common/guards/rate-limit.guard';
 
 function vendorLogoUploadInterceptor() {
   return FileInterceptor('logoImage', {
     storage: diskStorage({
       destination: (_req, _file, callback) => {
-        const uploadDir = join(process.cwd(), 'uploads', 'tmp');
-        if (!existsSync(uploadDir)) {
-          mkdirSync(uploadDir, { recursive: true });
-        }
-        callback(null, uploadDir);
+        callback(null, ensureTemporaryUploadDir());
       },
       filename: (_req, file, callback) => {
-        const extension = file.originalname.includes('.')
-          ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-          : '.jpg';
-        callback(
-          null,
-          `vendor-logo-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`,
-        );
+        callback(null, buildSafeUploadedImageName('vendor-logo', file.mimetype));
       },
     }),
     fileFilter: (_req, file, callback) => {
-      const allowedMimeTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-        'image/gif',
-      ];
-      if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      if (!isAllowedImageMimeType(file.mimetype)) {
         callback(new Error('Only image uploads are allowed'), false);
         return;
       }
@@ -105,6 +94,8 @@ export class AccountController {
 
   @Public()
   @Post('guest-orders/claim-verify')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ max: 10, windowMs: 1000 * 60 * 15 })
   verifyGuestOrderClaim(@Body() dto: VerifyGuestOrderClaimDto) {
     return this.accountService.verifyGuestOrderClaim(dto.token);
   }
@@ -116,6 +107,15 @@ export class AccountController {
     @Body() dto: UpdateAccountProfileDto,
   ) {
     return this.accountService.updateSettingsProfile(req.user.sub, dto);
+  }
+
+  @Patch('email-preferences')
+  @Roles('customer')
+  updateEmailPreferences(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: UpdateEmailPreferencesDto,
+  ) {
+    return this.accountService.updateEmailPreferences(req.user.sub, dto);
   }
 
   @Patch('password')
@@ -149,15 +149,6 @@ export class AccountController {
       dto,
       logoImage,
     );
-  }
-
-  @Post('vendor-subscription')
-  @Roles('vendor')
-  activateVendorSubscription(
-    @Req() req: { user: AuthenticatedUser },
-    @Body() dto: ActivateVendorSubscriptionDto,
-  ) {
-    return this.accountService.activateVendorSubscription(req.user.sub, dto);
   }
 
   @Get('vendor-team')
@@ -242,6 +233,14 @@ export class AccountController {
     @Body() dto: CreatePaymentMethodDto,
   ) {
     return this.accountService.createPaymentMethod(req.user.sub, dto);
+  }
+
+  @Post('payment-methods/setup-session')
+  @Roles('customer')
+  createPaymentMethodSetupSession(
+    @Req() req: { user: AuthenticatedUser },
+  ) {
+    return this.accountService.createPaymentMethodSetupSession(req.user.sub);
   }
 
   @Patch('payment-methods/:id')

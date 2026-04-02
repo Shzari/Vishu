@@ -12,6 +12,10 @@ import {
   PaymentMethod,
   PaymentStatus,
 } from '../common/types';
+import {
+  generateOpaqueToken,
+  hashOpaqueToken,
+} from '../common/security/security.utils';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import {
   CreateOrderDto,
@@ -178,7 +182,7 @@ export class OrdersService {
         const totalPrice = Number(
           items.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
         );
-        const order = await client.query<{ id: string }>(
+        const order = await client.query<{ id: string; created_at: Date }>(
           `INSERT INTO orders (
            customer_id, guest_email, guest_phone_number, total_price, special_request,
            shipping_address_id, shipping_label, shipping_full_name, shipping_phone_number,
@@ -188,7 +192,7 @@ export class OrdersService {
            payment_card_brand, payment_card_last4,
            payment_method, payment_status, status
          )
-         OUTPUT INSERTED.id
+         OUTPUT INSERTED.id, INSERTED.created_at
          VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, $12, $13, $14, $15, $16, $17, $18, 'pending')`,
           [
             linkedCustomerId,
@@ -210,6 +214,12 @@ export class OrdersService {
             paymentMethod,
             paymentStatus,
           ],
+        );
+        const orderId = order.rows[0].id;
+        await this.assignPublicOrderNumber(
+          client,
+          orderId,
+          order.rows[0].created_at,
         );
 
         for (const item of items) {
@@ -271,7 +281,7 @@ export class OrdersService {
         }
 
         return {
-          id: order.rows[0].id,
+          id: orderId,
           checkout,
           guestCustomer,
           isGuestCheckout,
@@ -291,7 +301,7 @@ export class OrdersService {
       await this.mailService.sendGuestOrderConfirmationEmail({
         email: createdOrder.checkout.email,
         fullName: createdOrder.checkout.fullName,
-        orderId: placedOrder.id,
+        orderNumber: placedOrder.orderNumber,
         totalPrice: placedOrder.totalPrice,
         placedAt: placedOrder.createdAt,
         shippingAddress: placedOrder.shippingAddress,
@@ -393,6 +403,7 @@ export class OrdersService {
 
     const orders = await this.databaseService.query<{
       id: string;
+      order_number: string | null;
       total_price: number | string;
       special_request: string | null;
       confirmed_at: Date | null;
@@ -411,6 +422,7 @@ export class OrdersService {
     }>(
       `SELECT DISTINCT
          o.id,
+         o.order_number,
          o.total_price,
          o.special_request,
          o.confirmed_at,
@@ -477,6 +489,7 @@ export class OrdersService {
 
         return {
           id: order.id,
+          orderNumber: order.order_number ?? order.id,
           totalPrice: Number(order.total_price),
           specialRequest: order.special_request,
           fulfillment: {
@@ -741,6 +754,7 @@ export class OrdersService {
   async getAllOrders() {
     const orders = await this.databaseService.query<{
       id: string;
+      order_number: string | null;
       total_price: number | string;
       special_request: string | null;
       confirmed_at: Date | null;
@@ -759,6 +773,7 @@ export class OrdersService {
     }>(
       `SELECT
          o.id,
+         o.order_number,
          o.total_price,
          o.special_request,
          o.confirmed_at,
@@ -828,6 +843,7 @@ export class OrdersService {
 
         return {
           id: order.id,
+          orderNumber: order.order_number ?? order.id,
           totalPrice: Number(order.total_price),
           specialRequest: order.special_request,
           fulfillment: {
@@ -881,6 +897,7 @@ export class OrdersService {
   private async getCustomerOrderById(orderId: string, customerId: string) {
     const orderResult = await this.databaseService.query<{
       id: string;
+      order_number: string | null;
       total_price: number | string;
       special_request: string | null;
       confirmed_at: Date | null;
@@ -911,6 +928,7 @@ export class OrdersService {
     }>(
       `SELECT TOP 1
          id,
+         order_number,
          total_price,
          special_request,
          confirmed_at,
@@ -994,6 +1012,7 @@ export class OrdersService {
 
     return {
       id: order.id,
+      orderNumber: order.order_number ?? order.id,
       totalPrice: Number(order.total_price),
       specialRequest: order.special_request,
       fulfillment: {
@@ -1060,6 +1079,7 @@ export class OrdersService {
   private async getOrderSnapshotById(orderId: string) {
     const orderResult = await this.databaseService.query<{
       id: string;
+      order_number: string | null;
       total_price: number | string;
       special_request: string | null;
       confirmed_at: Date | null;
@@ -1090,6 +1110,7 @@ export class OrdersService {
     }>(
       `SELECT TOP 1
          id,
+         order_number,
          total_price,
          special_request,
          confirmed_at,
@@ -1173,6 +1194,7 @@ export class OrdersService {
 
     return {
       id: order.id,
+      orderNumber: order.order_number ?? order.id,
       totalPrice: Number(order.total_price),
       specialRequest: order.special_request,
       fulfillment: {
@@ -1234,6 +1256,45 @@ export class OrdersService {
         },
       })),
     };
+  }
+
+  private async assignPublicOrderNumber(
+    client: QueryRunner,
+    orderId: string,
+    createdAt: Date,
+  ) {
+    const dateKey = this.formatOrderNumberDateKey(createdAt);
+    const counter = await client.query<{ last_value: number }>(
+      `MERGE dbo.order_number_counters WITH (HOLDLOCK) AS target
+       USING (SELECT $1 AS order_date_key) AS source
+       ON target.order_date_key = source.order_date_key
+       WHEN MATCHED THEN
+         UPDATE
+         SET last_value = target.last_value + 1,
+             updated_at = SYSDATETIME()
+       WHEN NOT MATCHED THEN
+         INSERT (order_date_key, last_value, created_at, updated_at)
+         VALUES (source.order_date_key, 1, SYSDATETIME(), SYSDATETIME())
+       OUTPUT INSERTED.last_value;`,
+      [dateKey],
+    );
+
+    const sequenceNumber = Number(counter.rows[0]?.last_value ?? 0);
+    if (!Number.isInteger(sequenceNumber) || sequenceNumber <= 0) {
+      throw new BadRequestException('Unable to generate a public order number');
+    }
+
+    const orderNumber = `VSH-${dateKey}-${String(sequenceNumber).padStart(4, '0')}`;
+
+    await client.query(
+      `UPDATE orders
+       SET order_number = $1,
+           updated_at = SYSDATETIME()
+       WHERE id = $2`,
+      [orderNumber, orderId],
+    );
+
+    return orderNumber;
   }
 
   private normalizeCheckoutInput(dto: CreateOrderDto): CheckoutSnapshotInput {
@@ -1413,7 +1474,7 @@ export class OrdersService {
   }
 
   private async issueCustomerActivationToken(userId: string) {
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
     await this.databaseService.withTransaction(async (client) => {
@@ -1428,7 +1489,7 @@ export class OrdersService {
       await client.query(
         `INSERT INTO password_resets (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-        [userId, token, expiresAt],
+        [userId, hashOpaqueToken(token), expiresAt],
       );
     });
 
@@ -1556,6 +1617,13 @@ export class OrdersService {
     };
   }
 
+  private formatOrderNumberDateKey(value: Date) {
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = String(value.getFullYear()).slice(-2);
+    return `${day}${month}${year}`;
+  }
+
   private async loadProductsForOrder(client: QueryRunner, ids: string[]) {
     const clause = this.buildGuidLiteralClause(ids);
     const result = await client.query<OrderProductRow>(
@@ -1622,23 +1690,7 @@ export class OrdersService {
 
   private publicVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
-      AND ${vendorAlias}.is_verified = 1
-      AND ${this.activeSubscriptionClause(vendorAlias)}`;
-  }
-
-  private activeSubscriptionClause(vendorAlias: string) {
-    return `CASE
-      WHEN ${vendorAlias}.subscription_override_status = 'expired' THEN 0
-      WHEN ${vendorAlias}.subscription_override_status = 'active'
-        AND ${vendorAlias}.subscription_override_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_override_ends_at >= SYSDATETIME()
-        THEN 1
-      WHEN ${vendorAlias}.subscription_status = 'active'
-        AND ${vendorAlias}.subscription_ends_at IS NOT NULL
-        AND ${vendorAlias}.subscription_ends_at >= SYSDATETIME()
-        THEN 1
-      ELSE 0
-    END = 1`;
+      AND ${vendorAlias}.is_verified = 1`;
   }
 
   private async ensureCartExists(customerId: string) {

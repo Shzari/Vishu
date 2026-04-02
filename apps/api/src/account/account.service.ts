@@ -3,10 +3,23 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import Stripe from 'stripe';
+import {
+  assertStoredImageFileMatchesMimeType,
+  generateOpaqueToken,
+  getSafeImageExtensionForMimeType,
+  hashOpaqueToken,
+} from '../common/security/security.utils';
+import {
+  isStoredSecretProtected,
+  protectStoredSecret,
+  unprotectStoredSecret,
+} from '../common/security/stored-secrets.utils';
 import { DatabaseService } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
 import { VendorAccessService } from '../vendor-access/vendor-access.service';
@@ -15,6 +28,7 @@ import {
   CreateVendorTeamInviteDto,
   CreatePaymentMethodDto,
   UpdateAccountProfileDto,
+  UpdateEmailPreferencesDto,
   UpdatePaymentMethodDto,
   UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
@@ -22,14 +36,10 @@ import {
   UpsertAddressDto,
 } from './dto';
 
-const VENDOR_SUBSCRIPTION_PRICES = {
-  monthly: 29,
-  yearly: 290,
-} as const;
-
 @Injectable()
 export class AccountService {
   constructor(
+    private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
     private readonly vendorAccessService: VendorAccessService,
@@ -62,7 +72,7 @@ export class AccountService {
         ? await this.vendorAccessService.getVendorAccessForUser(userId)
         : null;
 
-    const [vendorDetails, vendorSubscriptionHistory] = vendorAccess
+    const [vendorDetails] = vendorAccess
       ? await Promise.all([
           this.databaseService.query<{
             id: string;
@@ -79,16 +89,6 @@ export class AccountService {
             business_hours: string | null;
             shipping_notes: string | null;
             low_stock_threshold: number;
-            subscription_plan: 'monthly' | 'yearly' | null;
-            subscription_status: 'inactive' | 'active' | 'expired';
-            subscription_started_at: Date | null;
-            subscription_ends_at: Date | null;
-            subscription_override_plan: 'monthly' | 'yearly' | null;
-            subscription_override_status: 'active' | 'expired' | null;
-            subscription_override_started_at: Date | null;
-            subscription_override_ends_at: Date | null;
-            subscription_override_note: string | null;
-            subscription_override_updated_at: Date | null;
             bank_account_name: string | null;
             bank_name: string | null;
             bank_iban: string | null;
@@ -113,16 +113,6 @@ export class AccountService {
              v.business_hours,
              v.shipping_notes,
              v.low_stock_threshold,
-             v.subscription_plan,
-             v.subscription_status,
-             v.subscription_started_at,
-             v.subscription_ends_at,
-             v.subscription_override_plan,
-             v.subscription_override_status,
-             v.subscription_override_started_at,
-             v.subscription_override_ends_at,
-             v.subscription_override_note,
-             v.subscription_override_updated_at,
              v.bank_account_name,
              v.bank_name,
              v.bank_iban,
@@ -150,35 +140,8 @@ export class AccountService {
            WHERE v.id = $1`,
             [vendorAccess.id],
           ),
-          this.databaseService.query<{
-            id: string;
-            plan_type: 'monthly' | 'yearly';
-            status: 'active' | 'expired';
-            amount: number | string;
-            admin_note: string | null;
-            admin_email: string | null;
-            starts_at: Date;
-            ends_at: Date;
-            created_at: Date;
-          }>(
-            `SELECT TOP 6
-             s.id,
-             s.plan_type,
-             s.status,
-             s.amount,
-             s.admin_note,
-             u.email AS admin_email,
-             s.starts_at,
-             s.ends_at,
-             s.created_at
-           FROM vendor_subscriptions s
-           LEFT JOIN users u ON u.id = s.admin_user_id
-           WHERE s.vendor_id = $1
-           ORDER BY s.created_at DESC`,
-            [vendorAccess.id],
-          ),
         ])
-      : [{ rows: [] }, { rows: [] }];
+      : [{ rows: [] }];
 
     const canViewFinance = vendorAccess?.access_role === 'shop_holder';
     const canManageSettings = vendorAccess?.access_role === 'shop_holder';
@@ -214,31 +177,6 @@ export class AccountService {
               businessHours: vendorDetails.rows[0].business_hours,
               shippingNotes: vendorDetails.rows[0].shipping_notes,
               lowStockThreshold: vendorDetails.rows[0].low_stock_threshold,
-              subscription: {
-                ...this.resolveEffectiveSubscription(vendorDetails.rows[0]),
-                monthlyPrice: VENDOR_SUBSCRIPTION_PRICES.monthly,
-                yearlyPrice: VENDOR_SUBSCRIPTION_PRICES.yearly,
-              },
-              automaticSubscription: this.resolveAutomaticSubscription(
-                vendorDetails.rows[0],
-              ),
-              manualOverride: this.resolveManualOverride(vendorDetails.rows[0]),
-              subscriptionHistory: vendorSubscriptionHistory.rows.map(
-                (entry) => ({
-                  id: entry.id,
-                  planType: entry.plan_type,
-                  status:
-                    entry.status === 'active' && entry.ends_at < new Date()
-                      ? 'expired'
-                      : entry.status,
-                  amount: Number(entry.amount),
-                  adminNote: entry.admin_note,
-                  adminEmail: entry.admin_email,
-                  startsAt: entry.starts_at,
-                  endsAt: entry.ends_at,
-                  createdAt: entry.created_at,
-                }),
-              ),
               bankAccountName: canViewFinance
                 ? vendorDetails.rows[0].bank_account_name
                 : null,
@@ -268,80 +206,86 @@ export class AccountService {
   }
 
   async getAccount(userId: string) {
-    const [profile, addresses, paymentMethods, recentOrders, cartItems, claimableGuestOrders] =
-      await Promise.all([
-        this.databaseService.query<{
-          id: string;
-          email: string;
-          full_name: string | null;
-          phone_number: string | null;
-          email_verified_at: Date | null;
-          created_at: Date;
-          updated_at: Date;
-        }>(
-          `SELECT TOP 1 id, email, full_name, phone_number, email_verified_at, created_at, updated_at
+    const [
+      profile,
+      addresses,
+      recentOrders,
+      cartItems,
+      claimableGuestOrders,
+      orderTotals,
+    ] = await Promise.all([
+      this.databaseService.query<{
+        id: string;
+        email: string;
+        full_name: string | null;
+        phone_number: string | null;
+        email_verified_at: Date | null;
+        order_updates_enabled: boolean;
+        marketing_emails_enabled: boolean;
+        stripe_test_customer_id: string | null;
+        stripe_live_customer_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+      }>(
+        `SELECT TOP 1
+           id,
+           email,
+           full_name,
+           phone_number,
+           email_verified_at,
+           order_updates_enabled,
+           marketing_emails_enabled,
+           stripe_test_customer_id,
+           stripe_live_customer_id,
+           created_at,
+           updated_at
          FROM users
          WHERE id = $1`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          id: string;
-          label: string;
-          full_name: string;
-          phone_number: string | null;
-          line1: string;
-          line2: string | null;
-          city: string;
-          state_region: string | null;
-          postal_code: string;
-          country: string;
-          is_default: boolean;
-        }>(
-          `SELECT id, label, full_name, phone_number, line1, line2, city, state_region, postal_code, country, is_default
+        [userId],
+      ),
+      this.databaseService.query<{
+        id: string;
+        label: string;
+        full_name: string;
+        phone_number: string | null;
+        line1: string;
+        line2: string | null;
+        city: string;
+        state_region: string | null;
+        postal_code: string;
+        country: string;
+        is_default: boolean;
+      }>(
+        `SELECT id, label, full_name, phone_number, line1, line2, city, state_region, postal_code, country, is_default
          FROM customer_addresses
          WHERE customer_id = $1
          ORDER BY is_default DESC, created_at DESC`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          id: string;
-          nickname: string | null;
-          cardholder_name: string;
-          brand: string;
-          last4: string;
-          exp_month: number;
-          exp_year: number;
-          is_default: boolean;
-        }>(
-          `SELECT id, nickname, cardholder_name, brand, last4, exp_month, exp_year, is_default
-         FROM customer_payment_methods
-         WHERE customer_id = $1
-         ORDER BY is_default DESC, created_at DESC`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          id: string;
-          total_price: number;
-          special_request: string | null;
-          status: string;
-          created_at: Date;
-        }>(
-          `SELECT TOP 5 id, total_price, special_request, status, created_at
+        [userId],
+      ),
+      this.databaseService.query<{
+        id: string;
+        order_number: string | null;
+        total_price: number;
+        special_request: string | null;
+        status: string;
+        created_at: Date;
+      }>(
+        `SELECT TOP 12 id, order_number, total_price, special_request, status, created_at
          FROM orders
          WHERE customer_id = $1
          ORDER BY created_at DESC`,
-          [userId],
-        ),
-        this.databaseService.query<{
-          product_id: string;
-          quantity: number;
-          updated_at: Date;
-          title: string;
-          price: number;
-          category: string;
-          image_url: string | null;
-        }>(
-          `SELECT ci.product_id, ci.quantity, ci.updated_at, p.title, p.price, p.category, pi.image_url
+        [userId],
+      ),
+      this.databaseService.query<{
+        product_id: string;
+        quantity: number;
+        updated_at: Date;
+        title: string;
+        price: number;
+        category: string;
+        image_url: string | null;
+      }>(
+        `SELECT ci.product_id, ci.quantity, ci.updated_at, p.title, p.price, p.category, pi.image_url
          FROM carts c
          INNER JOIN cart_items ci ON ci.cart_id = c.id
          INNER JOIN products p ON p.id = ci.product_id
@@ -353,23 +297,43 @@ export class AccountService {
          ) pi
          WHERE c.customer_id = $1
           ORDER BY ci.updated_at DESC`,
-          [userId],
-        ),
-        this.databaseService.query<{ claimable_count: number }>(
-          `SELECT COUNT(*) AS claimable_count
-           FROM users u
-           INNER JOIN orders o
-             ON o.guest_email = u.email
-            AND o.customer_id IS NULL
-           WHERE u.id = $1`,
-          [userId],
-        ),
-      ]);
+        [userId],
+      ),
+      this.databaseService.query<{ claimable_count: number }>(
+        `SELECT COUNT(*) AS claimable_count
+         FROM users u
+         INNER JOIN orders o
+           ON o.guest_email = u.email
+          AND o.customer_id IS NULL
+         WHERE u.id = $1`,
+        [userId],
+      ),
+      this.databaseService.query<{ order_count: number }>(
+        `SELECT COUNT(*) AS order_count
+         FROM orders
+         WHERE customer_id = $1`,
+        [userId],
+      ),
+    ]);
 
     const user = profile.rows[0];
     if (!user) {
       throw new NotFoundException('Account not found');
     }
+
+    const paymentMethods = await this.loadStripePaymentMethodsForCustomerAccount({
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      phoneNumber: user.phone_number,
+      stripeTestCustomerId: user.stripe_test_customer_id,
+      stripeLiveCustomerId: user.stripe_live_customer_id,
+    });
+
+    const cartItemCount = cartItems.rows.reduce(
+      (sum, row) => sum + row.quantity,
+      0,
+    );
 
     return {
       profile: {
@@ -394,18 +358,17 @@ export class AccountService {
         country: row.country,
         isDefault: row.is_default,
       })),
-      paymentMethods: paymentMethods.rows.map((row) => ({
-        id: row.id,
-        nickname: row.nickname,
-        cardholderName: row.cardholder_name,
-        brand: row.brand,
-        last4: row.last4,
-        expMonth: row.exp_month,
-        expYear: row.exp_year,
-        isDefault: row.is_default,
-      })),
+      paymentMethods,
+      stats: {
+        orderCount: Number(orderTotals.rows[0]?.order_count ?? 0),
+        cartItemCount,
+      },
+      emailPreferences: {
+        orderUpdatesEnabled: user.order_updates_enabled,
+        marketingEmailsEnabled: user.marketing_emails_enabled,
+      },
       cart: {
-        itemCount: cartItems.rows.reduce((sum, row) => sum + row.quantity, 0),
+        itemCount: cartItemCount,
         items: cartItems.rows.map((row) => ({
           productId: row.product_id,
           title: row.title,
@@ -418,6 +381,7 @@ export class AccountService {
       },
       recentOrders: recentOrders.rows.map((row) => ({
         id: row.id,
+        orderNumber: row.order_number ?? row.id,
         totalPrice: Number(row.total_price),
         specialRequest: row.special_request,
         status: row.status,
@@ -463,7 +427,7 @@ export class AccountService {
       };
     }
 
-    const token = randomUUID();
+    const token = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
 
     await this.databaseService.withTransaction(async (client) => {
@@ -478,7 +442,7 @@ export class AccountService {
       await client.query(
         `INSERT INTO guest_order_claim_tokens (user_id, email, token, expires_at)
          VALUES ($1, $2, $3, $4)`,
-        [userId, normalizedEmail, token, expiresAt],
+        [userId, normalizedEmail, hashOpaqueToken(token), expiresAt],
       );
     });
 
@@ -491,6 +455,7 @@ export class AccountService {
   }
 
   async verifyGuestOrderClaim(token: string) {
+    const hashedToken = hashOpaqueToken(token);
     const result = await this.databaseService.withTransaction(async (client) => {
       const tokenResult = await client.query<{
         id: string;
@@ -501,8 +466,8 @@ export class AccountService {
       }>(
         `SELECT TOP 1 id, user_id, email, expires_at, used_at
          FROM guest_order_claim_tokens
-         WHERE token = $1`,
-        [token],
+         WHERE token IN ($1, $2)`,
+        [token, hashedToken],
       );
 
       const record = tokenResult.rows[0];
@@ -541,6 +506,34 @@ export class AccountService {
           : 'No pending guest orders were left to connect.',
       linkedCount: result,
     };
+  }
+
+  async updateEmailPreferences(userId: string, dto: UpdateEmailPreferencesDto) {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (dto.orderUpdatesEnabled !== undefined) {
+      values.push(dto.orderUpdatesEnabled);
+      updates.push(`order_updates_enabled = $${values.length}`);
+    }
+
+    if (dto.marketingEmailsEnabled !== undefined) {
+      values.push(dto.marketingEmailsEnabled);
+      updates.push(`marketing_emails_enabled = $${values.length}`);
+    }
+
+    if (updates.length) {
+      values.push(userId);
+      await this.databaseService.query(
+        `UPDATE users
+         SET ${updates.join(', ')},
+             updated_at = SYSDATETIME()
+         WHERE id = $${values.length}`,
+        values,
+      );
+    }
+
+    return this.getAccount(userId);
   }
 
   async updateProfile(userId: string, dto: UpdateAccountProfileDto) {
@@ -656,12 +649,12 @@ export class AccountService {
         [userId],
       );
 
-      const token = randomUUID();
+      const token = generateOpaqueToken();
       const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
       await client.query(
         `INSERT INTO email_verifications (user_id, token, expires_at)
          VALUES ($1, $2, $3)`,
-        [userId, token, expiresAt],
+        [userId, hashOpaqueToken(token), expiresAt],
       );
 
       verificationEmail = {
@@ -683,119 +676,6 @@ export class AccountService {
         pendingVerification.role,
       );
     }
-  }
-
-  async activateVendorSubscription(
-    userId: string,
-    dto: { planType: 'monthly' | 'yearly' },
-  ) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
-    const vendor = await this.databaseService.query<{
-      id: string;
-      is_active: boolean;
-      is_verified: boolean;
-      subscription_plan: 'monthly' | 'yearly' | null;
-      subscription_started_at: Date | null;
-      subscription_ends_at: Date | null;
-      subscription_status: 'inactive' | 'active' | 'expired';
-      subscription_override_plan: 'monthly' | 'yearly' | null;
-      subscription_override_status: 'active' | 'expired' | null;
-      subscription_override_started_at: Date | null;
-      subscription_override_ends_at: Date | null;
-    }>(
-      `SELECT TOP 1
-         id,
-         is_active,
-         is_verified,
-         subscription_plan,
-         subscription_started_at,
-         subscription_ends_at,
-         subscription_status,
-         subscription_override_plan,
-         subscription_override_status,
-         subscription_override_started_at,
-         subscription_override_ends_at
-       FROM vendors
-       WHERE id = $1`,
-      [access.id],
-    );
-
-    const current = vendor.rows[0];
-    if (!current) {
-      throw new NotFoundException('Vendor account not found');
-    }
-
-    if (!current.is_verified) {
-      throw new BadRequestException(
-        'Verify the vendor account before starting a subscription',
-      );
-    }
-
-    if (!current.is_active) {
-      throw new BadRequestException(
-        'Admin approval is required before starting a subscription',
-      );
-    }
-
-    const effectiveSubscription = this.resolveEffectiveSubscription(current);
-    if (
-      effectiveSubscription.status === 'active' &&
-      effectiveSubscription.endsAt &&
-      effectiveSubscription.endsAt > new Date()
-    ) {
-      const until = effectiveSubscription.endsAt.toLocaleDateString('en-GB');
-      throw new BadRequestException(
-        `Your subscription is already active until ${until}. You can renew after it ends.`,
-      );
-    }
-
-    const now = new Date();
-    const nextEndsAt = new Date(now.getTime());
-    if (dto.planType === 'yearly') {
-      nextEndsAt.setFullYear(nextEndsAt.getFullYear() + 1);
-    } else {
-      nextEndsAt.setMonth(nextEndsAt.getMonth() + 1);
-    }
-
-    const normalizedStartedAt = this.formatSqlDateTime(now);
-    const normalizedChargeStartsAt = this.formatSqlDateTime(now);
-    const normalizedEndsAt = this.formatSqlDateTime(nextEndsAt);
-
-    await this.databaseService.withTransaction(async (client) => {
-      await client.query(
-        `UPDATE vendor_subscriptions
-         SET status = 'expired'
-         WHERE vendor_id = $1
-           AND status = 'active'
-           AND ends_at < SYSDATETIME()`,
-        [current.id],
-      );
-
-      await client.query(
-        `UPDATE vendors
-         SET subscription_plan = $1,
-             subscription_status = 'active',
-             subscription_started_at = $2,
-             subscription_ends_at = $3,
-             updated_at = SYSDATETIME()
-         WHERE id = $4`,
-        [dto.planType, normalizedStartedAt, normalizedEndsAt, current.id],
-      );
-
-      await client.query(
-        `INSERT INTO vendor_subscriptions (vendor_id, plan_type, status, amount, starts_at, ends_at)
-         VALUES ($1, $2, 'active', $3, $4, $5)`,
-        [
-          current.id,
-          dto.planType,
-          VENDOR_SUBSCRIPTION_PRICES[dto.planType],
-          normalizedChargeStartsAt,
-          normalizedEndsAt,
-        ],
-      );
-    });
-
-    return this.getSettings(userId);
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
@@ -1157,16 +1037,16 @@ export class AccountService {
 
       let passwordResetToken: string | null = null;
       if (needsPasswordSetup) {
-        passwordResetToken = randomUUID();
+        passwordResetToken = generateOpaqueToken();
         const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
         await client.query(
           `INSERT INTO password_resets (user_id, token, expires_at)
            VALUES ($1, $2, $3)`,
-          [inviteeUserId, passwordResetToken, resetExpiresAt],
+          [inviteeUserId, hashOpaqueToken(passwordResetToken), resetExpiresAt],
         );
       }
 
-      const inviteToken = randomUUID();
+      const inviteToken = generateOpaqueToken();
       await client.query(
         `INSERT INTO vendor_team_invites (
            vendor_id,
@@ -1264,17 +1144,17 @@ export class AccountService {
         }
 
         if (!userRow.rows[0]?.full_name) {
-          resetToken = randomUUID();
+          resetToken = generateOpaqueToken();
           const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
           await client.query(
             `INSERT INTO password_resets (user_id, token, expires_at)
              VALUES ($1, $2, $3)`,
-            [current.user_id, resetToken, resetExpiresAt],
+            [current.user_id, hashOpaqueToken(resetToken), resetExpiresAt],
           );
         }
       }
 
-      const nextToken = randomUUID();
+      const nextToken = generateOpaqueToken();
       await client.query(
         `UPDATE vendor_team_invites
          SET token = $1,
@@ -1567,37 +1447,44 @@ export class AccountService {
   }
 
   async createPaymentMethod(userId: string, dto: CreatePaymentMethodDto) {
-    const normalizedNumber = dto.cardNumber.replace(/\s+/g, '');
-    const last4 = normalizedNumber.slice(-4);
-    const brand = this.detectCardBrand(normalizedNumber);
+    void userId;
+    void dto;
+    throw new BadRequestException(
+      'Manual card entry is no longer supported. Use Stripe to add and save cards securely.',
+    );
+  }
 
-    await this.databaseService.withTransaction(async (client) => {
-      if (dto.isDefault) {
-        await client.query(
-          'UPDATE customer_payment_methods SET is_default = 0, updated_at = SYSDATETIME() WHERE customer_id = $1',
-          [userId],
-        );
-      }
-
-      await client.query(
-        `INSERT INTO customer_payment_methods (
-           customer_id, nickname, cardholder_name, brand, last4, exp_month, exp_year, is_default
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          userId,
-          dto.nickname?.trim() || null,
-          dto.cardholderName.trim(),
-          brand,
-          last4,
-          dto.expMonth,
-          dto.expYear,
-          dto.isDefault === true,
-        ],
-      );
+  async createPaymentMethodSetupSession(userId: string) {
+    const settings = await this.loadActiveStripeAccountPaymentContext();
+    const user = await this.loadStripeCustomerUser(userId);
+    const stripeCustomerId = await this.ensureStripeCustomerForAccount(
+      settings.mode,
+      user,
+      settings.secretKey,
+    );
+    const stripe = this.createStripeClient(settings.secretKey);
+    const session = await stripe.checkout.sessions.create({
+      mode: 'setup',
+      customer: stripeCustomerId,
+      success_url: `${settings.appBaseUrl}/account?payments=setup_success`,
+      cancel_url: `${settings.appBaseUrl}/account?payments=setup_cancel`,
+      setup_intent_data: {
+        metadata: {
+          marketplace_customer_id: userId,
+        },
+      },
     });
 
-    return this.getAccount(userId);
+    if (!session.url) {
+      throw new BadRequestException(
+        'Stripe did not return a setup URL for this session.',
+      );
+    }
+
+    return {
+      sessionId: session.id,
+      url: session.url,
+    };
   }
 
   async updatePaymentMethod(
@@ -1605,71 +1492,279 @@ export class AccountService {
     paymentMethodId: string,
     dto: UpdatePaymentMethodDto,
   ) {
-    await this.databaseService.withTransaction(async (client) => {
-      const existing = await client.query<{ id: string }>(
-        'SELECT TOP 1 id FROM customer_payment_methods WHERE id = $1 AND customer_id = $2',
-        [paymentMethodId, userId],
+    if (!dto.isDefault) {
+      throw new BadRequestException(
+        'Only setting the default Stripe payment method is supported here.',
       );
-      if (!existing.rows[0]) {
-        throw new NotFoundException('Payment method not found');
-      }
+    }
 
-      if (dto.isDefault) {
-        await client.query(
-          'UPDATE customer_payment_methods SET is_default = 0, updated_at = SYSDATETIME() WHERE customer_id = $1',
-          [userId],
-        );
-      }
+    const settings = await this.loadActiveStripeAccountPaymentContext();
+    const user = await this.loadStripeCustomerUser(userId);
+    const stripeCustomerId = await this.ensureStripeCustomerForAccount(
+      settings.mode,
+      user,
+      settings.secretKey,
+    );
+    const stripe = this.createStripeClient(settings.secretKey);
+    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
 
-      const updates: string[] = [];
-      const values: unknown[] = [];
+    if (
+      paymentMethod.customer &&
+      typeof paymentMethod.customer === 'string' &&
+      paymentMethod.customer !== stripeCustomerId
+    ) {
+      throw new NotFoundException('Payment method not found');
+    }
 
-      if (dto.nickname !== undefined) {
-        values.push(dto.nickname.trim() || null);
-        updates.push(`nickname = $${values.length}`);
-      }
-      if (dto.cardholderName !== undefined) {
-        values.push(dto.cardholderName.trim());
-        updates.push(`cardholder_name = $${values.length}`);
-      }
-      if (dto.isDefault !== undefined) {
-        values.push(dto.isDefault);
-        updates.push(`is_default = $${values.length}`);
-      }
-
-      if (updates.length) {
-        values.push(paymentMethodId);
-        values.push(userId);
-        await client.query(
-          `UPDATE customer_payment_methods
-           SET ${updates.join(', ')}, updated_at = SYSDATETIME()
-           WHERE id = $${values.length - 1} AND customer_id = $${values.length}`,
-          values,
-        );
-      }
+    await stripe.customers.update(stripeCustomerId, {
+      invoice_settings: {
+        default_payment_method: paymentMethodId,
+      },
     });
 
     return this.getAccount(userId);
   }
 
   async deletePaymentMethod(userId: string, paymentMethodId: string) {
-    const result = await this.databaseService.query<{ id: string }>(
-      'DELETE FROM customer_payment_methods OUTPUT DELETED.id WHERE id = $1 AND customer_id = $2',
-      [paymentMethodId, userId],
+    const settings = await this.loadActiveStripeAccountPaymentContext();
+    const user = await this.loadStripeCustomerUser(userId);
+    const stripeCustomerId = await this.ensureStripeCustomerForAccount(
+      settings.mode,
+      user,
+      settings.secretKey,
     );
-    if (!result.rows[0]) {
+    const stripe = this.createStripeClient(settings.secretKey);
+    const customer = await stripe.customers.retrieve(stripeCustomerId);
+    if (customer.deleted) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    const existingMethods = await stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: 'card',
+    });
+    const method = existingMethods.data.find(
+      (entry) => entry.id === paymentMethodId,
+    );
+    if (!method) {
       throw new NotFoundException('Payment method not found');
     }
+
+    const currentDefaultPaymentMethodId =
+      typeof customer.invoice_settings?.default_payment_method === 'string'
+        ? customer.invoice_settings.default_payment_method
+        : customer.invoice_settings?.default_payment_method?.id ?? null;
+    if (currentDefaultPaymentMethodId === paymentMethodId) {
+      const replacement = existingMethods.data.find(
+        (entry) => entry.id !== paymentMethodId,
+      );
+      if (replacement) {
+        await stripe.customers.update(stripeCustomerId, {
+          invoice_settings: {
+            default_payment_method: replacement.id,
+          },
+        });
+      }
+    }
+
+    await stripe.paymentMethods.detach(paymentMethodId);
 
     return this.getAccount(userId);
   }
 
-  private detectCardBrand(cardNumber: string) {
-    if (/^4/.test(cardNumber)) return 'Visa';
-    if (/^(5[1-5]|2[2-7])/.test(cardNumber)) return 'Mastercard';
-    if (/^3[47]/.test(cardNumber)) return 'Amex';
-    if (/^6(?:011|5)/.test(cardNumber)) return 'Discover';
-    return 'Card';
+  private async loadActiveStripeAccountPaymentContext() {
+    const result = await this.databaseService.query<{
+      payment_mode: 'test' | 'live';
+      stripe_test_secret_key: string | null;
+      stripe_live_secret_key: string | null;
+      app_base_url: string | null;
+    }>(
+      `SELECT TOP 1
+         payment_mode,
+         stripe_test_secret_key,
+         stripe_live_secret_key,
+         app_base_url
+       FROM platform_settings
+       WHERE id = 1`,
+    );
+
+    const row = result.rows[0];
+    const mode: 'test' | 'live' =
+      row?.payment_mode === 'live' ? 'live' : 'test';
+    const secretColumn =
+      mode === 'live' ? 'stripe_live_secret_key' : 'stripe_test_secret_key';
+    let storedSecret =
+      mode === 'live' ? row?.stripe_live_secret_key : row?.stripe_test_secret_key;
+
+    if (storedSecret && !isStoredSecretProtected(storedSecret)) {
+      const protectedSecret = protectStoredSecret(
+        storedSecret,
+        this.configService,
+      );
+      await this.databaseService.query(
+        `UPDATE platform_settings
+         SET ${secretColumn} = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = 1`,
+        [protectedSecret],
+      );
+      storedSecret = protectedSecret;
+    }
+
+    const envSecretKey =
+      mode === 'live'
+        ? this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() || null
+        : this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() || null;
+    const secretKey =
+      envSecretKey ??
+      unprotectStoredSecret(storedSecret, this.configService);
+
+    if (!secretKey) {
+      throw new BadRequestException(
+        'Stripe is not configured for the active payment mode.',
+      );
+    }
+
+    return {
+      mode,
+      secretKey,
+      appBaseUrl: row?.app_base_url?.trim() || 'http://localhost:3001',
+    };
+  }
+
+  private createStripeClient(secretKey: string) {
+    return new Stripe(secretKey);
+  }
+
+  private async loadStripeCustomerUser(userId: string) {
+    const result = await this.databaseService.query<{
+      id: string;
+      email: string;
+      full_name: string | null;
+      phone_number: string | null;
+      stripe_test_customer_id: string | null;
+      stripe_live_customer_id: string | null;
+    }>(
+      `SELECT TOP 1
+         id,
+         email,
+         full_name,
+         phone_number,
+         stripe_test_customer_id,
+         stripe_live_customer_id
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    const user = result.rows[0];
+    if (!user) {
+      throw new NotFoundException('Account not found');
+    }
+
+    return user;
+  }
+
+  private async ensureStripeCustomerForAccount(
+    mode: 'test' | 'live',
+    user: {
+      id: string;
+      email: string;
+      full_name: string | null;
+      phone_number: string | null;
+      stripe_test_customer_id: string | null;
+      stripe_live_customer_id: string | null;
+    },
+    secretKey: string,
+  ) {
+    const stripe = this.createStripeClient(secretKey);
+    const existingStripeCustomerId =
+      mode === 'live'
+        ? user.stripe_live_customer_id
+        : user.stripe_test_customer_id;
+
+    if (existingStripeCustomerId) {
+      await stripe.customers.update(existingStripeCustomerId, {
+        email: user.email,
+        name: user.full_name?.trim() || undefined,
+        phone: user.phone_number?.trim() || undefined,
+        metadata: {
+          marketplace_customer_id: user.id,
+        },
+      });
+
+      return existingStripeCustomerId;
+    }
+
+    const createdCustomer = await stripe.customers.create({
+      email: user.email,
+      name: user.full_name?.trim() || undefined,
+      phone: user.phone_number?.trim() || undefined,
+      metadata: {
+        marketplace_customer_id: user.id,
+      },
+    });
+
+    await this.databaseService.query(
+      `UPDATE users
+       SET ${mode === 'live' ? 'stripe_live_customer_id' : 'stripe_test_customer_id'} = $1,
+           updated_at = SYSDATETIME()
+       WHERE id = $2`,
+      [createdCustomer.id, user.id],
+    );
+
+    return createdCustomer.id;
+  }
+
+  private async loadStripePaymentMethodsForCustomerAccount(user: {
+    id: string;
+    email: string;
+    fullName: string | null;
+    phoneNumber: string | null;
+    stripeTestCustomerId: string | null;
+    stripeLiveCustomerId: string | null;
+  }) {
+    try {
+      const settings = await this.loadActiveStripeAccountPaymentContext();
+      const stripeCustomerId =
+        settings.mode === 'live'
+          ? user.stripeLiveCustomerId
+          : user.stripeTestCustomerId;
+
+      if (!stripeCustomerId) {
+        return [];
+      }
+
+      const stripe = this.createStripeClient(settings.secretKey);
+      const customer = await stripe.customers.retrieve(stripeCustomerId);
+      if (customer.deleted) {
+        return [];
+      }
+
+      const defaultPaymentMethodId =
+        typeof customer.invoice_settings?.default_payment_method === 'string'
+          ? customer.invoice_settings.default_payment_method
+          : customer.invoice_settings?.default_payment_method?.id ?? null;
+      const paymentMethods = await stripe.paymentMethods.list({
+        customer: stripeCustomerId,
+        type: 'card',
+      });
+
+      return paymentMethods.data.map((method) => ({
+        id: method.id,
+        nickname: null,
+        cardholderName: method.billing_details?.name ?? null,
+        brand: method.card?.brand
+          ? `${method.card.brand.charAt(0).toUpperCase()}${method.card.brand.slice(1)}`
+          : 'Card',
+        last4: method.card?.last4 ?? '----',
+        expMonth: method.card?.exp_month ?? 0,
+        expYear: method.card?.exp_year ?? 0,
+        isDefault: method.id === defaultPaymentMethodId,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   private storeVendorLogo(vendorId: string, file: Express.Multer.File) {
@@ -1685,9 +1780,7 @@ export class AccountService {
       mkdirSync(targetDir, { recursive: true });
     }
 
-    const extension = file.originalname.includes('.')
-      ? file.originalname.slice(file.originalname.lastIndexOf('.'))
-      : '.jpg';
+    const extension = getSafeImageExtensionForMimeType(file.mimetype);
     const fileName = `logo-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
     const targetPath = join(targetDir, fileName);
 
@@ -1695,6 +1788,7 @@ export class AccountService {
       throw new BadRequestException('Uploaded logo could not be processed');
     }
 
+    assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
     renameSync(file.path, targetPath);
     return `/media/vendors/vendor-${vendorId}/branding/${fileName}`;
   }
@@ -1757,87 +1851,4 @@ export class AccountService {
     });
   }
 
-  private formatSqlDateTime(value: Date) {
-    return value.toISOString().replace('T', ' ').replace('Z', '');
-  }
-
-  private resolveAutomaticSubscription(vendor: {
-    subscription_plan: 'monthly' | 'yearly' | null;
-    subscription_status: 'inactive' | 'active' | 'expired';
-    subscription_started_at: Date | null;
-    subscription_ends_at: Date | null;
-  }) {
-    return {
-      planType: vendor.subscription_plan,
-      status:
-        vendor.subscription_status === 'active' &&
-        vendor.subscription_ends_at &&
-        vendor.subscription_ends_at >= new Date()
-          ? 'active'
-          : vendor.subscription_plan
-            ? 'expired'
-            : 'inactive',
-      startedAt: vendor.subscription_started_at,
-      endsAt: vendor.subscription_ends_at,
-    } as const;
-  }
-
-  private resolveManualOverride(vendor: {
-    subscription_override_plan: 'monthly' | 'yearly' | null;
-    subscription_override_status: 'active' | 'expired' | null;
-    subscription_override_started_at: Date | null;
-    subscription_override_ends_at: Date | null;
-    subscription_override_note?: string | null;
-    subscription_override_updated_at?: Date | null;
-  }) {
-    if (!vendor.subscription_override_status) {
-      return null;
-    }
-
-    return {
-      planType: vendor.subscription_override_plan,
-      status:
-        vendor.subscription_override_status === 'active' &&
-        vendor.subscription_override_ends_at &&
-        vendor.subscription_override_ends_at >= new Date()
-          ? 'active'
-          : 'expired',
-      startedAt: vendor.subscription_override_started_at,
-      endsAt: vendor.subscription_override_ends_at,
-      note: vendor.subscription_override_note,
-      updatedAt: vendor.subscription_override_updated_at,
-    } as const;
-  }
-
-  private resolveEffectiveSubscription(vendor: {
-    subscription_plan: 'monthly' | 'yearly' | null;
-    subscription_status: 'inactive' | 'active' | 'expired';
-    subscription_started_at: Date | null;
-    subscription_ends_at: Date | null;
-    subscription_override_plan: 'monthly' | 'yearly' | null;
-    subscription_override_status: 'active' | 'expired' | null;
-    subscription_override_started_at: Date | null;
-    subscription_override_ends_at: Date | null;
-  }) {
-    const manualOverride = this.resolveManualOverride(vendor);
-    if (
-      manualOverride &&
-      (vendor.subscription_override_status === 'expired' ||
-        manualOverride.status === 'active')
-    ) {
-      return {
-        planType: manualOverride.planType ?? vendor.subscription_plan,
-        status: manualOverride.status,
-        startedAt: manualOverride.startedAt,
-        endsAt: manualOverride.endsAt,
-        source: 'manual_override' as const,
-      };
-    }
-
-    const automatic = this.resolveAutomaticSubscription(vendor);
-    return {
-      ...automatic,
-      source: 'automatic' as const,
-    };
-  }
 }
