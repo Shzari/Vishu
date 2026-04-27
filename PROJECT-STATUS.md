@@ -1,6 +1,6 @@
 # Vishu Project Status
 
-Last updated: 2026-04-02
+Last updated: 2026-04-27
 
 This file is the handoff reference for any account or agent continuing work on this repo.
 
@@ -15,6 +15,10 @@ This file is the handoff reference for any account or agent continuing work on t
   - `DATABASE-STRUCTURE.md`
 - Current AWS deploy reference:
   - `AWS-DEPLOY-CHECKLIST.md`
+- GitHub source of truth:
+  - Desktop repo path: `C:\Users\Shkelqimi\Desktop\vishu`
+  - GitHub remote: `https://github.com/Shzari/Vishu.git`
+  - latest confirmed pushed `main` commit from this workspace: `4ba4911`
 - Local runtime note:
   - local web is pointed back to `localhost` for API calls
   - old Tailscale local API target should no longer be used for daily local development
@@ -24,6 +28,35 @@ This file is the handoff reference for any account or agent continuing work on t
 - Demo data:
   - repeatable seed command is now `npm run seed:demo`
   - seed creates multiple verified/active vendors with active visibility, demo products, images, and homepage promo banners
+
+## Current Account State
+
+- `/account` now loads:
+  - `/account/me`
+  - `/orders/my`
+- Customer account navigation now has working sections for:
+  - `Overview`
+  - `Orders`
+  - `Returns`
+  - `Reviews`
+  - `Favorites`
+  - `Addresses`
+  - `Payments`
+  - `Support`
+  - `Settings`
+- Current account capability split:
+  - `Orders` is fully backed by existing order data and order-detail flow
+  - `Reviews` is backed by delivered-order review gating that already exists
+  - `Returns` is currently a guided shortcut layer over delivered orders and support, not a dedicated return-request workflow yet
+  - `Support` is currently a shortcut layer into contact, orders, and claim-orders, not a ticketing system yet
+
+## Biggest Current Gaps
+
+- Missing DB-backed customer return workflow
+- Missing DB-backed customer support ticket and message workflow
+- Missing customer notification center inside `/account`
+- Missing customer activity/security event feed
+- Missing one-click review history management beyond the current delivered-item entry points
 
 ## Phase Overview
 
@@ -197,6 +230,13 @@ This file is the handoff reference for any account or agent continuing work on t
 
 ## Recent Local Work
 
+- 2026-04-27 account refresh:
+  - `/account` now uses both account and order data for a more action-oriented customer workspace
+  - real `Returns`, `Reviews`, and `Support` sections were added to the account navigation
+  - review-ready items are now surfaced directly from delivered orders inside `/account`
+  - support shortcuts now expose `/contact`, `/orders`, and `/claim-orders` from one place
+  - profile settings now use split `Name` and `Surname` inputs plus email verification modal flow
+  - this work did **not** add new SQL tables yet
 - local API/web were brought back to localhost-first development
 - demo seeding was expanded with multiple vendors, products, logos, and hero slides
 - hidden products are no longer orderable through stale order/cart requests
@@ -433,8 +473,8 @@ This file is the handoff reference for any account or agent continuing work on t
 - GitHub remote provided by user:
   - `https://github.com/Shzari/Vishu`
 - Important local repo note:
-  - current folder on Desktop is **not** a Git working tree right now
-  - before pushing, either clone the GitHub repo cleanly into the deployable folder or connect this workspace to a real `.git` repo first
+  - current Desktop working repo **is** a Git working tree
+  - use `C:\Users\Shkelqimi\Desktop\vishu` as the source of truth when pushing user-requested updates
 - Remote branches currently visible:
   - `main`
   - `vishu`
@@ -503,12 +543,31 @@ This file is the handoff reference for any account or agent continuing work on t
     - activation email only when the customer is still unactivated
   - verify password-setup activation links point to the real public domain
 
+## Needed DB Tables For Next Account Phase
+
+- These are planning targets only. They are **not** implemented yet in the current schema.
+- Returns:
+  - `return_requests`
+  - `return_request_items`
+  - optional later: `return_request_events`
+- Support:
+  - `support_tickets`
+  - `support_ticket_messages`
+  - optional later: `support_ticket_attachments`
+- Notifications and activity:
+  - `customer_notifications`
+  - `customer_activity_log`
+- Reviews management:
+  - current `product_reviews` and `vendor_reviews` tables already exist
+  - no new review tables are strictly required unless moderation or reaction features are added later
+
 ## Next Recommended Work
 
-1. Start Phase 9 admin operations polish.
-2. Later revisit Phase 8 only after the fee-per-purchase guide is defined.
-3. Keep pushing more business data and workflow state into SQL Server instead of local app storage.
-4. Continue storefront product-card design only after confirming the running local web server is using the newest `.next` bundle.
+1. Build a real `/account` returns workflow backed by `return_requests` and `return_request_items`.
+2. Add customer support tickets/messages so the current Support section stops being shortcut-only.
+3. Add a lightweight notification center and activity feed inside `/account`.
+4. Keep pushing more business data and workflow state into SQL Server instead of local app storage.
+5. Continue storefront visual work only after confirming the running local web server is using the newest `.next` bundle.
 
 ## Current Handoff Notes
 
