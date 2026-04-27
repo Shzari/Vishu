@@ -259,7 +259,6 @@ export function CategoryResultsPage({
         .sort((left, right) => left.localeCompare(right)),
     [baseProducts],
   );
-
   const filteredProducts = useMemo(() => {
     return baseProducts.filter((product) => {
       const matchesMinPrice =
@@ -311,6 +310,7 @@ export function CategoryResultsPage({
     });
   }, [
     baseProducts,
+    currentDepartment,
     inStockOnly,
     maxPrice,
     minPrice,
@@ -345,9 +345,7 @@ export function CategoryResultsPage({
     mode === "new"
       ? "New Arrivals"
       : getStorefrontCategoryHeading(currentDepartment, currentCategory);
-  const visibleInStockCount = visibleProducts.filter(
-    (product) => product.stock > 0,
-  ).length;
+
   function replaceQuery(updates: Record<string, string | null>) {
     const nextQuery = buildQueryString(searchParams, updates);
     startTransition(() => {
@@ -414,25 +412,6 @@ export function CategoryResultsPage({
       <section className="category-results-head">
         <div className="category-results-head-copy">
           <h1 className="category-results-title">{pageTitle}</h1>
-          <p className="category-results-copy">
-            {mode === "new"
-              ? "Fresh marketplace arrivals with the same catalog controls used across the storefront."
-              : `Browse ${formatCatalogLabel(currentCategory)} with clearer filters, stronger product context, and faster decision points.`}
-          </p>
-          <div className="mini-stats category-results-mini-stats">
-            <div className="mini-stat">
-              <span>Shown now</span>
-              <strong>{visibleProducts.length}</strong>
-            </div>
-            <div className="mini-stat">
-              <span>In stock</span>
-              <strong>{visibleInStockCount}</strong>
-            </div>
-            <div className="mini-stat">
-              <span>Brands</span>
-              <strong>{brandOptions.length}</strong>
-            </div>
-          </div>
         </div>
 
         <div className="category-results-controls">

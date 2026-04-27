@@ -151,7 +151,7 @@ export function ShopDetailClient() {
   }
 
   return (
-    <div className="stack">
+    <div className="shop-detail-page stack">
       <section className="shop-hero-panel">
         <div className="shop-hero-brand">
           <div className="shop-hero-logo">
@@ -207,7 +207,7 @@ export function ShopDetailClient() {
             </div>
           ) : null}
 
-          <div className="sidebar-card shop-sidebar-card">
+          <div className="shop-sidebar-card">
             <h2>Categories</h2>
             <div className="chip-row shop-category-cloud">
               {shop.categories.map((entry) => (

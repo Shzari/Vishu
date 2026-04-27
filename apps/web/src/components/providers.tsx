@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiRequest, getCookieSessionToken } from "@/lib/api";
+import { redirectToCustomerLogin } from "@/lib/login-redirect";
 import type {
   BrandingSettings,
   CartItem,
@@ -385,6 +386,15 @@ export function Providers({ children }: { children: ReactNode }) {
       items: favoriteItems,
       isFavorite: (productId) => favoriteIds.has(productId),
       toggleFavorite: (product) => {
+        if (loading) {
+          return;
+        }
+
+        if (!token || currentRole !== "customer") {
+          redirectToCustomerLogin();
+          return;
+        }
+
         setFavoriteItems((current) => {
           if (current.some((entry) => entry.id === product.id)) {
             return current.filter((entry) => entry.id !== product.id);
@@ -399,7 +409,7 @@ export function Providers({ children }: { children: ReactNode }) {
         );
       },
     }),
-    [favoriteIds, favoriteItems, setFavoriteItems],
+    [currentRole, favoriteIds, favoriteItems, loading, setFavoriteItems, token],
   );
 
   const brandingValue = useMemo<BrandingContextValue>(

@@ -305,6 +305,7 @@ BEGIN
     business_hours NVARCHAR(500) NULL,
     shipping_notes NVARCHAR(1000) NULL,
     low_stock_threshold INT NOT NULL DEFAULT 5,
+    platform_fee DECIMAL(10, 2) NOT NULL DEFAULT 1.00,
     bank_account_name NVARCHAR(255) NULL,
     bank_name NVARCHAR(255) NULL,
     bank_iban NVARCHAR(64) NULL,
@@ -841,6 +842,41 @@ WHERE NOT EXISTS (
   SELECT 1 FROM dbo.colors c WHERE c.name = source.name
 );
 
+IF EXISTS (SELECT 1 FROM dbo.colors WHERE name = 'hiri')
+   AND EXISTS (SELECT 1 FROM dbo.colors WHERE name = 'gray')
+BEGIN
+  DECLARE @legacyHiriColorId UNIQUEIDENTIFIER = (
+    SELECT TOP 1 id FROM dbo.colors WHERE name = 'hiri'
+  );
+  DECLARE @grayColorId UNIQUEIDENTIFIER = (
+    SELECT TOP 1 id FROM dbo.colors WHERE name = 'gray'
+  );
+
+  UPDATE dbo.products
+  SET color = 'gray',
+      updated_at = SYSDATETIME()
+  WHERE color = 'hiri';
+
+  INSERT INTO dbo.product_colors (product_id, color_id, sort_order)
+  SELECT pc.product_id, @grayColorId, pc.sort_order
+  FROM dbo.product_colors pc
+  WHERE pc.color_id = @legacyHiriColorId
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.product_colors existing
+      WHERE existing.product_id = pc.product_id
+        AND existing.color_id = @grayColorId
+    );
+
+  DELETE FROM dbo.product_colors
+  WHERE color_id = @legacyHiriColorId;
+
+  UPDATE dbo.colors
+  SET is_active = 0,
+      updated_at = SYSDATETIME()
+  WHERE id = @legacyHiriColorId;
+END;
+
 INSERT INTO dbo.sizes (size_type_id, label, is_active, sort_order)
 SELECT DISTINCT st.id, source.label, 1, 0
 FROM (
@@ -860,6 +896,35 @@ WHERE NOT EXISTS (
   WHERE s.size_type_id = st.id
     AND s.label = source.label
 );
+
+UPDATE dbo.categories
+SET is_active = 0,
+    updated_at = SYSDATETIME()
+WHERE name = 'Kravat'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.products p
+    WHERE p.category = 'Kravat'
+       OR p.category_id = dbo.categories.id
+       OR p.subcategory_id IN (
+         SELECT sc.id FROM dbo.subcategories sc WHERE sc.category_id = dbo.categories.id
+       )
+  );
+
+UPDATE dbo.sizes
+SET is_active = 0,
+    updated_at = SYSDATETIME()
+WHERE label = '5-10-mauj'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.products p
+    WHERE p.size = '5-10-mauj'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.product_sizes ps
+    WHERE ps.size_id = dbo.sizes.id
+  );
 
 INSERT INTO dbo.vendor_requests (
   vendor_id,
@@ -1238,6 +1303,32 @@ BEGIN
   );
 END;
 
+IF OBJECT_ID('dbo.product_reviews', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.product_reviews (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
+    rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment NVARCHAR(1500) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_reviews', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_reviews (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
+    rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment NVARCHAR(1500) NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
 IF OBJECT_ID('dbo.vendor_payouts', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.vendor_payouts (
@@ -1258,6 +1349,19 @@ BEGIN
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
     token NVARCHAR(255) NOT NULL UNIQUE,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_email_change_verifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_email_change_verifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    pending_email NVARCHAR(255) NOT NULL,
+    code_hash NVARCHAR(255) NOT NULL,
     expires_at DATETIME2 NOT NULL,
     used_at DATETIME2 NULL,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
@@ -1559,6 +1663,11 @@ BEGIN
   ALTER TABLE dbo.vendors ADD low_stock_threshold INT NOT NULL CONSTRAINT df_vendors_low_stock_threshold DEFAULT 5;
 END;
 
+IF COL_LENGTH('dbo.vendors', 'platform_fee') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD platform_fee DECIMAL(10, 2) NOT NULL CONSTRAINT df_vendors_platform_fee DEFAULT 1.00;
+END;
+
 IF COL_LENGTH('dbo.vendors', 'bank_name') IS NULL
 BEGIN
   ALTER TABLE dbo.vendors ADD bank_name NVARCHAR(255) NULL;
@@ -1825,6 +1934,30 @@ END;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_order_items_vendor_id' AND object_id = OBJECT_ID('dbo.order_items'))
 BEGIN
   CREATE INDEX idx_order_items_vendor_id ON dbo.order_items(vendor_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'ux_product_reviews_product_customer' AND object_id = OBJECT_ID('dbo.product_reviews'))
+BEGIN
+  CREATE UNIQUE INDEX ux_product_reviews_product_customer
+    ON dbo.product_reviews(product_id, customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_product_reviews_product_id_created_at' AND object_id = OBJECT_ID('dbo.product_reviews'))
+BEGIN
+  CREATE INDEX idx_product_reviews_product_id_created_at
+    ON dbo.product_reviews(product_id, created_at DESC);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'ux_vendor_reviews_vendor_customer' AND object_id = OBJECT_ID('dbo.vendor_reviews'))
+BEGIN
+  CREATE UNIQUE INDEX ux_vendor_reviews_vendor_customer
+    ON dbo.vendor_reviews(vendor_id, customer_id);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_vendor_reviews_vendor_id_created_at' AND object_id = OBJECT_ID('dbo.vendor_reviews'))
+BEGIN
+  CREATE INDEX idx_vendor_reviews_vendor_id_created_at
+    ON dbo.vendor_reviews(vendor_id, created_at DESC);
 END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_vendor_payouts_vendor_id' AND object_id = OBJECT_ID('dbo.vendor_payouts'))

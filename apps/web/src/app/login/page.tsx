@@ -79,7 +79,7 @@ export default function LoginPage() {
   return (
     <div className="auth-page auth-page-compact">
       <section className="auth-intro">
-        <h1 className="hero-title">Sign in to your marketplace account.</h1>
+        <h1 className="hero-title">Sign in to Vishu.shop</h1>
         <p className="hero-copy">
           Customers can place orders, vendors can manage their products, and admins can approve shops and oversee the whole platform.
         </p>

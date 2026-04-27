@@ -10,6 +10,7 @@ type AdminWorkspaceSection =
   | "promotions"
   | "requests"
   | "reports"
+  | "fees"
   | "settings";
 
 const ADMIN_WORKSPACE_LINKS: Array<{
@@ -23,6 +24,7 @@ const ADMIN_WORKSPACE_LINKS: Array<{
   { id: "promotions", label: "Promotions", href: "/admin/promotions" },
   { id: "requests", label: "Requests", href: "/admin/requests" },
   { id: "reports", label: "Reports", href: "/admin/reports" },
+  { id: "fees", label: "Vendor Fees", href: "/admin/fees" },
   { id: "settings", label: "Settings", href: "/admin/settings" },
 ];
 
@@ -34,6 +36,7 @@ function getActiveSection(pathname: string): AdminWorkspaceSection {
   if (pathname.startsWith("/admin/promotions")) return "promotions";
   if (pathname.startsWith("/admin/requests")) return "requests";
   if (pathname.startsWith("/admin/reports")) return "reports";
+  if (pathname.startsWith("/admin/fees")) return "fees";
   if (pathname.startsWith("/admin/settings")) return "settings";
   return "dashboard";
 }

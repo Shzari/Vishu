@@ -47,6 +47,11 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     !pathname.startsWith("/vendor");
   const vendorHeaderName =
     profile?.vendor?.shop_name?.trim() || profile?.fullName?.trim() || "Vendor Panel";
+  const vendorHeaderInitial =
+    vendorHeaderName.trim().charAt(0).toUpperCase() || "V";
+  const vendorHeaderLogoUrl = profile?.vendor?.logo_url
+    ? assetUrl(profile.vendor.logo_url)
+    : null;
 
   useEffect(() => {
     closeCart();
@@ -197,7 +202,16 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 <button type="button" className="vendor-header-notify">
                   Notifications
                 </button>
-                <span className="vendor-header-shop-pill">{vendorHeaderName}</span>
+                <span className="vendor-header-shop-pill">
+                  <span className="vendor-header-shop-name">{vendorHeaderName}</span>
+                  <span className="vendor-header-shop-avatar" aria-hidden="true">
+                    {vendorHeaderLogoUrl ? (
+                      <img src={vendorHeaderLogoUrl} alt="" />
+                    ) : (
+                      <span>{vendorHeaderInitial}</span>
+                    )}
+                  </span>
+                </span>
               </>
             ) : (
               <>

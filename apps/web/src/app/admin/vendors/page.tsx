@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, formatCurrency } from "@/lib/api";
 import type { AdminUserRow } from "@/lib/types";
 
 export default function AdminVendorsPage() {
   const { token, currentRole } = useAuth();
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [feeDrafts, setFeeDrafts] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [verificationFilter, setVerificationFilter] = useState("all");
   const [activationFilter, setActivationFilter] = useState("all");
@@ -27,6 +28,16 @@ export default function AdminVendorsPage() {
       setError(null);
       const response = await apiRequest<AdminUserRow[]>("/admin/users", undefined, token);
       setUsers(response);
+      setFeeDrafts(
+        Object.fromEntries(
+          response
+            .filter((entry) => entry.vendor_id)
+            .map((entry) => [
+              entry.vendor_id as string,
+              String(Number(entry.platform_fee ?? 1).toFixed(2)),
+            ]),
+        ),
+      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load vendors.");
     } finally {
@@ -103,6 +114,36 @@ export default function AdminVendorsPage() {
           ? actionError.message
           : "Failed to resend vendor verification.",
       );
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function updateVendorFee(vendorId: string) {
+    if (!token) return;
+
+    const nextFee = Number(feeDrafts[vendorId] ?? "0");
+    if (!Number.isFinite(nextFee) || nextFee < 0) {
+      setError("Fee must be a number greater than or equal to 0.");
+      return;
+    }
+
+    try {
+      setActiveAction(`fee-${vendorId}`);
+      setMessage(null);
+      setError(null);
+      await apiRequest(
+        `/admin/vendors/${vendorId}/platform-fee`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ platformFee: nextFee }),
+        },
+        token,
+      );
+      setMessage("Vendor fee updated.");
+      await loadVendors();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Failed to update vendor fee.");
     } finally {
       setActiveAction(null);
     }
@@ -224,6 +265,7 @@ export default function AdminVendorsPage() {
                     <th>Verification</th>
                     <th>Activation</th>
                     <th>Login</th>
+                    <th>Fee</th>
                     <th>Joined</th>
                     <th>Actions</th>
                   </tr>
@@ -276,9 +318,68 @@ export default function AdminVendorsPage() {
                           {vendor.is_active ? "Enabled" : "Disabled"}
                         </span>
                       </td>
+                      <td>
+                        {vendor.vendor_id ? (
+                          <div className="admin-table-stack">
+                            <strong>
+                              {formatCurrency(
+                                Number(
+                                  vendor.effective_platform_fee ?? vendor.platform_fee ?? 0,
+                                ),
+                              )}
+                            </strong>
+                            {vendor.fee_grace_ends_at ? (
+                              <span className="muted">
+                                Applied now: free until{" "}
+                                {new Date(vendor.fee_grace_ends_at).toLocaleDateString()}
+                              </span>
+                            ) : (
+                              <span className="muted">
+                                Applied now: {formatCurrency(Number(vendor.platform_fee ?? 0))}
+                              </span>
+                            )}
+                            <div
+                              className="inline-actions"
+                              style={{ alignItems: "center", flexWrap: "nowrap" }}
+                            >
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={
+                                  feeDrafts[vendor.vendor_id] ??
+                                  String(Number(vendor.platform_fee ?? 1).toFixed(2))
+                                }
+                                onChange={(event) =>
+                                  setFeeDrafts((current) => ({
+                                    ...current,
+                                    [vendor.vendor_id!]: event.target.value,
+                                  }))
+                                }
+                                style={{ width: "92px" }}
+                              />
+                              <span className="muted">
+                                {vendor.fee_grace_ends_at ? "After grace" : "Base"}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="muted">-</span>
+                        )}
+                      </td>
                       <td>{new Date(vendor.created_at).toLocaleDateString()}</td>
                       <td>
                         <div className="admin-table-actions">
+                          {vendor.vendor_id ? (
+                            <button
+                              className="button"
+                              type="button"
+                              disabled={activeAction !== null}
+                              onClick={() => void updateVendorFee(vendor.vendor_id!)}
+                            >
+                              {activeAction === `fee-${vendor.vendor_id}` ? "Updating..." : "Update fee"}
+                            </button>
+                          ) : null}
                           {vendor.vendor_id ? (
                             <button
                               className="button-secondary"

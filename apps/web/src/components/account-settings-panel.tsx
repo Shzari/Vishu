@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
@@ -31,7 +31,7 @@ export function AccountSettingsPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadSettings() {
+  const loadSettings = useCallback(async () => {
     if (!token) return;
 
     try {
@@ -47,13 +47,13 @@ export function AccountSettingsPanel({
     } finally {
       setLoading(false);
     }
-  }
+  }, [token]);
 
   useEffect(() => {
     if (token && currentRole === allowedRole) {
       void loadSettings();
     }
-  }, [allowedRole, currentRole, token]);
+  }, [allowedRole, currentRole, loadSettings, token]);
 
   async function saveProfile() {
     if (!token) return;

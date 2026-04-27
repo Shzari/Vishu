@@ -1,13 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { apiRequest, assetUrl } from "@/lib/api";
 import type { AdminPromotion, AdminPromotionSettings } from "@/lib/types";
 
+function isValidDateValue(value?: string | null) {
+  return Boolean(value && !Number.isNaN(new Date(value).getTime()));
+}
+
+function safeDateInputValue(value?: string | null) {
+  return isValidDateValue(value) ? new Date(value as string).toISOString().slice(0, 10) : "";
+}
+
 function formatDateForInput(value?: string | null) {
-  return value ? value.slice(0, 10) : "";
+  return safeDateInputValue(value);
+}
+
+function formatDisplayDate(value?: string | null, fallback = "Not scheduled") {
+  if (!isValidDateValue(value)) {
+    return fallback;
+  }
+
+  return new Date(value as string).toLocaleDateString();
+}
+
+function formatDisplayDateTime(value?: string | null, fallback = "Unknown") {
+  if (!isValidDateValue(value)) {
+    return fallback;
+  }
+
+  return new Date(value as string).toLocaleString();
 }
 
 function formatSchedule(promotion: AdminPromotion) {
@@ -16,18 +40,73 @@ function formatSchedule(promotion: AdminPromotion) {
   }
 
   if (promotion.startDate && promotion.endDate) {
-    return `${new Date(promotion.startDate).toLocaleDateString()} - ${new Date(promotion.endDate).toLocaleDateString()}`;
+    return `${formatDisplayDate(promotion.startDate)} - ${formatDisplayDate(promotion.endDate)}`;
   }
 
   if (promotion.startDate) {
-    return `Starts ${new Date(promotion.startDate).toLocaleDateString()}`;
+    return `Starts ${formatDisplayDate(promotion.startDate)}`;
   }
 
-  return `Ends ${new Date(promotion.endDate ?? "").toLocaleDateString()}`;
+  return `Ends ${formatDisplayDate(promotion.endDate)}`;
+}
+
+function isPromotionExpired(promotion: AdminPromotion) {
+  return Boolean(
+    isValidDateValue(promotion.endDate) &&
+      new Date(promotion.endDate as string).getTime() < Date.now(),
+  );
+}
+
+function normalizePromotion(promotion: Partial<AdminPromotion>): AdminPromotion {
+  return {
+    id: String(promotion.id ?? ""),
+    internalName:
+      typeof promotion.internalName === "string" ? promotion.internalName : null,
+    desktopImageUrl:
+      typeof promotion.desktopImageUrl === "string"
+        ? promotion.desktopImageUrl
+        : null,
+    mobileImageUrl:
+      typeof promotion.mobileImageUrl === "string" ? promotion.mobileImageUrl : null,
+    customUrl: typeof promotion.customUrl === "string" ? promotion.customUrl : null,
+    isActive: Boolean(promotion.isActive),
+    displayOrder:
+      typeof promotion.displayOrder === "number" && Number.isFinite(promotion.displayOrder)
+        ? promotion.displayOrder
+        : 0,
+    startDate:
+      typeof promotion.startDate === "string" && promotion.startDate.trim().length > 0
+        ? promotion.startDate
+        : null,
+    endDate:
+      typeof promotion.endDate === "string" && promotion.endDate.trim().length > 0
+        ? promotion.endDate
+        : null,
+    updatedAt:
+      typeof promotion.updatedAt === "string" ? promotion.updatedAt : new Date(0).toISOString(),
+    isScheduledNow: Boolean(promotion.isScheduledNow),
+  };
+}
+
+function normalizePromotionSettings(
+  settings: Partial<AdminPromotionSettings> | null | undefined,
+): AdminPromotionSettings {
+  return {
+    autoRotate: Boolean(settings?.autoRotate),
+    intervalSeconds:
+      typeof settings?.intervalSeconds === "number" && Number.isFinite(settings.intervalSeconds)
+        ? settings.intervalSeconds
+        : 6,
+    promotions: Array.isArray(settings?.promotions)
+      ? settings!.promotions.map((promotion) => normalizePromotion(promotion))
+      : [],
+  };
 }
 
 export default function AdminPromotionsPage() {
   const { token, currentRole } = useAuth();
+  const promotionEditorRef = useRef<HTMLDivElement | null>(null);
+  const internalNameInputRef = useRef<HTMLInputElement | null>(null);
   const [settings, setSettings] = useState<AdminPromotionSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -50,7 +129,7 @@ export default function AdminPromotionsPage() {
   const [existingDesktopImageUrl, setExistingDesktopImageUrl] = useState<string | null>(null);
   const [existingMobileImageUrl, setExistingMobileImageUrl] = useState<string | null>(null);
 
-  async function loadPromotions() {
+  const loadPromotions = useCallback(async () => {
     if (!token) return;
 
     try {
@@ -61,9 +140,10 @@ export default function AdminPromotionsPage() {
         undefined,
         token,
       );
-      setSettings(response);
-      setAutoRotate(response.autoRotate);
-      setIntervalSeconds(String(response.intervalSeconds));
+      const normalized = normalizePromotionSettings(response);
+      setSettings(normalized);
+      setAutoRotate(normalized.autoRotate);
+      setIntervalSeconds(String(normalized.intervalSeconds));
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -73,13 +153,44 @@ export default function AdminPromotionsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [token]);
 
   useEffect(() => {
     if (token && currentRole === "admin") {
       void loadPromotions();
     }
-  }, [currentRole, token]);
+  }, [currentRole, loadPromotions, token]);
+
+  useEffect(() => {
+    if (!editingPromotionId) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const focusEditor = () => {
+      try {
+        promotionEditorRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      } catch {
+        promotionEditorRef.current?.scrollIntoView();
+      }
+
+      internalNameInputRef.current?.focus();
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      const frameId = window.requestAnimationFrame(focusEditor);
+      return () => window.cancelAnimationFrame(frameId);
+    }
+
+    const timeoutId = window.setTimeout(focusEditor, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [editingPromotionId]);
 
   function resetForm(nextOrder?: number) {
     setEditingPromotionId(null);
@@ -131,9 +242,10 @@ export default function AdminPromotionsPage() {
         },
         token,
       );
-      setSettings(response);
-      setAutoRotate(response.autoRotate);
-      setIntervalSeconds(String(response.intervalSeconds));
+      const normalized = normalizePromotionSettings(response);
+      setSettings(normalized);
+      setAutoRotate(normalized.autoRotate);
+      setIntervalSeconds(String(normalized.intervalSeconds));
       setMessage("Promotion slider settings saved.");
     } catch (saveError) {
       setError(
@@ -179,8 +291,16 @@ export default function AdminPromotionsPage() {
       body.append("customUrl", customUrl.trim());
       body.append("isActive", String(isActive));
       body.append("displayOrder", displayOrder || "0");
-      if (startDate) body.append("startDate", startDate);
-      if (endDate) body.append("endDate", endDate);
+      if (startDate) {
+        body.append("startDate", startDate);
+      } else if (editingPromotionId) {
+        body.append("clearStartDate", "true");
+      }
+      if (endDate) {
+        body.append("endDate", endDate);
+      } else if (editingPromotionId) {
+        body.append("clearEndDate", "true");
+      }
       if (desktopImageFile) body.append("desktopBannerImage", desktopImageFile);
       if (mobileImageFile) body.append("mobileBannerImage", mobileImageFile);
       if (clearMobileImage) body.append("clearMobileImage", "true");
@@ -196,10 +316,11 @@ export default function AdminPromotionsPage() {
         token,
       );
 
-      setSettings(response);
-      setAutoRotate(response.autoRotate);
-      setIntervalSeconds(String(response.intervalSeconds));
-      resetForm(response.promotions.length);
+      const normalized = normalizePromotionSettings(response);
+      setSettings(normalized);
+      setAutoRotate(normalized.autoRotate);
+      setIntervalSeconds(String(normalized.intervalSeconds));
+      resetForm(normalized.promotions.length);
       setMessage(
         editingPromotionId
           ? "Promotion updated."
@@ -239,9 +360,10 @@ export default function AdminPromotionsPage() {
         },
         token,
       );
-      setSettings(response);
-      setAutoRotate(response.autoRotate);
-      setIntervalSeconds(String(response.intervalSeconds));
+      const normalized = normalizePromotionSettings(response);
+      setSettings(normalized);
+      setAutoRotate(normalized.autoRotate);
+      setIntervalSeconds(String(normalized.intervalSeconds));
       setMessage(successMessage);
     } catch (patchError) {
       setError(
@@ -268,11 +390,12 @@ export default function AdminPromotionsPage() {
         },
         token,
       );
-      setSettings(response);
-      setAutoRotate(response.autoRotate);
-      setIntervalSeconds(String(response.intervalSeconds));
+      const normalized = normalizePromotionSettings(response);
+      setSettings(normalized);
+      setAutoRotate(normalized.autoRotate);
+      setIntervalSeconds(String(normalized.intervalSeconds));
       if (editingPromotionId === promotionId) {
-        resetForm(response.promotions.length);
+        resetForm(normalized.promotions.length);
       }
       setMessage("Promotion deleted.");
     } catch (deleteError) {
@@ -286,7 +409,7 @@ export default function AdminPromotionsPage() {
     }
   }
 
-  const promotions = settings?.promotions ?? [];
+  const promotions = useMemo(() => settings?.promotions ?? [], [settings?.promotions]);
   const sortedPromotions = useMemo(
     () => [...promotions].sort((a, b) => a.displayOrder - b.displayOrder),
     [promotions],
@@ -378,7 +501,7 @@ export default function AdminPromotionsPage() {
                 </div>
               </div>
 
-              <div className="form-card stack">
+              <div className="form-card stack" ref={promotionEditorRef}>
                 <div>
                   <h2 className="section-title">
                     {editingPromotionId ? "Edit Promotion" : "Create Promotion"}
@@ -393,6 +516,7 @@ export default function AdminPromotionsPage() {
                   <div className="field">
                     <label>Internal name</label>
                     <input
+                      ref={internalNameInputRef}
                       value={internalName}
                       onChange={(event) => setInternalName(event.target.value)}
                       placeholder="Summer sale hero"
@@ -593,7 +717,7 @@ export default function AdminPromotionsPage() {
                             <span className="muted">{formatSchedule(promotion)}</span>
                           </td>
                           <td>{promotion.displayOrder}</td>
-                          <td>{new Date(promotion.updatedAt).toLocaleString()}</td>
+                          <td>{formatDisplayDateTime(promotion.updatedAt)}</td>
                           <td>
                             <div className="inline-actions">
                               <button
@@ -610,14 +734,26 @@ export default function AdminPromotionsPage() {
                                 onClick={() =>
                                   void patchPromotion(
                                     promotion.id,
-                                    { isActive: !promotion.isActive },
+                                    {
+                                      isActive: !promotion.isActive,
+                                      ...(!promotion.isActive &&
+                                      isPromotionExpired(promotion)
+                                        ? { clearEndDate: true }
+                                        : {}),
+                                    },
                                     promotion.isActive
                                       ? "Promotion deactivated."
-                                      : "Promotion activated.",
+                                      : isPromotionExpired(promotion)
+                                        ? "Promotion reactivated and expired end date cleared."
+                                        : "Promotion activated.",
                                   )
                                 }
                               >
-                                {promotion.isActive ? "Deactivate" : "Activate"}
+                                {promotion.isActive
+                                  ? "Deactivate"
+                                  : isPromotionExpired(promotion)
+                                    ? "Reactivate"
+                                    : "Activate"}
                               </button>
                               <button
                                 className="button-secondary"

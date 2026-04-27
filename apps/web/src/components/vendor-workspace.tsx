@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { ProductMedia } from "@/components/product-media";
 import { RequireRole } from "@/components/require-role";
@@ -71,7 +71,7 @@ interface VendorProductsResponse {
 }
 
 const emptyCatalogRequestForm = {
-  requestType: "subcategory" as VendorCatalogRequest["requestType"],
+  requestType: "brand" as VendorCatalogRequest["requestType"],
   requestedValue: "",
   note: "",
 };
@@ -185,7 +185,7 @@ export function VendorWorkspace({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadWorkspace() {
+  const loadWorkspace = useCallback(async () => {
     if (!token) return;
     try {
       setLoading(true);
@@ -207,19 +207,20 @@ export function VendorWorkspace({
     } finally {
       setLoading(false);
     }
-  }
+  }, [refreshProfile, token]);
 
   useEffect(() => {
     if (token && currentRole === "vendor") {
       void loadWorkspace();
     }
-  }, [currentRole, token]);
+  }, [currentRole, loadWorkspace, token]);
 
   async function submitProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token) return;
     try {
       setActiveAction(editingProductId ? `save-${editingProductId}` : "create-product");
+      const resolvedSubcategoryId = selectedFormSubcategory?.id ?? form.subcategoryId;
       const body = new FormData();
       body.append("title", form.title);
       body.append("description", form.description);
@@ -227,7 +228,7 @@ export function VendorWorkspace({
       body.append("stock", form.stock);
       body.append("brandId", form.brandId);
       body.append("categoryId", form.categoryId);
-      body.append("subcategoryId", form.subcategoryId);
+      body.append("subcategoryId", resolvedSubcategoryId);
       if (form.genderGroupId) body.append("genderGroupId", form.genderGroupId);
       if (form.sizeTypeId) body.append("sizeTypeId", form.sizeTypeId);
       body.append("colorIds", JSON.stringify(form.colorIds));
@@ -581,6 +582,33 @@ export function VendorWorkspace({
       [],
     [availableFormSizeTypes, form.sizeTypeId],
   );
+  const selectedFormBrand = useMemo(
+    () => availableBrands.find((entry) => entry.id === form.brandId) ?? null,
+    [availableBrands, form.brandId],
+  );
+  const selectedFormGenderGroup = useMemo(
+    () => availableGenderGroups.find((entry) => entry.id === form.genderGroupId) ?? null,
+    [availableGenderGroups, form.genderGroupId],
+  );
+  const selectedFormCategory = useMemo(
+    () => availableFormCategories.find((entry) => entry.id === form.categoryId) ?? null,
+    [availableFormCategories, form.categoryId],
+  );
+  const selectedFormSubcategory = useMemo(
+    () =>
+      availableFormSubcategories.find((entry) => entry.id === form.subcategoryId) ??
+      availableFormSubcategories[0] ??
+      null,
+    [availableFormSubcategories, form.subcategoryId],
+  );
+  const selectedFormSizeType = useMemo(
+    () => availableFormSizeTypes.find((entry) => entry.id === form.sizeTypeId) ?? null,
+    [availableFormSizeTypes, form.sizeTypeId],
+  );
+  const selectedFormSize = useMemo(
+    () => availableFormSizes.find((entry) => entry.id === form.sizeId) ?? null,
+    [availableFormSizes, form.sizeId],
+  );
   const recentCatalogRequests = useMemo(
     () => catalogRequests.slice(0, 6),
     [catalogRequests],
@@ -613,11 +641,13 @@ export function VendorWorkspace({
   }, [availableFormCategories, form.categoryId]);
 
   useEffect(() => {
-    if (
-      form.subcategoryId &&
-      !availableFormSubcategories.some((entry) => entry.id === form.subcategoryId)
-    ) {
-      setForm((current) => ({ ...current, subcategoryId: "" }));
+    const nextSubcategoryId =
+      availableFormSubcategories.find((entry) => entry.id === form.subcategoryId)?.id ??
+      availableFormSubcategories[0]?.id ??
+      "";
+
+    if (nextSubcategoryId !== form.subcategoryId) {
+      setForm((current) => ({ ...current, subcategoryId: nextSubcategoryId }));
     }
   }, [availableFormSubcategories, form.subcategoryId]);
 
@@ -721,12 +751,30 @@ export function VendorWorkspace({
 
         {section === "products" ? (
           <>
-            <form className="form-card form-grid" onSubmit={submitProduct}>
-              <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <h2 className="section-title">{editingProductId ? "Edit product" : "Add product"}</h2>
-                <span className={editingProductId ? "badge warn" : "badge"}>
-                  {editingProductId ? "Editing" : "Create new"}
-                </span>
+            <form className="form-card vendor-product-composer" onSubmit={submitProduct}>
+              <div className="vendor-product-composer-header">
+                <div className="vendor-product-composer-copy">
+                  <div className="vendor-product-composer-kicker">Product studio</div>
+                  <h2 className="section-title">
+                    {editingProductId ? "Refine this product" : "Create a sharper listing"}
+                  </h2>
+                  <p className="muted">
+                    Work through a cleaner product composer for details, catalog setup,
+                    inventory, and images without changing the save flow.
+                  </p>
+                </div>
+                <div className="vendor-product-composer-badges">
+                  <span className={editingProductId ? "badge warn" : "badge"}>
+                    {editingProductId ? "Editing" : "New listing"}
+                  </span>
+                  <span className="chip">
+                    {selectedFilePreviews.length > 0
+                      ? `${selectedFilePreviews.length} selected`
+                      : editingProduct?.images.length
+                        ? `${editingProduct.images.length} saved`
+                        : "No images yet"}
+                  </span>
+                </div>
               </div>
               {!vendorCanManageCatalog ? (
                 <div className="message error">
@@ -735,249 +783,337 @@ export function VendorWorkspace({
                     : "Verify your vendor email before you can save products."}
                 </div>
               ) : null}
-              <div className="field">
-                <label>Title</label>
-                <input
-                  value={form.title}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, title: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Description</label>
-                <textarea
-                  value={form.description}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, description: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Price</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.price}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, price: event.target.value }))
-                    }
-                  />
-                </div>
-                <div className="field">
-                  <label>Stock</label>
-                  <input
-                    type="number"
-                    value={form.stock}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, stock: event.target.value }))
-                    }
-                  />
-                </div>
-              </div>
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Brand</label>
-                  <select
-                    value={form.brandId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, brandId: event.target.value }))
-                    }
-                  >
-                    <option value="">Select brand</option>
-                    {availableBrands.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>{getCatalogGenderLabel()}</label>
-                  <select
-                    value={form.genderGroupId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, genderGroupId: event.target.value }))
-                    }
-                  >
-                    <option value="">Select gender group</option>
-                    {availableGenderGroups.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Category</label>
-                  <select
-                    value={form.categoryId}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        categoryId: event.target.value,
-                        subcategoryId: "",
-                      }))
-                    }
-                  >
-                    <option value="">Select category</option>
-                    {availableFormCategories.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Subcategory</label>
-                  <select
-                    value={form.subcategoryId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, subcategoryId: event.target.value }))
-                    }
-                  >
-                    <option value="">Select subcategory</option>
-                    {availableFormSubcategories.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Colors</label>
-                  <select
-                    multiple
-                    value={form.colorIds}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        colorIds: Array.from(event.target.selectedOptions).map((option) => option.value),
-                      }))
-                    }
-                  >
-                    {availableFormColors.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Size type</label>
-                  <select
-                    value={form.sizeTypeId}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        sizeTypeId: event.target.value,
-                        sizeId: "",
-                      }))
-                    }
-                  >
-                    <option value="">Select size type</option>
-                    {availableFormSizeTypes.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="form-grid two">
-                <div className="field">
-                  <label>Size</label>
-                  <select
-                    value={form.sizeId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, sizeId: event.target.value }))
-                    }
-                  >
-                    <option value="">Select size</option>
-                    {availableFormSizes.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <p className="muted vendor-catalog-help">
-                Vendors can only use approved catalog options here. If something is missing,
-                submit a request below instead of creating it directly.
-              </p>
-              <div className="field">
-                <label>Images</label>
-                <input
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={(event) => setFiles(event.target.files)}
-                />
-              </div>
-              {editingProduct && !replaceImages && editingProduct.images.length > 0 ? (
-                <div className="preview-grid">
-                  {editingProduct.images.map((image) => (
-                    <div key={image} className="preview-card">
-                      <ProductMedia
-                        image={assetUrl(image)}
-                        title={editingProduct.title}
-                        subtitle="Current image"
-                        className="card-image"
+              <div className="vendor-product-composer-layout">
+                <div className="vendor-product-composer-main">
+                  <section className="vendor-product-composer-section">
+                    <div className="vendor-product-composer-section-head">
+                      <span className="vendor-product-composer-step">01</span>
+                      <div>
+                        <h3>Core details</h3>
+                        <p className="muted">Start with the product name, description, price, and stock.</p>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label>Title</label>
+                      <input
+                        value={form.title}
+                        placeholder="Ex. Soft lounge hoodie"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, title: event.target.value }))
+                        }
                       />
                     </div>
-                  ))}
-                </div>
-              ) : null}
-              {selectedFilePreviews.length > 0 ? (
-                <div className="preview-grid">
-                  {selectedFilePreviews.map((preview) => (
-                    <div key={preview.url} className="preview-card">
-                      <ProductMedia
-                        image={preview.url}
-                        title={form.title || preview.name}
-                        subtitle={preview.name}
-                        className="card-image"
+                    <div className="field">
+                      <label>Description</label>
+                      <textarea
+                        value={form.description}
+                        placeholder="Write a short, customer-friendly description."
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, description: event.target.value }))
+                        }
                       />
                     </div>
-                  ))}
+                    <div className="form-grid two">
+                      <div className="field">
+                        <label>Price</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={form.price}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, price: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Stock</label>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={form.stock}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, stock: event.target.value }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="vendor-product-composer-section">
+                    <div className="vendor-product-composer-section-head">
+                      <span className="vendor-product-composer-step">02</span>
+                      <div>
+                        <h3>Catalog setup</h3>
+                        <p className="muted">Map the product to your approved marketplace structure.</p>
+                      </div>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="field">
+                        <label>Brand</label>
+                        <select
+                          value={form.brandId}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, brandId: event.target.value }))
+                          }
+                        >
+                          <option value="">Select brand</option>
+                          {availableBrands.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>{getCatalogGenderLabel()}</label>
+                        <select
+                          value={form.genderGroupId}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, genderGroupId: event.target.value }))
+                          }
+                        >
+                          <option value="">Select gender group</option>
+                          {availableGenderGroups.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="field">
+                        <label>Category</label>
+                        <select
+                          value={form.categoryId}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              categoryId: event.target.value,
+                              subcategoryId: "",
+                            }))
+                          }
+                        >
+                          <option value="">Select category</option>
+                          {availableFormCategories.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="vendor-product-auto-card">
+                        <span className="vendor-product-auto-label">Auto subcategory</span>
+                        <strong>
+                          {selectedFormSubcategory?.name ?? "Assigned from the chosen category"}
+                        </strong>
+                        <p className="muted">
+                          Vendors no longer need to choose this manually. It is handled from the
+                          category setup in the background.
+                        </p>
+                      </div>
+                    </div>
+                    <p className="muted vendor-catalog-help">
+                      Vendors can only use approved catalog options here. If something is missing,
+                      submit a request below instead of creating it directly.
+                    </p>
+                  </section>
+
+                  <section className="vendor-product-composer-section">
+                    <div className="vendor-product-composer-section-head">
+                      <span className="vendor-product-composer-step">03</span>
+                      <div>
+                        <h3>Color and size</h3>
+                        <p className="muted">Choose the attributes customers will use to shop this item.</p>
+                      </div>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="field">
+                        <label>Colors</label>
+                        <select
+                          multiple
+                          value={form.colorIds}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              colorIds: Array.from(event.target.selectedOptions).map((option) => option.value),
+                            }))
+                          }
+                        >
+                          {availableFormColors.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="muted">Use Ctrl or Command to choose multiple colors.</p>
+                      </div>
+                      <div className="field">
+                        <label>Size type</label>
+                        <select
+                          value={form.sizeTypeId}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              sizeTypeId: event.target.value,
+                              sizeId: "",
+                            }))
+                          }
+                        >
+                          <option value="">Select size type</option>
+                          {availableFormSizeTypes.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="field">
+                        <label>Size</label>
+                        <select
+                          value={form.sizeId}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, sizeId: event.target.value }))
+                          }
+                        >
+                          <option value="">Select size</option>
+                          {availableFormSizes.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </section>
                 </div>
-              ) : null}
-              {editingProductId ? (
-                <label className="inline-actions">
-                  <input
-                    type="checkbox"
-                    checked={replaceImages}
-                    onChange={(event) => setReplaceImages(event.target.checked)}
-                  />
-                  Replace existing images
-                </label>
-              ) : null}
-              <div className="inline-actions">
-                <button className="button" type="submit" disabled={!vendorCanManageCatalog}>
-                  {activeAction === (editingProductId ? `save-${editingProductId}` : "create-product")
-                    ? editingProductId
-                      ? "Updating..."
-                      : "Creating..."
-                    : editingProductId
-                      ? "Update product"
-                      : "Create product"}
-                </button>
-                {editingProductId ? (
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    disabled={activeAction !== null}
-                    onClick={resetProductForm}
-                  >
-                    Cancel edit
-                  </button>
-                ) : null}
+
+                <aside className="vendor-product-composer-side">
+                  <section className="vendor-product-composer-panel vendor-upload-panel">
+                    <div className="vendor-product-composer-section-head">
+                      <span className="vendor-product-composer-step">04</span>
+                      <div>
+                        <h3>Images and publish</h3>
+                        <p className="muted">Upload clear images, review the setup, and save when ready.</p>
+                      </div>
+                    </div>
+
+                    <div className="vendor-product-meta-grid">
+                      <div className="vendor-product-meta-card">
+                        <span>Brand</span>
+                        <strong>{selectedFormBrand?.name ?? "Choose brand"}</strong>
+                      </div>
+                      <div className="vendor-product-meta-card">
+                        <span>Category</span>
+                        <strong>{selectedFormCategory?.name ?? "Choose category"}</strong>
+                      </div>
+                      <div className="vendor-product-meta-card">
+                        <span>{getCatalogGenderLabel()}</span>
+                        <strong>{selectedFormGenderGroup?.name ?? "Optional"}</strong>
+                      </div>
+                      <div className="vendor-product-meta-card">
+                        <span>Size setup</span>
+                        <strong>
+                          {selectedFormSize?.label ?? selectedFormSizeType?.name ?? "Choose size details"}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="vendor-upload-dropzone">
+                      <div className="vendor-upload-dropzone-copy">
+                        <strong>
+                          {selectedFilePreviews.length > 0
+                            ? `${selectedFilePreviews.length} new image${selectedFilePreviews.length === 1 ? "" : "s"} selected`
+                            : editingProduct?.images.length
+                              ? `${editingProduct.images.length} saved image${editingProduct.images.length === 1 ? "" : "s"}`
+                              : "Choose product images"}
+                        </strong>
+                        <p className="muted">
+                          Upload up to 6 images. Clean front shots and detail photos usually perform best.
+                        </p>
+                      </div>
+                      <input
+                        className="vendor-upload-input"
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        onChange={(event) => setFiles(event.target.files)}
+                      />
+                    </div>
+
+                    {editingProductId ? (
+                      <label className="vendor-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={replaceImages}
+                          onChange={(event) => setReplaceImages(event.target.checked)}
+                        />
+                        Replace existing images
+                      </label>
+                    ) : null}
+
+                    {editingProduct && !replaceImages && editingProduct.images.length > 0 ? (
+                      <div className="vendor-preview-group">
+                        <div className="vendor-preview-heading">Current images</div>
+                        <div className="preview-grid">
+                          {editingProduct.images.map((image) => (
+                            <div key={image} className="preview-card">
+                              <ProductMedia
+                                image={assetUrl(image)}
+                                title={editingProduct.title}
+                                subtitle="Current image"
+                                className="card-image"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {selectedFilePreviews.length > 0 ? (
+                      <div className="vendor-preview-group">
+                        <div className="vendor-preview-heading">New uploads</div>
+                        <div className="preview-grid">
+                          {selectedFilePreviews.map((preview) => (
+                            <div key={preview.url} className="preview-card">
+                              <ProductMedia
+                                image={preview.url}
+                                title={form.title || preview.name}
+                                subtitle={preview.name}
+                                className="card-image"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="inline-actions vendor-product-composer-actions">
+                      <button className="button" type="submit" disabled={!vendorCanManageCatalog}>
+                        {activeAction === (editingProductId ? `save-${editingProductId}` : "create-product")
+                          ? editingProductId
+                            ? "Updating..."
+                            : "Creating..."
+                          : editingProductId
+                            ? "Update product"
+                            : "Create product"}
+                      </button>
+                      {editingProductId ? (
+                        <button
+                          className="button-ghost"
+                          type="button"
+                          disabled={activeAction !== null}
+                          onClick={resetProductForm}
+                        >
+                          Cancel edit
+                        </button>
+                      ) : null}
+                    </div>
+                  </section>
+                </aside>
               </div>
             </form>
             <section className="form-card stack">
@@ -985,7 +1121,7 @@ export function VendorWorkspace({
                 <div>
                   <h2 className="section-title">Missing catalog option?</h2>
                   <p className="muted">
-                    Request a missing brand, subcategory, category, size, or color. Admin will
+                    Request a missing brand, category, size, or color. Admin will
                     review the request, then create the real value manually in Settings if approved.
                   </p>
                 </div>
@@ -1006,7 +1142,6 @@ export function VendorWorkspace({
                     >
                       <option value="brand">Brand</option>
                       <option value="category">Category</option>
-                      <option value="subcategory">Subcategory</option>
                       <option value="size">Size</option>
                       <option value="color">Color</option>
                     </select>
@@ -1036,11 +1171,7 @@ export function VendorWorkspace({
                         note: event.target.value,
                       }))
                     }
-                    placeholder={
-                      catalogRequestForm.requestType === "subcategory" && form.subcategoryId
-                        ? "Optional note with current category context"
-                        : "Optional context for admin"
-                    }
+                    placeholder="Optional context for admin"
                   />
                 </div>
                 <div className="inline-actions">

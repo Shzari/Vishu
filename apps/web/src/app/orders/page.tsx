@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
@@ -17,7 +17,7 @@ export default function OrdersPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     if (!token || currentRole !== "customer") {
       return;
     }
@@ -28,11 +28,11 @@ export default function OrdersPage() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load orders.");
     }
-  }
+  }, [currentRole, token]);
 
   useEffect(() => {
     void loadOrders();
-  }, [currentRole, token]);
+  }, [loadOrders]);
 
   const totalSpent = useMemo(
     () => orders.reduce((sum, order) => sum + order.totalPrice, 0),
@@ -308,6 +308,11 @@ export default function OrdersPage() {
                     <div className="customer-order-item-status">
                       <StatusBadge status={item.status} />
                     </div>
+                    {item.status === "delivered" ? (
+                      <Link className="table-link customer-order-review-link" href={`/products/${item.product.id}`}>
+                        Rate item
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
               ))}

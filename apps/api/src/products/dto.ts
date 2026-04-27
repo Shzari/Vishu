@@ -8,6 +8,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -64,7 +65,10 @@ export class ProductMutationDto {
       try {
         return JSON.parse(value);
       } catch {
-        return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+        return value
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
       }
     }
     return value;
@@ -156,7 +160,10 @@ export class ProductUpdateDto {
       try {
         return JSON.parse(value);
       } catch {
-        return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+        return value
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
       }
     }
     return value;
@@ -241,4 +248,19 @@ export class VendorCatalogRequestDto {
   )
   @IsString()
   note?: string;
+}
+
+export class ReviewSubmissionDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  rating!: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  comment?: string;
 }

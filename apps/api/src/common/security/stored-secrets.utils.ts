@@ -75,9 +75,7 @@ export function isStoredSecretProtected(value: string | null | undefined) {
   return value?.trim().startsWith(SECRET_PREFIX) ?? false;
 }
 
-function resolveStoredSecretKey(
-  configService?: Pick<ConfigService, 'get'>,
-) {
+function resolveStoredSecretKey(configService?: Pick<ConfigService, 'get'>) {
   const configuredKey =
     configService?.get<string>('PLATFORM_SECRET_ENCRYPTION_KEY') ??
     process.env.PLATFORM_SECRET_ENCRYPTION_KEY ??

@@ -31,6 +31,7 @@ import {
   UpdateAccountProfileDto,
   UpdateEmailPreferencesDto,
   UpdatePaymentMethodDto,
+  VerifyPendingEmailChangeDto,
   UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
   UpdateVendorProfileDto,
@@ -48,7 +49,10 @@ function vendorLogoUploadInterceptor() {
         callback(null, ensureTemporaryUploadDir());
       },
       filename: (_req, file, callback) => {
-        callback(null, buildSafeUploadedImageName('vendor-logo', file.mimetype));
+        callback(
+          null,
+          buildSafeUploadedImageName('vendor-logo', file.mimetype),
+        );
       },
     }),
     fileFilter: (_req, file, callback) => {
@@ -107,6 +111,21 @@ export class AccountController {
     @Body() dto: UpdateAccountProfileDto,
   ) {
     return this.accountService.updateSettingsProfile(req.user.sub, dto);
+  }
+
+  @Post('email-change/verify')
+  @Roles('customer')
+  verifyPendingEmailChange(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: VerifyPendingEmailChangeDto,
+  ) {
+    return this.accountService.verifyPendingEmailChange(req.user.sub, dto.code);
+  }
+
+  @Post('email-change/resend')
+  @Roles('customer')
+  resendPendingEmailChange(@Req() req: { user: AuthenticatedUser }) {
+    return this.accountService.resendPendingEmailChange(req.user.sub);
   }
 
   @Patch('email-preferences')
@@ -237,9 +256,7 @@ export class AccountController {
 
   @Post('payment-methods/setup-session')
   @Roles('customer')
-  createPaymentMethodSetupSession(
-    @Req() req: { user: AuthenticatedUser },
-  ) {
+  createPaymentMethodSetupSession(@Req() req: { user: AuthenticatedUser }) {
     return this.accountService.createPaymentMethodSetupSession(req.user.sub);
   }
 

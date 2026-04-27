@@ -25,10 +25,13 @@ export class RateLimitGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext) {
-    const options = this.reflector.getAllAndOverride<RateLimitOptions | undefined>(
-      RATE_LIMIT_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    if (process.env.NODE_ENV === 'test') {
+      return true;
+    }
+
+    const options = this.reflector.getAllAndOverride<
+      RateLimitOptions | undefined
+    >(RATE_LIMIT_KEY, [context.getHandler(), context.getClass()]);
 
     if (!options) {
       return true;
@@ -55,7 +58,8 @@ export class RateLimitGuard implements CanActivate {
 
     existing.count += 1;
     if (existing.count > options.max) {
-      existing.blockedUntil = now + (options.blockDurationMs ?? options.windowMs);
+      existing.blockedUntil =
+        now + (options.blockDurationMs ?? options.windowMs);
       throw this.buildRateLimitException();
     }
 

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import type { StringValue } from 'ms';
 import { MailService } from '../mail/mail.service';
 import { AuthenticatedUser } from '../common/types';
 import {
@@ -27,6 +29,8 @@ import {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
@@ -52,10 +56,7 @@ export class AuthService {
 
     if (existing.rows[0]) {
       const existingUser = existing.rows[0];
-      if (
-        existingUser.role === 'customer' &&
-        !existingUser.email_verified_at
-      ) {
+      if (existingUser.role === 'customer' && !existingUser.email_verified_at) {
         throw new BadRequestException(
           'An account already exists for this email from a recent purchase. Activate it from your email or use reset password to finish setup.',
         );
@@ -267,11 +268,22 @@ export class AuthService {
     );
 
     if (result.vendorId) {
-      await this.mailService.sendAdminVendorApprovalAlert(result.adminEmails, {
-        shopName: result.shopName,
-        vendorEmail: result.vendorEmail,
-        reviewUrl: `${this.configService.get<string>('APP_BASE_URL', 'http://localhost:3001')}/admin/vendors/${result.vendorId}`,
-      });
+      try {
+        await this.mailService.sendAdminVendorApprovalAlert(
+          result.adminEmails,
+          {
+            shopName: result.shopName,
+            vendorEmail: result.vendorEmail,
+            reviewUrl: `${this.configService.get<string>('APP_BASE_URL', 'http://localhost:3001')}/admin/vendors/${result.vendorId}`,
+          },
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Vendor ${result.vendorId} verified, but admin approval alert email could not be sent: ${
+            error instanceof Error ? error.message : 'Unknown mail error'
+          }`,
+        );
+      }
     }
 
     return { message: result.message };
@@ -321,14 +333,17 @@ export class AuthService {
     }
 
     if (user.role === 'vendor') {
+      if (user.vendor_is_verified === false) {
+        throw new UnauthorizedException('Verify your email before signing in');
+      }
+
       await this.vendorAccessService.activatePendingInvitesForUser(
         user.id,
         user.email,
       );
 
-      const vendorAccess = await this.vendorAccessService.getVendorAccessForUser(
-        user.id,
-      );
+      const vendorAccess =
+        await this.vendorAccessService.getVendorAccessForUser(user.id);
 
       if (!vendorAccess && !user.vendor_is_verified) {
         throw new UnauthorizedException('Verify your email before signing in');
@@ -523,6 +538,7 @@ export class AuthService {
     const vendor = await this.databaseService.query<{
       id: string;
       shop_name: string;
+      logo_url: string | null;
       is_active: boolean;
       is_verified: boolean;
       approved_at: Date | null;
@@ -532,6 +548,7 @@ export class AuthService {
       `SELECT TOP 1
          v.id,
          v.shop_name,
+         v.logo_url,
          v.is_active,
          v.is_verified,
          v.approved_at,
@@ -577,21 +594,22 @@ export class AuthService {
   private buildAuthResponse(user: {
     id: string;
     email: string;
-    role: 'admin' | 'vendor' | 'customer' | string;
+    role: AuthenticatedUser['role'];
   }) {
     const payload: AuthenticatedUser = {
       sub: user.id,
       email: user.email,
-      role: user.role as AuthenticatedUser['role'],
+      role: user.role,
     };
+    const expiresIn = this.configService.get<StringValue>(
+      'JWT_EXPIRES_IN',
+      '7d' as StringValue,
+    );
 
     return {
       accessToken: this.jwtService.sign(payload, {
         secret: getJwtSecret(this.configService),
-        expiresIn: this.configService.get<string>(
-          'JWT_EXPIRES_IN',
-          '7d',
-        ) as any,
+        expiresIn,
       }),
       user: payload,
     };

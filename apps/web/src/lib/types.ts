@@ -59,12 +59,35 @@ export interface ProfileResponse {
   vendor?: {
     id: string;
     shop_name: string;
+    logo_url?: string | null;
     is_active: boolean;
     is_verified: boolean;
     approved_at: string | null;
     access_role: VendorAccessRole;
     is_primary_owner: boolean;
   } | null;
+}
+
+export interface RatingSummary {
+  average: number | null;
+  count: number;
+}
+
+export interface MarketplaceReview {
+  id: string;
+  rating: number;
+  comment: string | null;
+  customerName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewStatus {
+  canReview: boolean;
+  reason: string | null;
+  deliveredPurchaseCount: number;
+  lastDeliveredAt: string | null;
+  existingReview: MarketplaceReview | null;
 }
 
 export interface Product {
@@ -91,13 +114,16 @@ export interface Product {
     sizeTypeName: string;
   }[];
   productCode?: string | null;
+  ratingSummary: RatingSummary;
   vendor?: {
     id: string;
     shopName: string;
     logoUrl?: string | null;
+    ratingSummary?: RatingSummary;
   };
   images: string[];
   createdAt: string;
+  recentReviews?: MarketplaceReview[];
 }
 
 export interface ProductSearchSection {
@@ -126,6 +152,7 @@ export interface PublicVendorSummary {
   categoryCount: number;
   departments: string[];
   categories: string[];
+  ratingSummary: RatingSummary;
 }
 
 export interface PublicVendorDetail {
@@ -142,6 +169,8 @@ export interface PublicVendorDetail {
   productCount: number;
   categories: string[];
   products: Product[];
+  ratingSummary: RatingSummary;
+  recentReviews: MarketplaceReview[];
 }
 
 export interface CartItem {
@@ -223,6 +252,9 @@ export interface AdminUserRow {
   created_at: string;
   vendor_id: string | null;
   shop_name: string | null;
+  platform_fee?: number | null;
+  effective_platform_fee?: number | null;
+  fee_grace_ends_at?: string | null;
   vendor_active: boolean | null;
   vendor_verified: boolean | null;
 }
@@ -669,6 +701,9 @@ export interface AdminProductOption {
 export interface AdminVendorDetail {
   id: string;
   shopName: string;
+  platformFee: number;
+  effectivePlatformFee: number;
+  feeGraceEndsAt: string | null;
   isActive: boolean;
   isVerified: boolean;
   approvedAt: string | null;
@@ -767,6 +802,8 @@ export interface CustomerAccount {
     fullName: string | null;
     phoneNumber: string | null;
     emailVerifiedAt: string | null;
+    pendingEmail: string | null;
+    pendingEmailVerificationExpiresAt: string | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -811,6 +848,8 @@ export interface AccountSettingsProfile {
   fullName: string | null;
   phoneNumber: string | null;
   emailVerifiedAt?: string | null;
+  pendingEmail?: string | null;
+  pendingEmailVerificationExpiresAt?: string | null;
   role: UserRole;
   createdAt: string;
   updatedAt: string;
@@ -889,4 +928,39 @@ export interface AdminVendorPayoutRow {
   paidOut: number;
   outstandingShippedBalance: number;
   orderCount: number;
+}
+
+export interface AdminVendorFeeRow {
+  vendorId: string;
+  shopName: string;
+  vendorEmail: string;
+  basePlatformFee: number;
+  effectivePlatformFee: number;
+  feeGraceEndsAt: string | null;
+  totalFeeGenerated: number;
+  onlineFeeCollected: number;
+  cashOnDeliveryFeeOwed: number;
+  totalFeeOwed: number;
+  totalFeePaid: number;
+  outstandingFee: number;
+  totalPlatformTake: number;
+  chargedOrderCount: number;
+  onlineCollectedOrderCount: number;
+  cashOnDeliveryOwedOrderCount: number;
+  lastPaidAt: string | null;
+}
+
+export interface AdminVendorFeeHistoryEntry {
+  orderId: string;
+  orderNumber: string;
+  paidAt: string;
+  orderStatus: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  grossSales: number;
+  totalPlatformTake: number;
+  feeAmount: number;
+  paidAmount: number;
+  owedAmount: number;
+  settlementStatus: "collected_online" | "owed_cod" | "voided";
 }

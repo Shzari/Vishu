@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import {
@@ -133,6 +137,18 @@ export class MailService {
     });
   }
 
+  async ensureVerificationDeliveryConfigured() {
+    const settings = await this.getMailerSettings();
+
+    if (!settings.host) {
+      throw new ServiceUnavailableException(
+        'Verification email is not configured yet. Add SMTP settings in admin before changing your email address.',
+      );
+    }
+
+    return settings;
+  }
+
   async sendVerificationEmail(
     email: string,
     token: string,
@@ -166,6 +182,38 @@ export class MailService {
     });
     this.logger.log(
       `Verification email queued for ${email}: ${info.messageId}`,
+    );
+  }
+
+  async sendCustomerEmailChangeOtp(payload: {
+    email: string;
+    fullName?: string | null;
+    code: string;
+    expiresInMinutes: number;
+  }) {
+    const settings = await this.ensureVerificationDeliveryConfigured();
+    if (!settings.vendorVerificationEmailsEnabled) {
+      this.logger.warn(
+        'Customer email change verification email skipped because verification emails are disabled in platform settings',
+      );
+      return;
+    }
+
+    const transporter = await this.getTransporter(settings);
+    const greeting = payload.fullName?.trim()
+      ? `Hi ${payload.fullName.trim()},`
+      : 'Hi,';
+    const info = await transporter.sendMail({
+      from: settings.mailFrom,
+      to: payload.email,
+      subject: 'Verify your new email address',
+      html: `<p>${greeting}</p>
+<p>Use this one-time code to confirm your new email address on Vishu.shop:</p>
+<p style="font-size: 24px; font-weight: 700; letter-spacing: 0.2em;">${payload.code}</p>
+<p>This code expires in ${payload.expiresInMinutes} minutes.</p>`,
+    });
+    this.logger.log(
+      `Customer email change OTP queued for ${payload.email}: ${info.messageId}`,
     );
   }
 

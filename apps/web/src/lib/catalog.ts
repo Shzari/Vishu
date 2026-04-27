@@ -113,6 +113,15 @@ export function isCatalogCategoryAllowed(department: string, category: string) {
   return getCatalogCategoriesForDepartment(department).includes(category);
 }
 
+export function isCatalogCategoryValue(category?: string | null) {
+  const normalized = category?.trim().toLowerCase();
+  return Boolean(normalized && PRODUCT_CATEGORIES.includes(normalized));
+}
+
+export function filterCatalogCategories(categories: Array<string | null | undefined>) {
+  return [...new Set(categories.map((entry) => entry?.trim().toLowerCase() || "").filter(isCatalogCategoryValue))];
+}
+
 export function getDepartmentsForCategory(category: string): string[] {
   return PRODUCT_DEPARTMENTS.filter((department) =>
     (PRODUCT_CATEGORY_GROUPS[department] as readonly string[]).includes(category),

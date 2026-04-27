@@ -25,6 +25,10 @@ import {
 } from './dto';
 import { MailService } from '../mail/mail.service';
 import { VendorAccessService } from '../vendor-access/vendor-access.service';
+import {
+  type PaginationInput,
+  toPaginatedResponse,
+} from '../common/dto/pagination.dto';
 
 interface OrderProductRow {
   id: string;
@@ -33,6 +37,8 @@ interface OrderProductRow {
   price: number | string;
   stock: number;
   vendor_id: string;
+  platform_fee: number | string;
+  vendor_created_at: Date;
   category: string;
   color: string | null;
   size: string | null;
@@ -80,10 +86,92 @@ interface CheckoutSnapshotInput {
   specialRequest: string | null;
 }
 
+interface CustomerCheckoutProfile {
+  email: string;
+  full_name: string | null;
+  phone_number: string | null;
+}
+
 interface GuestCustomerResolution {
   customerId: string | null;
   activationUserId: string | null;
   sendActivationEmail: boolean;
+}
+
+interface OrderListRow {
+  id: string;
+  order_number: string | null;
+  total_price: number | string;
+  special_request: string | null;
+  confirmed_at: Date | null;
+  shipped_at: Date | null;
+  delivered_at: Date | null;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  cod_status_note: string | null;
+  cod_updated_at: Date | null;
+  cancel_request_status: string;
+  cancel_request_note: string | null;
+  cancel_requested_at: Date | null;
+  status: OrderStatus;
+  created_at: Date;
+  customer_email: string | null;
+}
+
+interface OrderDetailRow {
+  id: string;
+  order_number: string | null;
+  total_price: number | string;
+  special_request: string | null;
+  confirmed_at: Date | null;
+  shipped_at: Date | null;
+  delivered_at: Date | null;
+  shipping_label: string | null;
+  shipping_full_name: string | null;
+  shipping_phone_number: string | null;
+  shipping_line1: string | null;
+  shipping_line2: string | null;
+  shipping_city: string | null;
+  shipping_state_region: string | null;
+  shipping_postal_code: string | null;
+  shipping_country: string | null;
+  payment_card_nickname: string | null;
+  payment_cardholder_name: string | null;
+  payment_card_brand: string | null;
+  payment_card_last4: string | null;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  cod_status_note: string | null;
+  cod_updated_at: Date | null;
+  cancel_request_status: string;
+  cancel_request_note: string | null;
+  cancel_requested_at: Date | null;
+  status: OrderStatus;
+  created_at: Date;
+}
+
+interface OrderCustomerItemRow {
+  order_id: string;
+  id: string;
+  quantity: number;
+  unit_price: number | string;
+  status: OrderStatus;
+  shipping_carrier: string | null;
+  tracking_number: string | null;
+  shipped_at: Date | null;
+  product_id: string;
+  title: string;
+  category: string;
+  color: string | null;
+  size: string | null;
+}
+
+interface OrderAdminItemRow extends OrderCustomerItemRow {
+  commission_amount: number | string;
+  vendor_earnings: number | string;
+  product_code: string | null;
+  vendor_id: string | null;
+  shop_name: string | null;
 }
 
 @Injectable()
@@ -128,12 +216,30 @@ export class OrdersService {
 
     const createdOrder = await this.databaseService.withTransaction(
       async (client) => {
-        const checkout = this.normalizeCheckoutInput(dto);
         const isGuestCheckout = !customerId;
+        const customerProfile = customerId
+          ? await this.loadCheckoutCustomerProfile(client, customerId)
+          : null;
+        const needsSavedAddress =
+          Boolean(customerId) &&
+          (dto.addressId !== undefined ||
+            !dto.fullName?.trim() ||
+            !dto.phoneNumber?.trim() ||
+            !dto.city?.trim() ||
+            !dto.addressLine1?.trim());
+        const savedAddress =
+          customerId && needsSavedAddress
+            ? await this.loadCheckoutAddress(client, customerId, dto.addressId)
+            : null;
+        const checkout = this.normalizeCheckoutInput(dto, {
+          customerProfile,
+          savedAddress,
+        });
         const guestCustomer = isGuestCheckout
           ? await this.resolveGuestCheckoutCustomer(client, checkout)
           : null;
-        const linkedCustomerId = customerId ?? guestCustomer?.customerId ?? null;
+        const linkedCustomerId =
+          customerId ?? guestCustomer?.customerId ?? null;
         const paymentMethod: PaymentMethod =
           customerId && dto.paymentMethod === 'card'
             ? 'card'
@@ -179,8 +285,43 @@ export class OrdersService {
           };
         });
 
+        const vendorRemainingFee = new Map<string, number>();
+        const feeAdjustedItems = items.map((item) => {
+          if (!vendorRemainingFee.has(item.product.vendor_id)) {
+            const platformFee = this.resolveEffectiveVendorPlatformFee(
+              item.product.platform_fee,
+              item.product.vendor_created_at,
+            );
+            vendorRemainingFee.set(
+              item.product.vendor_id,
+              Number.isFinite(platformFee) && platformFee > 0 ? platformFee : 0,
+            );
+          }
+
+          const remainingFee =
+            vendorRemainingFee.get(item.product.vendor_id) ?? 0;
+          if (remainingFee <= 0) {
+            return item;
+          }
+
+          const appliedFee = Math.min(remainingFee, item.vendorEarnings);
+          vendorRemainingFee.set(
+            item.product.vendor_id,
+            Number((remainingFee - appliedFee).toFixed(2)),
+          );
+          return {
+            ...item,
+            commissionAmount: Number(
+              (item.commissionAmount + appliedFee).toFixed(2),
+            ),
+            vendorEarnings: Number(
+              (item.vendorEarnings - appliedFee).toFixed(2),
+            ),
+          };
+        });
+
         const totalPrice = Number(
-          items.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
+          feeAdjustedItems.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
         );
         const order = await client.query<{ id: string; created_at: Date }>(
           `INSERT INTO orders (
@@ -193,19 +334,24 @@ export class OrdersService {
            payment_method, payment_status, status
          )
          OUTPUT INSERTED.id, INSERTED.created_at
-         VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, $12, $13, $14, $15, $16, $17, $18, 'pending')`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'pending')`,
           [
             linkedCustomerId,
             isGuestCheckout ? checkout.email : null,
             isGuestCheckout ? checkout.phoneNumber : null,
             totalPrice,
             checkout.specialRequest,
-            isGuestCheckout ? 'Guest checkout' : 'Checkout details',
+            savedAddress?.id ?? null,
+            savedAddress?.label ??
+              (isGuestCheckout ? 'Guest checkout' : 'Checkout details'),
             checkout.fullName,
             checkout.phoneNumber,
             checkout.addressLine1,
             checkout.apartmentOrNote,
             checkout.city,
+            savedAddress?.state_region ?? null,
+            savedAddress?.postal_code ?? null,
+            savedAddress?.country ?? null,
             savedPaymentMethod?.id ?? null,
             savedPaymentMethod?.nickname ?? null,
             savedPaymentMethod?.cardholder_name ?? null,
@@ -222,7 +368,7 @@ export class OrdersService {
           order.rows[0].created_at,
         );
 
-        for (const item of items) {
+        for (const item of feeAdjustedItems) {
           await client.query(
             `INSERT INTO order_items (
              order_id, product_id, vendor_id, quantity, unit_price,
@@ -382,45 +528,85 @@ export class OrdersService {
     return this.loadCartSnapshot(customerId);
   }
 
-  async getCustomerOrders(customerId: string) {
-    const result = await this.databaseService.query<{ id: string }>(
-      'SELECT id FROM orders WHERE customer_id = $1 ORDER BY created_at DESC',
-      [customerId],
-    );
-
-    return Promise.all(
-      result.rows.map((order) =>
-        this.getCustomerOrderById(order.id, customerId),
+  async getCustomerOrders(
+    customerId: string,
+    pagination?: PaginationInput | null,
+  ) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [orders, totalCount] = await Promise.all([
+      this.databaseService.query<OrderDetailRow>(
+        `SELECT
+         id,
+         order_number,
+         total_price,
+         special_request,
+         confirmed_at,
+         shipped_at,
+         delivered_at,
+         shipping_label,
+         shipping_full_name,
+         shipping_phone_number,
+         shipping_line1,
+         shipping_line2,
+         shipping_city,
+         shipping_state_region,
+         shipping_postal_code,
+         shipping_country,
+         payment_card_nickname,
+         payment_cardholder_name,
+         payment_card_brand,
+         payment_card_last4,
+         payment_method,
+         payment_status,
+         cod_status_note,
+         cod_updated_at,
+         cancel_request_status,
+         cancel_request_note,
+         cancel_requested_at,
+         status,
+         created_at
+       FROM orders
+       WHERE customer_id = $1
+       ORDER BY created_at DESC${pagingClause}`,
+        [customerId],
       ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            'SELECT COUNT(*) AS total FROM orders WHERE customer_id = $1',
+            [customerId],
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
+
+    const snapshots = await this.buildCustomerOrderSnapshots(orders.rows);
+    if (!pagination) {
+      return snapshots;
+    }
+
+    return toPaginatedResponse(
+      snapshots,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
     );
   }
 
-  async getVendorOrders(userId: string) {
+  async getVendorOrders(
+    userId: string,
+    pagination?: PaginationInput | null,
+  ) {
     const vendor = await this.getVendorByUserId(userId);
     if (!vendor.is_active || !vendor.is_verified) {
       throw new ForbiddenException('Vendor account is not active');
     }
 
-    const orders = await this.databaseService.query<{
-      id: string;
-      order_number: string | null;
-      total_price: number | string;
-      special_request: string | null;
-      confirmed_at: Date | null;
-      shipped_at: Date | null;
-      delivered_at: Date | null;
-      payment_method: PaymentMethod;
-      payment_status: PaymentStatus;
-      cod_status_note: string | null;
-      cod_updated_at: Date | null;
-      cancel_request_status: string;
-      cancel_request_note: string | null;
-      cancel_requested_at: Date | null;
-      status: OrderStatus;
-      created_at: Date;
-      customer_email: string;
-    }>(
-      `SELECT DISTINCT
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [orders, totalCount] = await Promise.all([
+      this.databaseService.query<OrderListRow>(
+        `SELECT DISTINCT
          o.id,
          o.order_number,
          o.total_price,
@@ -442,97 +628,76 @@ export class OrdersService {
        LEFT JOIN users u ON u.id = o.customer_id
        INNER JOIN order_items oi ON oi.order_id = o.id
        WHERE oi.vendor_id = $1
-       ORDER BY o.created_at DESC`,
-      [vendor.id],
+       ORDER BY o.created_at DESC${pagingClause}`,
+        [vendor.id],
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            `SELECT COUNT(DISTINCT o.id) AS total
+             FROM orders o
+             INNER JOIN order_items oi ON oi.order_id = o.id
+             WHERE oi.vendor_id = $1`,
+            [vendor.id],
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
+
+    const snapshots = await this.buildVendorOrderSnapshots(orders.rows, vendor.id);
+    if (!pagination) {
+      return snapshots;
+    }
+
+    return toPaginatedResponse(
+      snapshots,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
     );
+  }
 
-    return Promise.all(
-      orders.rows.map(async (order) => {
-        const items = await this.databaseService.query<{
-          id: string;
-          quantity: number;
-          unit_price: number | string;
-          commission_amount: number | string;
-          vendor_earnings: number | string;
-          status: OrderStatus;
-          shipping_carrier: string | null;
-          tracking_number: string | null;
-          shipped_at: Date | null;
-          product_id: string;
-          title: string;
-          category: string;
-          color: string | null;
-          size: string | null;
-          product_code: string | null;
-        }>(
-          `SELECT
-             oi.id,
-             oi.quantity,
-             oi.unit_price,
-             oi.commission_amount,
-             oi.vendor_earnings,
-             oi.status,
-             oi.shipping_carrier,
-             oi.tracking_number,
-             oi.shipped_at,
-             p.id AS product_id,
-             p.title,
-             p.category,
-             p.color,
-             p.size,
-             p.product_code
-           FROM order_items oi
-           INNER JOIN products p ON p.id = oi.product_id
-           WHERE oi.order_id = $1 AND oi.vendor_id = $2`,
-          [order.id, vendor.id],
-        );
+  async getAllOrders(pagination?: PaginationInput | null) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [orders, totalCount] = await Promise.all([
+      this.databaseService.query<OrderListRow>(
+        `SELECT
+         o.id,
+         o.order_number,
+         o.total_price,
+         o.special_request,
+         o.confirmed_at,
+         o.shipped_at,
+         o.delivered_at,
+         o.payment_method,
+         o.payment_status,
+         o.cod_status_note,
+         o.cod_updated_at,
+         o.cancel_request_status,
+         o.cancel_request_note,
+         o.cancel_requested_at,
+         o.status,
+         o.created_at,
+         COALESCE(u.email, o.guest_email) AS customer_email
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.customer_id
+       ORDER BY o.created_at DESC${pagingClause}`,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            'SELECT COUNT(*) AS total FROM orders',
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
-        return {
-          id: order.id,
-          orderNumber: order.order_number ?? order.id,
-          totalPrice: Number(order.total_price),
-          specialRequest: order.special_request,
-          fulfillment: {
-            placedAt: order.created_at,
-            confirmedAt: order.confirmed_at,
-            shippedAt: order.shipped_at,
-            deliveredAt: order.delivered_at,
-          },
-          paymentMethod: order.payment_method,
-          paymentStatus: order.payment_status,
-          codStatusNote: order.cod_status_note,
-          codUpdatedAt: order.cod_updated_at,
-          cancelRequest: {
-            status: order.cancel_request_status,
-            note: order.cancel_request_note,
-            requestedAt: order.cancel_requested_at,
-          },
-          status: order.status,
-          createdAt: order.created_at,
-          customerEmail: order.customer_email,
-          items: items.rows.map((item) => ({
-            id: item.id,
-            quantity: item.quantity,
-            unitPrice: Number(item.unit_price),
-            commission: Number(item.commission_amount),
-            vendorEarnings: Number(item.vendor_earnings),
-            status: item.status,
-            shipment: {
-              shippingCarrier: item.shipping_carrier,
-              trackingNumber: item.tracking_number,
-              shippedAt: item.shipped_at,
-            },
-            product: {
-              id: item.product_id,
-              title: item.title,
-              category: item.category,
-              color: item.color,
-              size: item.size,
-              productCode: item.product_code,
-            },
-          })),
-        };
-      }),
+    const snapshots = await this.buildAdminOrderSnapshots(orders.rows);
+    if (!pagination) {
+      return snapshots;
+    }
+
+    return toPaginatedResponse(
+      snapshots,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
     );
   }
 
@@ -751,181 +916,9 @@ export class OrdersService {
     };
   }
 
-  async getAllOrders() {
-    const orders = await this.databaseService.query<{
-      id: string;
-      order_number: string | null;
-      total_price: number | string;
-      special_request: string | null;
-      confirmed_at: Date | null;
-      shipped_at: Date | null;
-      delivered_at: Date | null;
-      payment_method: PaymentMethod;
-      payment_status: PaymentStatus;
-      cod_status_note: string | null;
-      cod_updated_at: Date | null;
-      cancel_request_status: string;
-      cancel_request_note: string | null;
-      cancel_requested_at: Date | null;
-      status: OrderStatus;
-      created_at: Date;
-      customer_email: string;
-    }>(
-      `SELECT
-         o.id,
-         o.order_number,
-         o.total_price,
-         o.special_request,
-         o.confirmed_at,
-         o.shipped_at,
-         o.delivered_at,
-         o.payment_method,
-         o.payment_status,
-         o.cod_status_note,
-         o.cod_updated_at,
-         o.cancel_request_status,
-         o.cancel_request_note,
-         o.cancel_requested_at,
-         o.status,
-         o.created_at,
-         COALESCE(u.email, o.guest_email) AS customer_email
-       FROM orders o
-       LEFT JOIN users u ON u.id = o.customer_id
-       ORDER BY o.created_at DESC`,
-    );
-
-    return Promise.all(
-      orders.rows.map(async (order) => {
-        const items = await this.databaseService.query<{
-          id: string;
-          quantity: number;
-          unit_price: number | string;
-          commission_amount: number | string;
-          vendor_earnings: number | string;
-          status: OrderStatus;
-          shipping_carrier: string | null;
-          tracking_number: string | null;
-          shipped_at: Date | null;
-          product_id: string;
-          title: string;
-          category: string;
-          color: string | null;
-          size: string | null;
-          product_code: string | null;
-          vendor_id: string;
-          shop_name: string;
-        }>(
-          `SELECT
-             oi.id,
-             oi.quantity,
-             oi.unit_price,
-             oi.commission_amount,
-             oi.vendor_earnings,
-             oi.status,
-             oi.shipping_carrier,
-             oi.tracking_number,
-             oi.shipped_at,
-             p.id AS product_id,
-             p.title,
-             p.category,
-             p.color,
-             p.size,
-             p.product_code,
-             v.id AS vendor_id,
-             v.shop_name
-           FROM order_items oi
-           INNER JOIN products p ON p.id = oi.product_id
-           INNER JOIN vendors v ON v.id = oi.vendor_id
-           WHERE oi.order_id = $1
-           ORDER BY p.title ASC`,
-          [order.id],
-        );
-
-        return {
-          id: order.id,
-          orderNumber: order.order_number ?? order.id,
-          totalPrice: Number(order.total_price),
-          specialRequest: order.special_request,
-          fulfillment: {
-            placedAt: order.created_at,
-            confirmedAt: order.confirmed_at,
-            shippedAt: order.shipped_at,
-            deliveredAt: order.delivered_at,
-          },
-          paymentMethod: order.payment_method,
-          paymentStatus: order.payment_status,
-          codStatusNote: order.cod_status_note,
-          codUpdatedAt: order.cod_updated_at,
-          cancelRequest: {
-            status: order.cancel_request_status,
-            note: order.cancel_request_note,
-            requestedAt: order.cancel_requested_at,
-          },
-          status: order.status,
-          createdAt: order.created_at,
-          customerEmail: order.customer_email,
-          items: items.rows.map((item) => ({
-            id: item.id,
-            quantity: item.quantity,
-            unitPrice: Number(item.unit_price),
-            commission: Number(item.commission_amount),
-            vendorEarnings: Number(item.vendor_earnings),
-            status: item.status,
-            shipment: {
-              shippingCarrier: item.shipping_carrier,
-              trackingNumber: item.tracking_number,
-              shippedAt: item.shipped_at,
-            },
-            product: {
-              id: item.product_id,
-              title: item.title,
-              category: item.category,
-              color: item.color,
-              size: item.size,
-              productCode: item.product_code,
-            },
-            vendor: {
-              id: item.vendor_id,
-              shopName: item.shop_name,
-            },
-          })),
-        };
-      }),
-    );
-  }
 
   private async getCustomerOrderById(orderId: string, customerId: string) {
-    const orderResult = await this.databaseService.query<{
-      id: string;
-      order_number: string | null;
-      total_price: number | string;
-      special_request: string | null;
-      confirmed_at: Date | null;
-      shipped_at: Date | null;
-      delivered_at: Date | null;
-      shipping_label: string | null;
-      shipping_full_name: string | null;
-      shipping_phone_number: string | null;
-      shipping_line1: string | null;
-      shipping_line2: string | null;
-      shipping_city: string | null;
-      shipping_state_region: string | null;
-      shipping_postal_code: string | null;
-      shipping_country: string | null;
-      payment_card_nickname: string | null;
-      payment_cardholder_name: string | null;
-      payment_card_brand: string | null;
-      payment_card_last4: string | null;
-      payment_method: PaymentMethod;
-      payment_status: PaymentStatus;
-      cod_status_note: string | null;
-      cod_updated_at: Date | null;
-      cancel_request_status: string;
-      cancel_request_note: string | null;
-      cancel_requested_at: Date | null;
-      status: OrderStatus;
-      created_at: Date;
-    }>(
+    const orderResult = await this.databaseService.query<OrderDetailRow>(
       `SELECT TOP 1
          id,
          order_number,
@@ -966,148 +959,11 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    const items = await this.databaseService.query<{
-      id: string;
-      quantity: number;
-      unit_price: number | string;
-      status: OrderStatus;
-      shipping_carrier: string | null;
-      tracking_number: string | null;
-      shipped_at: Date | null;
-      product_id: string;
-      title: string;
-      category: string;
-      color: string | null;
-      size: string | null;
-    }>(
-      `SELECT
-         oi.id,
-         oi.quantity,
-         oi.unit_price,
-         oi.status,
-         oi.shipping_carrier,
-         oi.tracking_number,
-         oi.shipped_at,
-         p.id AS product_id,
-         p.title,
-         p.category,
-         p.color,
-         p.size
-       FROM order_items oi
-       INNER JOIN products p ON p.id = oi.product_id
-       WHERE oi.order_id = $1`,
-      [orderId],
-    );
-
-    const imageRows = await this.getImagesForProducts(
-      items.rows.map((item) => item.product_id),
-    );
-    const imageMap = new Map<string, string[]>();
-
-    for (const image of imageRows) {
-      const current = imageMap.get(image.product_id) ?? [];
-      current.push(image.image_url);
-      imageMap.set(image.product_id, current);
-    }
-
-    return {
-      id: order.id,
-      orderNumber: order.order_number ?? order.id,
-      totalPrice: Number(order.total_price),
-      specialRequest: order.special_request,
-      fulfillment: {
-        placedAt: order.created_at,
-        confirmedAt: order.confirmed_at,
-        shippedAt: order.shipped_at,
-        deliveredAt: order.delivered_at,
-      },
-      shippingAddress: order.shipping_line1
-        ? {
-            label: order.shipping_label,
-            fullName: order.shipping_full_name,
-            phoneNumber: order.shipping_phone_number,
-            line1: order.shipping_line1,
-            line2: order.shipping_line2,
-            city: order.shipping_city,
-            stateRegion: order.shipping_state_region,
-            postalCode: order.shipping_postal_code,
-            country: order.shipping_country,
-          }
-        : null,
-      paymentCard:
-        order.payment_method === 'card' && order.payment_card_last4
-          ? {
-              nickname: order.payment_card_nickname,
-              cardholderName: order.payment_cardholder_name,
-              brand: order.payment_card_brand,
-              last4: order.payment_card_last4,
-            }
-          : null,
-      paymentMethod: order.payment_method,
-      paymentStatus: order.payment_status,
-      codStatusNote: order.cod_status_note,
-      codUpdatedAt: order.cod_updated_at,
-      cancelRequest: {
-        status: order.cancel_request_status,
-        note: order.cancel_request_note,
-        requestedAt: order.cancel_requested_at,
-      },
-      status: order.status,
-      createdAt: order.created_at,
-      items: items.rows.map((item) => ({
-        id: item.id,
-        quantity: item.quantity,
-        unitPrice: Number(item.unit_price),
-        status: item.status,
-        shipment: {
-          shippingCarrier: item.shipping_carrier,
-          trackingNumber: item.tracking_number,
-          shippedAt: item.shipped_at,
-        },
-        product: {
-          id: item.product_id,
-          title: item.title,
-          category: item.category,
-          color: item.color,
-          size: item.size,
-          images: imageMap.get(item.product_id) ?? [],
-        },
-      })),
-    };
+    return (await this.buildCustomerOrderSnapshots([order]))[0];
   }
 
-  private async getOrderSnapshotById(orderId: string) {
-    const orderResult = await this.databaseService.query<{
-      id: string;
-      order_number: string | null;
-      total_price: number | string;
-      special_request: string | null;
-      confirmed_at: Date | null;
-      shipped_at: Date | null;
-      delivered_at: Date | null;
-      shipping_label: string | null;
-      shipping_full_name: string | null;
-      shipping_phone_number: string | null;
-      shipping_line1: string | null;
-      shipping_line2: string | null;
-      shipping_city: string | null;
-      shipping_state_region: string | null;
-      shipping_postal_code: string | null;
-      shipping_country: string | null;
-      payment_card_nickname: string | null;
-      payment_cardholder_name: string | null;
-      payment_card_brand: string | null;
-      payment_card_last4: string | null;
-      payment_method: PaymentMethod;
-      payment_status: PaymentStatus;
-      cod_status_note: string | null;
-      cod_updated_at: Date | null;
-      cancel_request_status: string;
-      cancel_request_note: string | null;
-      cancel_requested_at: Date | null;
-      status: OrderStatus;
-      created_at: Date;
-    }>(
+  async getOrderSnapshotById(orderId: string) {
+    const orderResult = await this.databaseService.query<OrderDetailRow>(
       `SELECT TOP 1
          id,
          order_number,
@@ -1148,51 +1004,22 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    const items = await this.databaseService.query<{
-      id: string;
-      quantity: number;
-      unit_price: number | string;
-      status: OrderStatus;
-      shipping_carrier: string | null;
-      tracking_number: string | null;
-      shipped_at: Date | null;
-      product_id: string;
-      title: string;
-      category: string;
-      color: string | null;
-      size: string | null;
-    }>(
-      `SELECT
-         oi.id,
-         oi.quantity,
-         oi.unit_price,
-         oi.status,
-         oi.shipping_carrier,
-         oi.tracking_number,
-         oi.shipped_at,
-         p.id AS product_id,
-         p.title,
-         p.category,
-         p.color,
-         p.size
-       FROM order_items oi
-       INNER JOIN products p ON p.id = oi.product_id
-       WHERE oi.order_id = $1`,
-      [orderId],
-    );
+    return (await this.buildCustomerOrderSnapshots([order]))[0];
+  }
 
-    const imageRows = await this.getImagesForProducts(
-      items.rows.map((item) => item.product_id),
-    );
-    const imageMap = new Map<string, string[]>();
-
-    for (const image of imageRows) {
-      const current = imageMap.get(image.product_id) ?? [];
-      current.push(image.image_url);
-      imageMap.set(image.product_id, current);
+  private async buildCustomerOrderSnapshots(orders: OrderDetailRow[]) {
+    if (!orders.length) {
+      return [];
     }
 
-    return {
+    const orderIds = orders.map((order) => order.id);
+    const items = await this.loadCustomerOrderItems(orderIds);
+    const itemsByOrderId = this.groupRowsByOrderId(items);
+    const imageMap = await this.buildProductImageMap(
+      items.map((item) => item.product_id),
+    );
+
+    return orders.map((order) => ({
       id: order.id,
       orderNumber: order.order_number ?? order.id,
       totalPrice: Number(order.total_price),
@@ -1236,7 +1063,7 @@ export class OrdersService {
       },
       status: order.status,
       createdAt: order.created_at,
-      items: items.rows.map((item) => ({
+      items: (itemsByOrderId.get(order.id) ?? []).map((item) => ({
         id: item.id,
         quantity: item.quantity,
         unitPrice: Number(item.unit_price),
@@ -1255,7 +1082,239 @@ export class OrdersService {
           images: imageMap.get(item.product_id) ?? [],
         },
       })),
-    };
+    }));
+  }
+
+  private async buildVendorOrderSnapshots(
+    orders: OrderListRow[],
+    vendorId: string,
+  ) {
+    if (!orders.length) {
+      return [];
+    }
+
+    const items = await this.loadAdminOrderItems(orders.map((order) => order.id), {
+      vendorId,
+      includeVendor: false,
+    });
+    const itemsByOrderId = this.groupRowsByOrderId(items);
+
+    return orders.map((order) => ({
+      id: order.id,
+      orderNumber: order.order_number ?? order.id,
+      totalPrice: Number(order.total_price),
+      specialRequest: order.special_request,
+      fulfillment: {
+        placedAt: order.created_at,
+        confirmedAt: order.confirmed_at,
+        shippedAt: order.shipped_at,
+        deliveredAt: order.delivered_at,
+      },
+      paymentMethod: order.payment_method,
+      paymentStatus: order.payment_status,
+      codStatusNote: order.cod_status_note,
+      codUpdatedAt: order.cod_updated_at,
+      cancelRequest: {
+        status: order.cancel_request_status,
+        note: order.cancel_request_note,
+        requestedAt: order.cancel_requested_at,
+      },
+      status: order.status,
+      createdAt: order.created_at,
+      customerEmail: order.customer_email ?? 'Guest checkout',
+      items: (itemsByOrderId.get(order.id) ?? []).map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unitPrice: Number(item.unit_price),
+        commission: Number(item.commission_amount),
+        vendorEarnings: Number(item.vendor_earnings),
+        status: item.status,
+        shipment: {
+          shippingCarrier: item.shipping_carrier,
+          trackingNumber: item.tracking_number,
+          shippedAt: item.shipped_at,
+        },
+        product: {
+          id: item.product_id,
+          title: item.title,
+          category: item.category,
+          color: item.color,
+          size: item.size,
+          productCode: item.product_code,
+        },
+      })),
+    }));
+  }
+
+  private async buildAdminOrderSnapshots(orders: OrderListRow[]) {
+    if (!orders.length) {
+      return [];
+    }
+
+    const items = await this.loadAdminOrderItems(orders.map((order) => order.id));
+    const itemsByOrderId = this.groupRowsByOrderId(items);
+
+    return orders.map((order) => ({
+      id: order.id,
+      orderNumber: order.order_number ?? order.id,
+      totalPrice: Number(order.total_price),
+      specialRequest: order.special_request,
+      fulfillment: {
+        placedAt: order.created_at,
+        confirmedAt: order.confirmed_at,
+        shippedAt: order.shipped_at,
+        deliveredAt: order.delivered_at,
+      },
+      paymentMethod: order.payment_method,
+      paymentStatus: order.payment_status,
+      codStatusNote: order.cod_status_note,
+      codUpdatedAt: order.cod_updated_at,
+      cancelRequest: {
+        status: order.cancel_request_status,
+        note: order.cancel_request_note,
+        requestedAt: order.cancel_requested_at,
+      },
+      status: order.status,
+      createdAt: order.created_at,
+      customerEmail: order.customer_email ?? 'Guest checkout',
+      items: (itemsByOrderId.get(order.id) ?? []).map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unitPrice: Number(item.unit_price),
+        commission: Number(item.commission_amount),
+        vendorEarnings: Number(item.vendor_earnings),
+        status: item.status,
+        shipment: {
+          shippingCarrier: item.shipping_carrier,
+          trackingNumber: item.tracking_number,
+          shippedAt: item.shipped_at,
+        },
+        product: {
+          id: item.product_id,
+          title: item.title,
+          category: item.category,
+          color: item.color,
+          size: item.size,
+          productCode: item.product_code,
+        },
+        vendor: {
+          id: item.vendor_id,
+          shopName: item.shop_name,
+        },
+      })),
+    }));
+  }
+
+  private async loadCustomerOrderItems(orderIds: string[]) {
+    if (!orderIds.length) {
+      return [];
+    }
+
+    const clause = this.buildGuidLiteralClause(orderIds);
+    const result = await this.databaseService.query<OrderCustomerItemRow>(
+      `SELECT
+         oi.order_id,
+         oi.id,
+         oi.quantity,
+         oi.unit_price,
+         oi.status,
+         oi.shipping_carrier,
+         oi.tracking_number,
+         oi.shipped_at,
+         p.id AS product_id,
+         p.title,
+         p.category,
+         p.color,
+         p.size
+       FROM order_items oi
+       INNER JOIN products p ON p.id = oi.product_id
+       WHERE oi.order_id IN (${clause})
+       ORDER BY oi.order_id ASC, p.title ASC`,
+    );
+
+    return result.rows;
+  }
+
+  private async loadAdminOrderItems(
+    orderIds: string[],
+    options: { vendorId?: string; includeVendor?: boolean } = {},
+  ) {
+    if (!orderIds.length) {
+      return [];
+    }
+
+    const clause = this.buildGuidLiteralClause(orderIds);
+    const filters = [`oi.order_id IN (${clause})`];
+    const values: string[] = [];
+
+    if (options.vendorId) {
+      values.push(options.vendorId);
+      filters.push(`oi.vendor_id = $${values.length}`);
+    }
+
+    const vendorJoin =
+      options.includeVendor === false
+        ? ''
+        : '\n       INNER JOIN vendors v ON v.id = oi.vendor_id';
+    const vendorSelect =
+      options.includeVendor === false
+        ? `CAST(NULL AS UNIQUEIDENTIFIER) AS vendor_id,
+         CAST(NULL AS NVARCHAR(255)) AS shop_name`
+        : `v.id AS vendor_id,
+         v.shop_name`;
+
+    const result = await this.databaseService.query<OrderAdminItemRow>(
+      `SELECT
+         oi.order_id,
+         oi.id,
+         oi.quantity,
+         oi.unit_price,
+         oi.commission_amount,
+         oi.vendor_earnings,
+         oi.status,
+         oi.shipping_carrier,
+         oi.tracking_number,
+         oi.shipped_at,
+         p.id AS product_id,
+         p.title,
+         p.category,
+         p.color,
+         p.size,
+         p.product_code,
+         ${vendorSelect}
+       FROM order_items oi
+       INNER JOIN products p ON p.id = oi.product_id${vendorJoin}
+       WHERE ${filters.join(' AND ')}
+       ORDER BY oi.order_id ASC, p.title ASC`,
+      values,
+    );
+
+    return result.rows;
+  }
+
+  private async buildProductImageMap(productIds: string[]) {
+    const imageRows = await this.getImagesForProducts(productIds);
+    const imageMap = new Map<string, string[]>();
+
+    for (const image of imageRows) {
+      const current = imageMap.get(image.product_id) ?? [];
+      current.push(image.image_url);
+      imageMap.set(image.product_id, current);
+    }
+
+    return imageMap;
+  }
+
+  private groupRowsByOrderId<T extends { order_id: string }>(rows: T[]) {
+    const grouped = new Map<string, T[]>();
+
+    for (const row of rows) {
+      const current = grouped.get(row.order_id) ?? [];
+      current.push(row);
+      grouped.set(row.order_id, current);
+    }
+
+    return grouped;
   }
 
   private async assignPublicOrderNumber(
@@ -1297,16 +1356,82 @@ export class OrdersService {
     return orderNumber;
   }
 
-  private normalizeCheckoutInput(dto: CreateOrderDto): CheckoutSnapshotInput {
+  private normalizeCheckoutInput(
+    dto: CreateOrderDto,
+    context: {
+      customerProfile?: CustomerCheckoutProfile | null;
+      savedAddress?: CheckoutAddressRow | null;
+    } = {},
+  ): CheckoutSnapshotInput {
+    const fullName = this.firstNonEmpty(
+      dto.fullName,
+      context.savedAddress?.full_name,
+      context.customerProfile?.full_name,
+    );
+    const email = this.firstNonEmpty(dto.email, context.customerProfile?.email);
+    const phoneNumber = this.firstNonEmpty(
+      dto.phoneNumber,
+      context.savedAddress?.phone_number,
+      context.customerProfile?.phone_number,
+    );
+    const city = this.firstNonEmpty(dto.city, context.savedAddress?.city);
+    const addressLine1 = this.firstNonEmpty(
+      dto.addressLine1,
+      context.savedAddress?.line1,
+    );
+    const apartmentOrNote =
+      dto.apartmentOrNote?.trim() || context.savedAddress?.line2 || null;
+
+    if (!fullName) {
+      throw new BadRequestException(
+        'Please add the customer name before placing the order',
+      );
+    }
+
+    if (!email) {
+      throw new BadRequestException(
+        'Please add the customer email before placing the order',
+      );
+    }
+
+    if (!phoneNumber) {
+      throw new BadRequestException(
+        'Please add the customer phone number before placing the order',
+      );
+    }
+
+    if (!city) {
+      throw new BadRequestException(
+        'Please add the delivery city before placing the order',
+      );
+    }
+
+    if (!addressLine1) {
+      throw new BadRequestException(
+        'Please add the delivery address before placing the order',
+      );
+    }
+
     return {
-      fullName: dto.fullName.trim(),
-      email: dto.email.trim().toLowerCase(),
-      phoneNumber: dto.phoneNumber.trim(),
-      city: dto.city.trim(),
-      addressLine1: dto.addressLine1.trim(),
-      apartmentOrNote: dto.apartmentOrNote?.trim() || null,
+      fullName,
+      email: email.toLowerCase(),
+      phoneNumber,
+      city,
+      addressLine1,
+      apartmentOrNote,
       specialRequest: dto.specialRequest?.trim() || null,
     };
+  }
+
+  private firstNonEmpty(...values: Array<string | null | undefined>) {
+    for (const value of values) {
+      const normalized = value?.trim();
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return null;
   }
 
   private async resolveGuestCheckoutCustomer(
@@ -1634,6 +1759,8 @@ export class OrdersService {
          p.price,
          p.stock,
          p.vendor_id,
+         v.platform_fee,
+         v.created_at AS vendor_created_at,
          p.category,
          p.color,
          p.size,
@@ -1691,6 +1818,30 @@ export class OrdersService {
   private publicVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
       AND ${vendorAlias}.is_verified = 1`;
+  }
+
+  private resolveEffectiveVendorPlatformFee(
+    configuredFee: number | string | null | undefined,
+    vendorCreatedAt: Date | string,
+  ) {
+    const fee = Number(configuredFee ?? 0);
+    if (!Number.isFinite(fee) || fee <= 0) {
+      return 0;
+    }
+
+    const createdAt = new Date(vendorCreatedAt);
+    if (Number.isNaN(createdAt.getTime())) {
+      return fee;
+    }
+
+    const graceEndsAt = new Date(createdAt);
+    graceEndsAt.setMonth(graceEndsAt.getMonth() + 2);
+
+    if (new Date() < graceEndsAt) {
+      return 0;
+    }
+
+    return fee;
   }
 
   private async ensureCartExists(customerId: string) {
@@ -1812,6 +1963,25 @@ export class OrdersService {
     }
 
     return address;
+  }
+
+  private async loadCheckoutCustomerProfile(
+    client: QueryRunner,
+    customerId: string,
+  ) {
+    const result = await client.query<CustomerCheckoutProfile>(
+      `SELECT TOP 1 email, full_name, phone_number
+       FROM users
+       WHERE id = $1`,
+      [customerId],
+    );
+
+    const profile = result.rows[0];
+    if (!profile) {
+      throw new NotFoundException('Customer account not found');
+    }
+
+    return profile;
   }
 
   private async loadCheckoutPaymentMethod(

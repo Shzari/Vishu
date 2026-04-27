@@ -205,10 +205,14 @@ export class VendorBillingService {
         totalBilledOrders: summaryRow?.total_billed_orders ?? 0,
         totalBilledAmount: Number(summaryRow?.total_billed_amount ?? 0),
         totalSettledAmount: Number(summaryRow?.total_settled_amount ?? 0),
-        totalOutstandingAmount: Number(summaryRow?.total_outstanding_amount ?? 0),
+        totalOutstandingAmount: Number(
+          summaryRow?.total_outstanding_amount ?? 0,
+        ),
         currentMonthOrders: summaryRow?.current_month_orders ?? 0,
         currentMonthAmount: Number(summaryRow?.current_month_amount ?? 0),
-        currentMonthOutstanding: Number(summaryRow?.current_month_outstanding ?? 0),
+        currentMonthOutstanding: Number(
+          summaryRow?.current_month_outstanding ?? 0,
+        ),
       },
       periods: periods.rows.map((period) => {
         const billedAmount = Number(period.billed_amount);
@@ -434,10 +438,7 @@ export class VendorBillingService {
     );
   }
 
-  async getPendingCardPaymentBySession(
-    sessionId: string,
-    vendorId: string,
-  ) {
+  async getPendingCardPaymentBySession(sessionId: string, vendorId: string) {
     const result = await this.databaseService.query<{
       id: string;
       vendor_fee_id: string;

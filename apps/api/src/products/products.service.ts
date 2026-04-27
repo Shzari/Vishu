@@ -17,50 +17,21 @@ import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
 import { VendorAccessService } from '../vendor-access/vendor-access.service';
 import {
+  type PaginationInput,
+  toPaginatedResponse,
+} from '../common/dto/pagination.dto';
+import {
   ProductBulkStockDto,
   ProductMutationDto,
   ProductUpdateDto,
+  ReviewSubmissionDto,
   VendorCatalogRequestDto,
 } from './dto';
 
 type UploadedFile = Express.Multer.File;
 
-const PRODUCT_DEPARTMENTS = ['men', 'women', 'kids', 'babies'] as const;
 const DEFAULT_SEARCH_LIMIT = 24;
 const DEFAULT_FALLBACK_LIMIT = 10;
-const PRODUCT_COLOR_OPTIONS = [
-  'black',
-  'white',
-  'ivory',
-  'cream',
-  'beige',
-  'brown',
-  'tan',
-  'gray',
-  'blue',
-  'navy',
-  'red',
-  'orange',
-  'yellow',
-  'green',
-  'olive',
-  'pink',
-  'purple',
-  'burgundy',
-  'gold',
-  'silver',
-  'multicolor',
-] as const;
-const PRODUCT_SIZE_OPTIONS = [
-  'xs',
-  's',
-  'm',
-  'l',
-  'xl',
-  'xxl',
-  'xxxl',
-  'one-size',
-] as const;
 const SEARCH_STOP_WORDS = new Set([
   'a',
   'an',
@@ -73,84 +44,57 @@ const SEARCH_STOP_WORDS = new Set([
   'with',
 ]);
 
-const PRODUCT_CATEGORY_GROUPS: Record<
-  (typeof PRODUCT_DEPARTMENTS)[number],
-  string[]
-> = {
-  men: [
+const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
+  tshirts: [
+    'tshirt',
     'tshirts',
-    'tops',
-    'shirts',
-    'hoodies',
-    'sweatshirts',
-    'sweaters',
-    'jackets',
-    'outerwear',
+    't shirt',
+    't shirts',
+    'tee shirt',
+    'tee shirts',
+    'tee',
+    'tees',
+    't-shirt',
+    't-shirts',
+  ],
+  tops: ['top', 'tops', 'blouse', 'blouses', 'tank top', 'tank tops'],
+  shirts: ['shirt', 'shirts', 'button shirt', 'button shirts', 'button down'],
+  hoodies: ['hoodie', 'hoodies', 'hooded sweatshirt'],
+  sweatshirts: ['sweatshirt', 'sweatshirts', 'crewneck', 'crewnecks'],
+  sweaters: ['sweater', 'sweaters', 'knit', 'knits', 'jumper', 'jumpers'],
+  jackets: ['jacket', 'jackets', 'coat', 'coats', 'blazer', 'blazers'],
+  outerwear: ['outerwear', 'outerwears', 'parka', 'parkas'],
+  pants: [
+    'pant',
     'pants',
-    'jeans',
-    'shorts',
-    'suits',
-    'sportswear',
-    'accessories',
+    'trouser',
+    'trousers',
+    'slack',
+    'slacks',
+    'bottom',
+    'bottoms',
   ],
-  women: [
-    'tshirts',
-    'tops',
-    'shirts',
-    'hoodies',
-    'sweatshirts',
-    'sweaters',
-    'jackets',
-    'outerwear',
-    'pants',
-    'jeans',
-    'shorts',
-    'leggings',
-    'dresses',
-    'skirts',
-    'suits',
-    'sportswear',
-    'accessories',
-  ],
-  kids: [
-    'tshirts',
-    'hoodies',
-    'jackets',
-    'pants',
-    'jeans',
-    'sets',
-    'schoolwear',
-    'sportswear',
-  ],
-  babies: [
-    'bodysuits',
-    'rompers',
-    'sets',
-    'outerwear',
-    'sleepwear',
-    'blankets',
-    'accessories',
-  ],
+  jeans: ['jean', 'jeans', 'denim', 'denims'],
+  shorts: ['short', 'shorts'],
+  suits: ['suit', 'suits', 'tailoring', 'formalwear'],
+  sportswear: ['sportswear', 'sport', 'sports', 'activewear', 'gymwear'],
+  accessories: ['accessory', 'accessories', 'bag', 'bags', 'belt', 'belts'],
+  leggings: ['legging', 'leggings', 'tights'],
+  dresses: ['dress', 'dresses', 'gown', 'gowns'],
+  skirts: ['skirt', 'skirts'],
+  bodysuits: ['bodysuit', 'bodysuits', 'body suit', 'body suits'],
+  rompers: ['romper', 'rompers', 'onesie', 'onesies'],
+  sets: ['set', 'sets', 'outfit', 'outfits'],
+  sleepwear: ['sleepwear', 'pajama', 'pajamas', 'pyjama', 'pyjamas'],
+  blankets: ['blanket', 'blankets'],
+  schoolwear: ['schoolwear', 'school uniform', 'school uniforms'],
 };
 
-const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
-  tshirts: ['tshirt', 'tshirts', 'tee', 'tees', 't-shirt', 't-shirts'],
-  tops: ['top', 'tops'],
-  shirts: ['shirt', 'shirts'],
-  hoodies: ['hoodie', 'hoodies'],
-  sweatshirts: ['sweatshirt', 'sweatshirts'],
-  sweaters: ['sweater', 'sweaters', 'knit', 'knits'],
-  jackets: ['jacket', 'jackets', 'coat', 'coats'],
-  outerwear: ['outerwear', 'outerwears'],
-  pants: ['pant', 'pants', 'trouser', 'trousers'],
-  jeans: ['jean', 'jeans', 'denim'],
-  shorts: ['short', 'shorts'],
-  suits: ['suit', 'suits', 'tailoring'],
-  sportswear: ['sportswear', 'sport', 'sports', 'activewear'],
-  accessories: ['accessory', 'accessories', 'bag', 'bags'],
-  leggings: ['legging', 'leggings'],
-  dresses: ['dress', 'dresses'],
-  skirts: ['skirt', 'skirts'],
+const SEARCH_CATEGORY_LABELS: Record<string, string> = {
+  tshirts: 'T-Shirts',
+  sportswear: 'Sportswear',
+  schoolwear: 'Schoolwear',
+  sleepwear: 'Sleepwear',
 };
 
 interface ProductRow {
@@ -252,13 +196,65 @@ interface PublicCatalogProduct {
     sizeTypeName: string;
   }[];
   productCode?: string | null;
+  ratingSummary: {
+    average: number | null;
+    count: number;
+  };
   vendor?: {
     id: string;
     shopName: string;
     logoUrl?: string | null;
+    ratingSummary?: {
+      average: number | null;
+      count: number;
+    };
   };
   images: string[];
   createdAt: Date;
+  recentReviews?: PublicReviewEntry[];
+}
+
+export interface RatingSummary {
+  average: number | null;
+  count: number;
+}
+
+interface ReviewSummaryRow {
+  target_id: string;
+  average_rating: number | string | null;
+  review_count: number;
+}
+
+interface ReviewRow {
+  id: string;
+  rating: number;
+  comment: string | null;
+  full_name: string | null;
+  email: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface PublicReviewEntry {
+  id: string;
+  rating: number;
+  comment: string | null;
+  customerName: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface ReviewEligibilityRow {
+  delivered_purchase_count: number;
+  last_delivered_at: Date | null;
+}
+
+export interface ReviewStatusResponse {
+  canReview: boolean;
+  reason: string | null;
+  deliveredPurchaseCount: number;
+  lastDeliveredAt: Date | null;
+  existingReview: PublicReviewEntry | null;
 }
 
 interface SearchLayer {
@@ -306,17 +302,39 @@ export class ProductsService {
     private readonly vendorAccessService: VendorAccessService,
   ) {}
 
-  async listPublicProducts() {
-    const result = await this.databaseService.query<ProductRow>(
-      `SELECT p.id, p.title, p.description, p.price, p.stock, p.is_listed, p.department, p.category, p.color, p.size, p.created_at,
+  async listPublicProducts(pagination?: PaginationInput | null) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [result, totalCount] = await Promise.all([
+      this.databaseService.query<ProductRow>(
+        `SELECT p.id, p.title, p.description, p.price, p.stock, p.is_listed, p.department, p.category, p.color, p.size, p.created_at,
               v.id AS vendor_id, v.shop_name, v.logo_url
        FROM products p
        INNER JOIN vendors v ON v.id = p.vendor_id
        WHERE ${this.publicProductVisibilityClause('p', 'v')}
-       ORDER BY p.created_at DESC`,
-    );
+       ORDER BY p.created_at DESC${pagingClause}`,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            `SELECT COUNT(*) AS total
+             FROM products p
+             INNER JOIN vendors v ON v.id = p.vendor_id
+             WHERE ${this.publicProductVisibilityClause('p', 'v')}`,
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
-    return this.attachImages(result.rows);
+    const items = await this.attachImages(result.rows);
+    if (!pagination) {
+      return items;
+    }
+
+    return toPaginatedResponse(
+      items,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
+    );
   }
 
   async searchPublicProducts(input: {
@@ -358,9 +376,11 @@ export class ProductsService {
     );
     const fallbackProducts = fullCatalog
       .filter((product) => !usedProductIds.has(product.id))
-      .sort((left, right) =>
-        this.compareSearchableProducts(left, right) ||
-        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      .sort(
+        (left, right) =>
+          this.compareSearchableProducts(left, right) ||
+          new Date(right.createdAt).getTime() -
+            new Date(left.createdAt).getTime(),
       )
       .slice(0, DEFAULT_FALLBACK_LIMIT);
 
@@ -372,10 +392,9 @@ export class ProductsService {
         (sum, layer) => sum + layer.products.length,
         0,
       ),
-      noResultsMessage:
-        layers.some((layer) => layer.products.length > 0)
-          ? null
-          : `No results found for "${query}".`,
+      noResultsMessage: layers.some((layer) => layer.products.length > 0)
+        ? null
+        : `No results found for "${query}".`,
       sections: layers.filter((layer) => layer.products.length > 0),
       fallbackProducts,
     };
@@ -397,11 +416,23 @@ export class ProductsService {
       throw new NotFoundException('Product not found');
     }
 
-    return (await this.attachImages([product]))[0];
+    const [publicProduct, recentReviews] = await Promise.all([
+      this.attachImages([product]).then((items) => items[0]),
+      this.getRecentProductReviews(id),
+    ]);
+
+    return {
+      ...publicProduct,
+      recentReviews,
+    };
   }
 
-  async listPublicVendors() {
-    const result = await this.databaseService.query<{
+  async listPublicVendors(pagination?: PaginationInput | null) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [result, totalCount] = await Promise.all([
+      this.databaseService.query<{
       id: string;
       shop_name: string;
       shop_description: string | null;
@@ -422,8 +453,16 @@ export class ProductsService {
        LEFT JOIN products p ON p.vendor_id = v.id
        WHERE ${this.publicVendorVisibilityClause('v')}
        GROUP BY v.id, v.shop_name, v.shop_description, v.logo_url, v.banner_url
-       ORDER BY COUNT(CASE WHEN p.is_listed = 1 THEN p.id END) DESC, v.shop_name ASC`,
-    );
+       ORDER BY COUNT(CASE WHEN p.is_listed = 1 THEN p.id END) DESC, v.shop_name ASC${pagingClause}`,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            `SELECT COUNT(*) AS total
+             FROM vendors v
+             WHERE ${this.publicVendorVisibilityClause('v')}`,
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
     const vendorCatalogRows = await this.databaseService.query<{
       vendor_id: string;
@@ -455,7 +494,11 @@ export class ProductsService {
       vendorCatalogMap.set(row.vendor_id, current);
     }
 
-    return result.rows.map((row) => ({
+    const vendorRatingMap = await this.getVendorRatingSummaries(
+      result.rows.map((row) => row.id),
+    );
+
+    const items = result.rows.map((row) => ({
       id: row.id,
       shopName: row.shop_name,
       shopDescription: row.shop_description,
@@ -465,7 +508,19 @@ export class ProductsService {
       categoryCount: row.category_count,
       departments: [...(vendorCatalogMap.get(row.id)?.departments ?? [])],
       categories: [...(vendorCatalogMap.get(row.id)?.categories ?? [])],
+      ratingSummary:
+        vendorRatingMap.get(row.id) ?? this.createEmptyRatingSummary(),
     }));
+
+    if (!pagination) {
+      return items;
+    }
+
+    return toPaginatedResponse(
+      items,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
+    );
   }
 
   async listHomepageHeroSlides() {
@@ -556,7 +611,16 @@ export class ProductsService {
       [vendorId],
     );
 
-    const productList = await this.attachImages(products.rows);
+    const [productList, vendorRatingSummary, recentReviews] = await Promise.all(
+      [
+        this.attachImages(products.rows),
+        this.getVendorRatingSummaries([vendorId]).then(
+          (summaries) =>
+            summaries.get(vendorId) ?? this.createEmptyRatingSummary(),
+        ),
+        this.getRecentVendorReviews(vendorId),
+      ],
+    );
 
     return {
       id: row.id,
@@ -572,6 +636,156 @@ export class ProductsService {
       productCount: productList.length,
       categories: [...new Set(productList.map((product) => product.category))],
       products: productList,
+      ratingSummary: vendorRatingSummary,
+      recentReviews,
+    };
+  }
+
+  async getCustomerProductReviewStatus(customerId: string, productId: string) {
+    await this.assertProductExists(productId);
+
+    const [eligibility, existingReview] = await Promise.all([
+      this.getProductReviewEligibility(customerId, productId),
+      this.getExistingProductReview(productId, customerId),
+    ]);
+
+    return this.buildReviewStatus(
+      eligibility,
+      existingReview,
+      'Reviews unlock after you receive a delivered order for this item.',
+    );
+  }
+
+  async getCustomerVendorReviewStatus(customerId: string, vendorId: string) {
+    await this.assertVendorExists(vendorId);
+
+    const [eligibility, existingReview] = await Promise.all([
+      this.getVendorReviewEligibility(customerId, vendorId),
+      this.getExistingVendorReview(vendorId, customerId),
+    ]);
+
+    return this.buildReviewStatus(
+      eligibility,
+      existingReview,
+      'Reviews unlock after you receive a delivered order from this shop.',
+    );
+  }
+
+  async upsertProductReview(
+    customerId: string,
+    productId: string,
+    dto: ReviewSubmissionDto,
+  ) {
+    const reviewStatus = await this.getCustomerProductReviewStatus(
+      customerId,
+      productId,
+    );
+    if (!reviewStatus.canReview) {
+      throw new ForbiddenException(
+        reviewStatus.reason ?? 'You cannot review this product right now.',
+      );
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const existingReview = await client.query<{ id: string }>(
+        `SELECT TOP 1 id
+         FROM product_reviews
+         WHERE product_id = $1
+           AND customer_id = $2`,
+        [productId, customerId],
+      );
+      const comment = this.normalizeReviewComment(dto.comment);
+
+      if (existingReview.rows[0]) {
+        await client.query(
+          `UPDATE product_reviews
+           SET rating = $1,
+               comment = $2,
+               updated_at = SYSDATETIME()
+           WHERE id = $3`,
+          [dto.rating, comment, existingReview.rows[0].id],
+        );
+        return;
+      }
+
+      await client.query(
+        `INSERT INTO product_reviews (
+           product_id,
+           customer_id,
+           rating,
+           comment,
+           updated_at
+         )
+         VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+        [productId, customerId, dto.rating, comment],
+      );
+    });
+
+    return {
+      message: 'Product review saved.',
+      reviewStatus: await this.getCustomerProductReviewStatus(
+        customerId,
+        productId,
+      ),
+    };
+  }
+
+  async upsertVendorReview(
+    customerId: string,
+    vendorId: string,
+    dto: ReviewSubmissionDto,
+  ) {
+    const reviewStatus = await this.getCustomerVendorReviewStatus(
+      customerId,
+      vendorId,
+    );
+    if (!reviewStatus.canReview) {
+      throw new ForbiddenException(
+        reviewStatus.reason ?? 'You cannot review this shop right now.',
+      );
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const existingReview = await client.query<{ id: string }>(
+        `SELECT TOP 1 id
+         FROM vendor_reviews
+         WHERE vendor_id = $1
+           AND customer_id = $2`,
+        [vendorId, customerId],
+      );
+      const comment = this.normalizeReviewComment(dto.comment);
+
+      if (existingReview.rows[0]) {
+        await client.query(
+          `UPDATE vendor_reviews
+           SET rating = $1,
+               comment = $2,
+               updated_at = SYSDATETIME()
+           WHERE id = $3`,
+          [dto.rating, comment, existingReview.rows[0].id],
+        );
+        return;
+      }
+
+      await client.query(
+        `INSERT INTO vendor_reviews (
+           vendor_id,
+           customer_id,
+           rating,
+           comment,
+           updated_at
+         )
+         VALUES ($1, $2, $3, $4, SYSDATETIME())`,
+        [vendorId, customerId, dto.rating, comment],
+      );
+    });
+
+    return {
+      message: 'Shop review saved.',
+      reviewStatus: await this.getCustomerVendorReviewStatus(
+        customerId,
+        vendorId,
+      ),
     };
   }
 
@@ -777,7 +991,9 @@ export class ProductsService {
       throw new BadRequestException('Requested value is invalid');
     }
 
-    if (await this.catalogRequestMatchesExistingOption(requestType, lookupValue)) {
+    if (
+      await this.catalogRequestMatchesExistingOption(requestType, lookupValue)
+    ) {
       throw new BadRequestException(
         'This option already exists. Select it directly instead of submitting a request.',
       );
@@ -853,9 +1069,8 @@ export class ProductsService {
     const vendor = await this.getVendorForUser(user.sub);
     this.assertVendorReady(vendor);
     const normalizedDto = this.normalizeProductMutationDto(dto);
-    const selection = await this.resolveStructuredProductSelection(
-      normalizedDto,
-    );
+    const selection =
+      await this.resolveStructuredProductSelection(normalizedDto);
 
     try {
       const product = await this.databaseService.withTransaction(
@@ -996,35 +1211,54 @@ export class ProductsService {
           `SELECT color_id FROM product_colors WHERE product_id = $1 ORDER BY sort_order ASC`,
           [productId],
         );
-        const currentSizeRows = await client.query<{ size_id: string; stock: number }>(
-          `SELECT size_id, stock FROM product_sizes WHERE product_id = $1`,
-          [productId],
-        );
+        const currentSizeRows = await client.query<{
+          size_id: string;
+          stock: number;
+        }>(`SELECT size_id, stock FROM product_sizes WHERE product_id = $1`, [
+          productId,
+        ]);
 
-        const selection = await this.resolveStructuredProductSelection({
-          title: normalizedDto.title ?? currentRow.title,
-          description: normalizedDto.description ?? '',
-          price: normalizedDto.price ?? 0,
-          stock: normalizedDto.stock ?? currentRow.stock,
-          brandId: normalizedDto.brandId ?? currentRow.brand_id ?? '',
-          categoryId: normalizedDto.categoryId ?? currentRow.category_id ?? '',
-          subcategoryId:
-            normalizedDto.subcategoryId ?? currentRow.subcategory_id ?? '',
-          genderGroupId:
-            normalizedDto.genderGroupId === undefined
-              ? currentRow.gender_group_id
-              : normalizedDto.genderGroupId,
-          colorIds:
-            normalizedDto.colorIds ??
-            currentColorRows.rows.map((entry) => entry.color_id),
-          sizeTypeId: normalizedDto.sizeTypeId,
-          sizeVariants:
-            normalizedDto.sizeVariants ??
-            currentSizeRows.rows.map((entry) => ({
-              sizeId: entry.size_id,
-              stock: Number(entry.stock),
-            })),
-        });
+        const requiresStructuredSelection =
+          normalizedDto.brandId !== undefined ||
+          normalizedDto.categoryId !== undefined ||
+          normalizedDto.subcategoryId !== undefined ||
+          normalizedDto.genderGroupId !== undefined ||
+          normalizedDto.colorIds !== undefined ||
+          normalizedDto.sizeVariants !== undefined ||
+          (normalizedDto.stock !== undefined &&
+            Boolean(
+              currentRow.brand_id &&
+              currentRow.category_id &&
+              currentRow.subcategory_id,
+            ));
+
+        const selection = requiresStructuredSelection
+          ? await this.resolveStructuredProductSelection({
+              title: normalizedDto.title ?? currentRow.title,
+              description: normalizedDto.description ?? '',
+              price: normalizedDto.price ?? 0,
+              stock: normalizedDto.stock ?? currentRow.stock,
+              brandId: normalizedDto.brandId ?? currentRow.brand_id ?? '',
+              categoryId:
+                normalizedDto.categoryId ?? currentRow.category_id ?? '',
+              subcategoryId:
+                normalizedDto.subcategoryId ?? currentRow.subcategory_id ?? '',
+              genderGroupId:
+                normalizedDto.genderGroupId === undefined
+                  ? currentRow.gender_group_id
+                  : normalizedDto.genderGroupId,
+              colorIds:
+                normalizedDto.colorIds ??
+                currentColorRows.rows.map((entry) => entry.color_id),
+              sizeTypeId: normalizedDto.sizeTypeId,
+              sizeVariants:
+                normalizedDto.sizeVariants ??
+                currentSizeRows.rows.map((entry) => ({
+                  sizeId: entry.size_id,
+                  stock: Number(entry.stock),
+                })),
+            })
+          : null;
 
         const updates: string[] = [];
         const values: unknown[] = [];
@@ -1044,15 +1278,7 @@ export class ProductsService {
           pushUpdate('description', normalizedDto.description);
         if (normalizedDto.price !== undefined)
           pushUpdate('price', normalizedDto.price);
-        if (
-          normalizedDto.stock !== undefined ||
-          normalizedDto.brandId !== undefined ||
-          normalizedDto.categoryId !== undefined ||
-          normalizedDto.subcategoryId !== undefined ||
-          normalizedDto.genderGroupId !== undefined ||
-          normalizedDto.colorIds !== undefined ||
-          normalizedDto.sizeVariants !== undefined
-        ) {
+        if (selection) {
           pushUpdate('stock', selection.totalStock);
           pushUpdate('department', selection.department);
           pushUpdate('category', selection.category);
@@ -1062,6 +1288,8 @@ export class ProductsService {
           pushUpdate('gender_group_id', selection.genderGroup?.id ?? null);
           pushUpdate('color', selection.primaryColor);
           pushUpdate('size', selection.primarySize);
+        } else if (normalizedDto.stock !== undefined) {
+          pushUpdate('stock', normalizedDto.stock);
         }
 
         if (updates.length) {
@@ -1079,7 +1307,7 @@ export class ProductsService {
           normalizedDto.sizeVariants !== undefined
         ) {
           const threshold = vendor.low_stock_threshold;
-          const nextStock = selection.totalStock;
+          const nextStock = selection?.totalStock ?? normalizedDto.stock ?? 0;
 
           if (threshold <= 0 || nextStock > threshold) {
             if (currentRow.low_stock_alert_sent_at) {
@@ -1112,9 +1340,14 @@ export class ProductsService {
         }
 
         if (normalizedDto.colorIds !== undefined) {
-          await client.query('DELETE FROM product_colors WHERE product_id = $1', [
-            productId,
-          ]);
+          if (!selection) {
+            throw new BadRequestException('Select at least one color');
+          }
+
+          await client.query(
+            'DELETE FROM product_colors WHERE product_id = $1',
+            [productId],
+          );
           for (const [index, color] of selection.colors.entries()) {
             await client.query(
               `INSERT INTO product_colors (product_id, color_id, sort_order)
@@ -1125,9 +1358,16 @@ export class ProductsService {
         }
 
         if (normalizedDto.sizeVariants !== undefined) {
-          await client.query('DELETE FROM product_sizes WHERE product_id = $1', [
-            productId,
-          ]);
+          if (!selection) {
+            throw new BadRequestException(
+              'Select valid sizes before updating stock by size',
+            );
+          }
+
+          await client.query(
+            'DELETE FROM product_sizes WHERE product_id = $1',
+            [productId],
+          );
           for (const variant of selection.sizeVariants) {
             await client.query(
               `INSERT INTO product_sizes (product_id, size_id, stock, sku, updated_at)
@@ -1159,7 +1399,7 @@ export class ProductsService {
             ? 0
             : currentImageRows.rows.length;
           const category =
-            selection.category ??
+            selection?.category ??
             (await this.getProductCategory(client, productId));
 
           for (const [index, file] of files.entries()) {
@@ -1395,7 +1635,10 @@ export class ProductsService {
           [productCode, created.rows[0].id],
         );
 
-        const sourceColorRows = await client.query<{ color_id: string; sort_order: number }>(
+        const sourceColorRows = await client.query<{
+          color_id: string;
+          sort_order: number;
+        }>(
           `SELECT color_id, sort_order
            FROM product_colors
            WHERE product_id = $1
@@ -1410,7 +1653,11 @@ export class ProductsService {
           );
         }
 
-        const sourceSizeRows = await client.query<{ size_id: string; stock: number; sku: string | null }>(
+        const sourceSizeRows = await client.query<{
+          size_id: string;
+          stock: number;
+          sku: string | null;
+        }>(
           `SELECT size_id, stock, sku
            FROM product_sizes
            WHERE product_id = $1`,
@@ -1440,8 +1687,12 @@ export class ProductsService {
     return this.getVendorProductById(duplicated.id, vendor.id);
   }
 
-  async adminListProducts() {
-    const result = await this.databaseService.query<{
+  async adminListProducts(pagination?: PaginationInput | null) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [result, totalCount] = await Promise.all([
+      this.databaseService.query<{
       id: string;
       title: string;
       department: string;
@@ -1457,13 +1708,29 @@ export class ProductsService {
       `SELECT p.id, p.title, p.department, p.category, p.color, p.size, p.stock, p.price, p.product_code, p.vendor_id, v.shop_name
        FROM products p
        INNER JOIN vendors v ON v.id = p.vendor_id
-       ORDER BY p.created_at DESC`,
-    );
+       ORDER BY p.created_at DESC${pagingClause}`,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            'SELECT COUNT(*) AS total FROM products',
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
-    return result.rows.map((row) => ({
+    const items = result.rows.map((row) => ({
       ...row,
       price: Number(row.price),
     }));
+
+    if (!pagination) {
+      return items;
+    }
+
+    return toPaginatedResponse(
+      items,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
+    );
   }
 
   async adminDeleteProduct(productId: string) {
@@ -1484,7 +1751,9 @@ export class ProductsService {
 
     await this.ensureAlgoliaSearchSettings();
     const catalog = await this.getPublicSearchCatalog();
-    const objects = catalog.map((product) => this.buildSearchIndexObject(product));
+    const objects = catalog.map((product) =>
+      this.buildSearchIndexObject(product),
+    );
 
     await client.saveObjects({
       indexName: this.getAlgoliaIndexName(),
@@ -1504,12 +1773,21 @@ export class ProductsService {
       return [];
     }
 
-    const imageRows = await this.getImagesForProducts(
-      products.map((product) => product.id),
-    );
-    const relations = await this.getRelationsForProducts(
-      products.map((product) => product.id),
-    );
+    const productIds = products.map((product) => product.id);
+    const vendorIds = [
+      ...new Set(
+        products
+          .map((product) => product.vendor_id)
+          .filter((vendorId): vendorId is string => Boolean(vendorId)),
+      ),
+    ];
+    const [imageRows, relations, productRatingMap, vendorRatingMap] =
+      await Promise.all([
+        this.getImagesForProducts(productIds),
+        this.getRelationsForProducts(productIds),
+        this.getProductRatingSummaries(productIds),
+        this.getVendorRatingSummaries(vendorIds),
+      ]);
     const imageMap = new Map<string, string[]>();
 
     for (const image of imageRows) {
@@ -1537,6 +1815,8 @@ export class ProductsService {
       category: row.category,
       color: row.color,
       size: row.size,
+      ratingSummary:
+        productRatingMap.get(row.id) ?? this.createEmptyRatingSummary(),
       ...(row.product_code ? { productCode: row.product_code } : {}),
       ...(row.vendor_id && row.shop_name
         ? {
@@ -1544,6 +1824,9 @@ export class ProductsService {
               id: row.vendor_id,
               shopName: row.shop_name,
               logoUrl: row.logo_url ?? null,
+              ratingSummary:
+                vendorRatingMap.get(row.vendor_id) ??
+                this.createEmptyRatingSummary(),
             },
           }
         : {}),
@@ -1552,13 +1835,149 @@ export class ProductsService {
     }));
   }
 
+  private async getProductRatingSummaries(productIds: string[]) {
+    if (!productIds.length) {
+      return new Map<string, RatingSummary>();
+    }
+
+    const result = await this.databaseService.query<ReviewSummaryRow>(
+      `SELECT
+         pr.product_id AS target_id,
+         AVG(CAST(pr.rating AS DECIMAL(10, 2))) AS average_rating,
+         COUNT(*) AS review_count
+       FROM product_reviews pr
+       WHERE pr.product_id IN (${this.buildGuidLiteralClause(productIds)})
+       GROUP BY pr.product_id`,
+    );
+
+    return new Map(
+      result.rows.map((row) => [row.target_id, this.mapRatingSummary(row)]),
+    );
+  }
+
+  private async getVendorRatingSummaries(vendorIds: string[]) {
+    if (!vendorIds.length) {
+      return new Map<string, RatingSummary>();
+    }
+
+    const result = await this.databaseService.query<ReviewSummaryRow>(
+      `SELECT
+         vr.vendor_id AS target_id,
+         AVG(CAST(vr.rating AS DECIMAL(10, 2))) AS average_rating,
+         COUNT(*) AS review_count
+       FROM vendor_reviews vr
+       WHERE vr.vendor_id IN (${this.buildGuidLiteralClause(vendorIds)})
+       GROUP BY vr.vendor_id`,
+    );
+
+    return new Map(
+      result.rows.map((row) => [row.target_id, this.mapRatingSummary(row)]),
+    );
+  }
+
+  private async getRecentProductReviews(productId: string, limit = 6) {
+    const result = await this.databaseService.query<ReviewRow>(
+      `SELECT TOP ${Math.max(1, Math.min(limit, 20))}
+         pr.id,
+         pr.rating,
+         pr.comment,
+         u.full_name,
+         u.email,
+         pr.created_at,
+         pr.updated_at
+       FROM product_reviews pr
+       INNER JOIN users u ON u.id = pr.customer_id
+       WHERE pr.product_id = $1
+       ORDER BY pr.updated_at DESC, pr.created_at DESC`,
+      [productId],
+    );
+
+    return result.rows.map((row) => this.mapPublicReview(row));
+  }
+
+  private async getRecentVendorReviews(vendorId: string, limit = 6) {
+    const result = await this.databaseService.query<ReviewRow>(
+      `SELECT TOP ${Math.max(1, Math.min(limit, 20))}
+         vr.id,
+         vr.rating,
+         vr.comment,
+         u.full_name,
+         u.email,
+         vr.created_at,
+         vr.updated_at
+       FROM vendor_reviews vr
+       INNER JOIN users u ON u.id = vr.customer_id
+       WHERE vr.vendor_id = $1
+       ORDER BY vr.updated_at DESC, vr.created_at DESC`,
+      [vendorId],
+    );
+
+    return result.rows.map((row) => this.mapPublicReview(row));
+  }
+
+  private mapRatingSummary(row: ReviewSummaryRow): RatingSummary {
+    const count = Number(row.review_count ?? 0);
+    const average =
+      count > 0 ? Number(Number(row.average_rating ?? 0).toFixed(1)) : null;
+
+    return {
+      average: Number.isFinite(average ?? NaN) ? average : null,
+      count,
+    };
+  }
+
+  private createEmptyRatingSummary(): RatingSummary {
+    return {
+      average: null,
+      count: 0,
+    };
+  }
+
+  private mapPublicReview(row: ReviewRow): PublicReviewEntry {
+    return {
+      id: row.id,
+      rating: Number(row.rating),
+      comment: row.comment,
+      customerName: this.formatReviewCustomerName(row.full_name, row.email),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private formatReviewCustomerName(
+    fullName: string | null,
+    email: string | null,
+  ) {
+    const normalizedName = fullName?.trim();
+    if (normalizedName) {
+      const parts = normalizedName.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) {
+        return parts[0];
+      }
+
+      return `${parts[0]} ${parts[parts.length - 1].slice(0, 1)}.`;
+    }
+
+    const emailPrefix = email?.split('@')[0]?.trim();
+    if (emailPrefix) {
+      return emailPrefix.slice(0, 18);
+    }
+
+    return 'Verified buyer';
+  }
+
   private async getRelationsForProducts(productIds: string[]) {
     if (!productIds.length) {
       return new Map<
         string,
         Pick<
           PublicCatalogProduct,
-          'brand' | 'categoryRef' | 'subcategory' | 'genderGroup' | 'colors' | 'sizeVariants'
+          | 'brand'
+          | 'categoryRef'
+          | 'subcategory'
+          | 'genderGroup'
+          | 'colors'
+          | 'sizeVariants'
         >
       >();
     }
@@ -1613,7 +2032,12 @@ export class ProductsService {
       string,
       Pick<
         PublicCatalogProduct,
-        'brand' | 'categoryRef' | 'subcategory' | 'genderGroup' | 'colors' | 'sizeVariants'
+        | 'brand'
+        | 'categoryRef'
+        | 'subcategory'
+        | 'genderGroup'
+        | 'colors'
+        | 'sizeVariants'
       >
     >();
 
@@ -1788,10 +2212,7 @@ export class ProductsService {
         searchParams: {
           query: input.query,
           hitsPerPage: Math.max(input.limit * 4, 40),
-          filters: this.buildAlgoliaFilters(
-            input.department,
-            input.category,
-          ),
+          filters: this.buildAlgoliaFilters(input.department, input.category),
           typoTolerance: true,
           removeWordsIfNoResults: 'allOptional',
         },
@@ -1876,9 +2297,7 @@ export class ProductsService {
         `More ${this.formatSearchSectionLabel(queryProfile.color)} styles`,
         annotated.filter(
           (item) =>
-            !item.matchesAllTokens &&
-            !item.categoryMatch &&
-            item.colorMatch,
+            !item.matchesAllTokens && !item.categoryMatch && item.colorMatch,
         ),
       );
     }
@@ -1901,7 +2320,8 @@ export class ProductsService {
       .split(' ')
       .map((token) => token.trim())
       .filter((token) => token && !SEARCH_STOP_WORDS.has(token));
-    const category = this.matchCategoryToken(tokens);
+    const category = this.matchCategoryIntent(normalizedQuery, tokens);
+    const expandedTokens = this.expandSearchTokens(tokens, category);
     const colors = [
       ...new Set(
         catalog
@@ -1914,6 +2334,7 @@ export class ProductsService {
     return {
       normalizedQuery,
       tokens,
+      expandedTokens,
       category,
       color,
     };
@@ -1935,7 +2356,7 @@ export class ProductsService {
     ]);
     const titleTokens = new Set(titleText.split(' ').filter(Boolean));
     const blobTokens = new Set(searchBlob.split(' ').filter(Boolean));
-    const matchedTokens = queryProfile.tokens.filter(
+    const matchedTokens = queryProfile.expandedTokens.filter(
       (token) => titleTokens.has(token) || blobTokens.has(token),
     );
     const phraseInTitle =
@@ -1943,13 +2364,13 @@ export class ProductsService {
       titleText.includes(queryProfile.normalizedQuery);
     const categoryMatch =
       queryProfile.category != null &&
-      this.normalizeSearchText(product.category) === queryProfile.category;
+      this.productMatchesCategoryIntent(product, queryProfile.category);
     const colorMatch =
       queryProfile.color != null &&
       this.normalizeSearchText(product.color) === queryProfile.color;
     const matchesAllTokens =
-      queryProfile.tokens.length > 0 &&
-      queryProfile.tokens.every(
+      queryProfile.expandedTokens.length > 0 &&
+      queryProfile.expandedTokens.every(
         (token) => titleTokens.has(token) || blobTokens.has(token),
       ) &&
       (!queryProfile.category || categoryMatch) &&
@@ -1959,8 +2380,9 @@ export class ProductsService {
       product,
       algoliaRank,
       textScore: matchedTokens.length,
-      titleScore: queryProfile.tokens.filter((token) => titleTokens.has(token))
-        .length,
+      titleScore: queryProfile.expandedTokens.filter((token) =>
+        titleTokens.has(token),
+      ).length,
       matchesAllTokens,
       phraseInTitle,
       categoryMatch,
@@ -1988,7 +2410,7 @@ export class ProductsService {
       return right.textScore - left.textScore;
     }
 
-    if ((left.product.stock > 0) !== (right.product.stock > 0)) {
+    if (left.product.stock > 0 !== right.product.stock > 0) {
       return left.product.stock > 0 ? -1 : 1;
     }
 
@@ -2002,7 +2424,7 @@ export class ProductsService {
     left: SearchableProduct,
     right: SearchableProduct,
   ) {
-    if ((left.stock > 0) !== (right.stock > 0)) {
+    if (left.stock > 0 !== right.stock > 0) {
       return left.stock > 0 ? -1 : 1;
     }
 
@@ -2019,7 +2441,9 @@ export class ProductsService {
     );
   }
 
-  private buildSearchIndexObject(product: SearchableProduct): SearchIndexRecord {
+  private buildSearchIndexObject(
+    product: SearchableProduct,
+  ): SearchIndexRecord {
     return {
       objectID: product.id,
       title: product.title,
@@ -2038,23 +2462,31 @@ export class ProductsService {
 
   private buildSearchTags(product: PublicCatalogProduct) {
     const categoryToken = this.normalizeCategoryValue(
-      product.subcategory?.name ?? product.categoryRef?.name ?? product.category,
+      product.subcategory?.name ??
+        product.categoryRef?.name ??
+        product.category,
     );
     const aliasTags = SEARCH_CATEGORY_ALIASES[categoryToken] ?? [];
-    return [...new Set([
-      product.department,
-      product.category,
-      ...(product.brand?.name ? [product.brand.name] : []),
-      ...(product.categoryRef?.name ? [product.categoryRef.name] : []),
-      ...(product.subcategory?.name ? [product.subcategory.name] : []),
-      ...(product.colors.length ? product.colors.map((entry) => entry.name) : product.color ? [product.color] : []),
-      ...(product.sizeVariants.length
-        ? product.sizeVariants.map((entry) => entry.label)
-        : product.size
-          ? [product.size]
-          : []),
-      ...aliasTags,
-    ])];
+    return [
+      ...new Set([
+        product.department,
+        product.category,
+        ...(product.brand?.name ? [product.brand.name] : []),
+        ...(product.categoryRef?.name ? [product.categoryRef.name] : []),
+        ...(product.subcategory?.name ? [product.subcategory.name] : []),
+        ...(product.colors.length
+          ? product.colors.map((entry) => entry.name)
+          : product.color
+            ? [product.color]
+            : []),
+        ...(product.sizeVariants.length
+          ? product.sizeVariants.map((entry) => entry.label)
+          : product.size
+            ? [product.size]
+            : []),
+        ...aliasTags,
+      ]),
+    ];
   }
 
   private normalizeCatalogFilter(value?: string | null) {
@@ -2066,10 +2498,12 @@ export class ProductsService {
     return normalized && normalized !== 'all' ? normalized : null;
   }
 
-  private normalizeSearchText(value?: string | null | Array<string | null | undefined>) {
+  private normalizeSearchText(
+    value?: string | null | Array<string | null | undefined>,
+  ) {
     const source = Array.isArray(value)
       ? value.filter(Boolean).join(' ')
-      : value ?? '';
+      : (value ?? '');
 
     return source
       .toLowerCase()
@@ -2078,9 +2512,23 @@ export class ProductsService {
       .trim();
   }
 
-  private matchCategoryToken(tokens: string[]) {
+  private matchCategoryIntent(normalizedQuery: string, tokens: string[]) {
+    const tokenSet = new Set(tokens);
+    const compactQuery = this.compactSearchText(normalizedQuery);
+
     for (const [category, aliases] of Object.entries(SEARCH_CATEGORY_ALIASES)) {
-      if (tokens.some((token) => aliases.includes(token))) {
+      const candidateAliases = [category, ...aliases];
+
+      if (
+        candidateAliases.some((alias) =>
+          this.searchAliasMatchesQuery({
+            alias,
+            compactQuery,
+            normalizedQuery,
+            tokenSet,
+          }),
+        )
+      ) {
         return category;
       }
     }
@@ -2088,7 +2536,76 @@ export class ProductsService {
     return null;
   }
 
+  private searchAliasMatchesQuery(input: {
+    alias: string;
+    compactQuery: string;
+    normalizedQuery: string;
+    tokenSet: Set<string>;
+  }) {
+    const normalizedAlias = this.normalizeSearchText(input.alias);
+    if (!normalizedAlias) {
+      return false;
+    }
+
+    const compactAlias = this.compactSearchText(normalizedAlias);
+    const aliasTokens = normalizedAlias.split(' ').filter(Boolean);
+    const paddedQuery = ` ${input.normalizedQuery} `;
+    const paddedAlias = ` ${normalizedAlias} `;
+
+    return (
+      paddedQuery.includes(paddedAlias) ||
+      input.compactQuery.includes(compactAlias) ||
+      (aliasTokens.length === 1 && input.tokenSet.has(aliasTokens[0])) ||
+      (aliasTokens.length > 1 &&
+        aliasTokens.every((token) => input.tokenSet.has(token)))
+    );
+  }
+
+  private expandSearchTokens(tokens: string[], category: string | null) {
+    if (!category) {
+      return tokens;
+    }
+
+    return [...new Set([...tokens, category])];
+  }
+
+  private productMatchesCategoryIntent(
+    product: SearchableProduct,
+    category: string,
+  ) {
+    const aliases = [category, ...(SEARCH_CATEGORY_ALIASES[category] ?? [])];
+    const productValues = [
+      product.category,
+      product.categoryRef?.name,
+      product.subcategory?.name,
+      ...product.tags,
+    ]
+      .map((value) => this.normalizeSearchText(value))
+      .filter(Boolean);
+    const normalizedValues = new Set(productValues);
+    const compactValues = new Set(
+      productValues.map((value) => this.compactSearchText(value)),
+    );
+
+    return aliases.some((alias) => {
+      const normalizedAlias = this.normalizeSearchText(alias);
+      return (
+        normalizedValues.has(normalizedAlias) ||
+        compactValues.has(this.compactSearchText(normalizedAlias))
+      );
+    });
+  }
+
+  private compactSearchText(value: string) {
+    return value.replace(/\s+/g, '');
+  }
+
   private formatSearchSectionLabel(value: string) {
+    const knownLabel = SEARCH_CATEGORY_LABELS[value];
+    if (knownLabel) {
+      return knownLabel;
+    }
+
     return value
       .split(/[\s-]+/)
       .filter(Boolean)
@@ -2100,7 +2617,10 @@ export class ProductsService {
     department: string | null,
     category: string | null,
   ) {
-    return [department ? `department:${department}` : null, category ? `category:${category}` : null]
+    return [
+      department ? `department:${department}` : null,
+      category ? `category:${category}` : null,
+    ]
       .filter((value): value is string => Boolean(value))
       .join(' AND ');
   }
@@ -2173,7 +2693,9 @@ export class ProductsService {
     }
 
     await this.ensureAlgoliaSearchSettings();
-    const [product] = await this.getPublicSearchCatalog({ productIds: [productId] });
+    const [product] = await this.getPublicSearchCatalog({
+      productIds: [productId],
+    });
 
     if (!product) {
       await client.deleteObject({
@@ -2374,7 +2896,11 @@ export class ProductsService {
       subcategoryId: dto.subcategoryId.trim(),
       genderGroupId: dto.genderGroupId?.trim() || null,
       sizeTypeId: dto.sizeTypeId?.trim() || null,
-      colorIds: [...new Set((dto.colorIds ?? []).map((entry) => entry.trim()).filter(Boolean))],
+      colorIds: [
+        ...new Set(
+          (dto.colorIds ?? []).map((entry) => entry.trim()).filter(Boolean),
+        ),
+      ],
       sizeVariants: (dto.sizeVariants ?? [])
         .map((entry) => ({
           sizeId: typeof entry?.sizeId === 'string' ? entry.sizeId.trim() : '',
@@ -2394,19 +2920,28 @@ export class ProductsService {
       categoryId: dto.categoryId?.trim(),
       subcategoryId: dto.subcategoryId?.trim(),
       genderGroupId:
-        dto.genderGroupId === undefined ? undefined : dto.genderGroupId?.trim() || null,
+        dto.genderGroupId === undefined
+          ? undefined
+          : dto.genderGroupId?.trim() || null,
       sizeTypeId:
-        dto.sizeTypeId === undefined ? undefined : dto.sizeTypeId?.trim() || null,
+        dto.sizeTypeId === undefined
+          ? undefined
+          : dto.sizeTypeId?.trim() || null,
       colorIds:
         dto.colorIds === undefined
           ? undefined
-          : [...new Set(dto.colorIds.map((entry) => entry.trim()).filter(Boolean))],
+          : [
+              ...new Set(
+                dto.colorIds.map((entry) => entry.trim()).filter(Boolean),
+              ),
+            ],
       sizeVariants:
         dto.sizeVariants === undefined
           ? undefined
           : dto.sizeVariants
               .map((entry) => ({
-                sizeId: typeof entry?.sizeId === 'string' ? entry.sizeId.trim() : '',
+                sizeId:
+                  typeof entry?.sizeId === 'string' ? entry.sizeId.trim() : '',
                 stock: Number(entry?.stock ?? 0),
               }))
               .filter((entry) => entry.sizeId.length > 0),
@@ -2428,14 +2963,20 @@ export class ProductsService {
     sizeVariants?: Array<{ sizeId: string; stock: number }>;
   }) {
     const [brandResult, categoryResult, subcategoryResult] = await Promise.all([
-      this.databaseService.query<{ id: string; name: string; is_active: boolean }>(
-        `SELECT TOP 1 id, name, is_active FROM brands WHERE id = $1`,
-        [input.brandId],
-      ),
-      this.databaseService.query<{ id: string; name: string; is_active: boolean }>(
-        `SELECT TOP 1 id, name, is_active FROM categories WHERE id = $1`,
-        [input.categoryId],
-      ),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+      }>(`SELECT TOP 1 id, name, is_active FROM brands WHERE id = $1`, [
+        input.brandId,
+      ]),
+      this.databaseService.query<{
+        id: string;
+        name: string;
+        is_active: boolean;
+      }>(`SELECT TOP 1 id, name, is_active FROM categories WHERE id = $1`, [
+        input.categoryId,
+      ]),
       this.databaseService.query<{
         id: string;
         category_id: string;
@@ -2528,14 +3069,17 @@ export class ProductsService {
          INNER JOIN size_types st ON st.id = s.size_type_id
          WHERE s.id IN (${this.buildGuidLiteralClause(sizeIds)})`,
       );
-      if (sizeResult.rows.filter((row) => row.is_active).length !== sizeIds.length) {
+      if (
+        sizeResult.rows.filter((row) => row.is_active).length !== sizeIds.length
+      ) {
         throw new BadRequestException(
           'One or more selected sizes are not available yet',
         );
       }
 
       const sizeMap = new Map(sizeResult.rows.map((row) => [row.id, row]));
-      const sizeTypeId = input.sizeTypeId ?? sizeResult.rows[0]?.size_type_id ?? null;
+      const sizeTypeId =
+        input.sizeTypeId ?? sizeResult.rows[0]?.size_type_id ?? null;
       if (
         sizeTypeId &&
         sizeResult.rows.some((row) => row.size_type_id !== sizeTypeId)
@@ -2576,7 +3120,8 @@ export class ProductsService {
       ),
       category: this.normalizeCategoryValue(subcategory.name),
       primaryColor: this.normalizeColorValue(colors[0]?.name) ?? null,
-      primarySize: this.normalizeSizeValue(resolvedSizeVariants[0]?.label) ?? null,
+      primarySize:
+        this.normalizeSizeValue(resolvedSizeVariants[0]?.label) ?? null,
     };
   }
 
@@ -2678,48 +3223,55 @@ export class ProductsService {
   }
 
   private async getResolvedCatalogOptions() {
-    const [categories, colors, sizes, brands, subcategories] = await Promise.all([
-      this.databaseService.query<{ name: string }>(
-        `SELECT name FROM categories WHERE is_active = 1`,
-      ),
-      this.databaseService.query<{ name: string }>(
-        `SELECT name FROM colors WHERE is_active = 1`,
-      ),
-      this.databaseService.query<{ label: string }>(
-        `SELECT label FROM sizes WHERE is_active = 1`,
-      ),
-      this.databaseService.query<{ name: string }>(
-        `SELECT name FROM brands WHERE is_active = 1`,
-      ),
-      this.databaseService.query<{ name: string }>(
-        `SELECT name FROM subcategories WHERE is_active = 1`,
-      ),
-    ]);
+    const [categories, colors, sizes, brands, subcategories] =
+      await Promise.all([
+        this.databaseService.query<{ name: string }>(
+          `SELECT name FROM categories WHERE is_active = 1`,
+        ),
+        this.databaseService.query<{ name: string }>(
+          `SELECT name FROM colors WHERE is_active = 1`,
+        ),
+        this.databaseService.query<{ label: string }>(
+          `SELECT label FROM sizes WHERE is_active = 1`,
+        ),
+        this.databaseService.query<{ name: string }>(
+          `SELECT name FROM brands WHERE is_active = 1`,
+        ),
+        this.databaseService.query<{ name: string }>(
+          `SELECT name FROM subcategories WHERE is_active = 1`,
+        ),
+      ]);
 
     return {
       categories: new Set(
-        categories.rows.map((row) =>
-          this.normalizeCatalogRequestLookupValue('category', row.name) ?? '',
+        categories.rows.map(
+          (row) =>
+            this.normalizeCatalogRequestLookupValue('category', row.name) ?? '',
         ),
       ),
       colors: new Set(
-        colors.rows.map((row) =>
-          this.normalizeCatalogRequestLookupValue('color', row.name) ?? '',
+        colors.rows.map(
+          (row) =>
+            this.normalizeCatalogRequestLookupValue('color', row.name) ?? '',
         ),
       ),
       sizes: new Set(
-        sizes.rows.map((row) =>
-          this.normalizeCatalogRequestLookupValue('size', row.label) ?? '',
+        sizes.rows.map(
+          (row) =>
+            this.normalizeCatalogRequestLookupValue('size', row.label) ?? '',
         ),
       ),
       brands: new Set(
-        brands.rows.map((row) =>
-          this.normalizeCatalogRequestLookupValue('brand', row.name) ?? '',
+        brands.rows.map(
+          (row) =>
+            this.normalizeCatalogRequestLookupValue('brand', row.name) ?? '',
         ),
       ),
       subcategories: new Set(
-        subcategories.rows.map((row) =>
-          this.normalizeCatalogRequestLookupValue('subcategory', row.name) ?? '',
+        subcategories.rows.map(
+          (row) =>
+            this.normalizeCatalogRequestLookupValue('subcategory', row.name) ??
+            '',
         ),
       ),
     };
@@ -2751,79 +3303,44 @@ export class ProductsService {
   }
 
   private generateProductCode(
-    vendor: { shop_name: string },
+    _vendor: { shop_name: string },
     product: { category: string; color?: string | null; size?: string | null },
     productId: string,
   ) {
-    return [
-      this.readableProductCodePart(product.category, 'GEN', {
-        top: 'TOP',
-        tops: 'TOP',
-        tshirt: 'TEE',
-        't shirt': 'TEE',
-        't-shirt': 'TEE',
-        tee: 'TEE',
-        tees: 'TEE',
-        shirt: 'SHT',
-        shirts: 'SHT',
-        blouse: 'BLS',
-        blouses: 'BLS',
-        pants: 'PNT',
-        trouser: 'PNT',
-        trousers: 'PNT',
-        jeans: 'JNS',
-        outerwear: 'OUT',
-        jacket: 'JKT',
-        jackets: 'JKT',
-        coat: 'COT',
-        coats: 'COT',
-        hoodie: 'HOD',
-        hoodies: 'HOD',
-        sweater: 'SWT',
-        sweaters: 'SWT',
-        dress: 'DRS',
-        dresses: 'DRS',
-        skirt: 'SKT',
-        skirts: 'SKT',
-        suit: 'SUT',
-        suits: 'SUT',
-      }),
-      this.readableProductCodePart(product.color, 'NA', {
-        black: 'BLK',
-        white: 'WHT',
-        ivory: 'IVR',
-        cream: 'CRM',
-        beige: 'BEI',
-        brown: 'BRN',
-        tan: 'TAN',
-        gray: 'GRY',
-        grey: 'GRY',
-        blue: 'BLU',
-        navy: 'NVY',
-        red: 'RED',
-        orange: 'ORG',
-        yellow: 'YLW',
-        green: 'GRN',
-        pink: 'PNK',
-        purple: 'PRP',
-        gold: 'GLD',
-        silver: 'SLV',
-      }),
-      this.readableProductCodePart(product.size, 'NA', {
-        xs: 'XSM',
-        s: 'SML',
-        m: 'MED',
-        l: 'LRG',
-        xl: 'XLG',
-        xxl: 'XXL',
-        xxxl: '3XL',
-        'one size': 'ONE',
-        onesize: 'ONE',
-        os: 'ONE',
-      }),
-      this.readableProductCodePart(vendor.shop_name, 'VEN'),
-      productId.replace(/-/g, '').slice(-6).toUpperCase(),
-    ].join('-');
+    const categoryCode = this.readableProductCodePart(product.category, 'PRD', {
+      top: 'TOP',
+      tops: 'TOP',
+      tshirt: 'TEE',
+      't shirt': 'TEE',
+      't-shirt': 'TEE',
+      tee: 'TEE',
+      tees: 'TEE',
+      shirt: 'SHT',
+      shirts: 'SHT',
+      blouse: 'BLS',
+      blouses: 'BLS',
+      pants: 'PNT',
+      trouser: 'PNT',
+      trousers: 'PNT',
+      jeans: 'JNS',
+      outerwear: 'OUT',
+      jacket: 'JKT',
+      jackets: 'JKT',
+      coat: 'COT',
+      coats: 'COT',
+      hoodie: 'HOD',
+      hoodies: 'HOD',
+      sweater: 'SWT',
+      sweaters: 'SWT',
+      dress: 'DRS',
+      dresses: 'DRS',
+      skirt: 'SKT',
+      skirts: 'SKT',
+      suit: 'SUT',
+      suits: 'SUT',
+    });
+    const shortId = productId.replace(/-/g, '').slice(-5).toUpperCase();
+    return `${categoryCode}-${shortId}`;
   }
 
   private readableProductCodePart(
@@ -2842,6 +3359,140 @@ export class ProductsService {
 
     const cleaned = normalized.replace(/[^a-z0-9]+/gi, '').toUpperCase();
     return (cleaned || fallback).slice(0, 3).padEnd(3, 'X');
+  }
+
+  private async assertProductExists(productId: string) {
+    const result = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM products WHERE id = $1',
+      [productId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Product not found');
+    }
+  }
+
+  private async assertVendorExists(vendorId: string) {
+    const result = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE id = $1',
+      [vendorId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Shop not found');
+    }
+  }
+
+  private async getProductReviewEligibility(
+    customerId: string,
+    productId: string,
+  ) {
+    const result = await this.databaseService.query<ReviewEligibilityRow>(
+      `SELECT
+         COUNT(*) AS delivered_purchase_count,
+         MAX(COALESCE(o.delivered_at, oi.updated_at, o.created_at)) AS last_delivered_at
+       FROM order_items oi
+       INNER JOIN orders o ON o.id = oi.order_id
+       WHERE oi.product_id = $1
+         AND o.customer_id = $2
+         AND oi.status = 'delivered'`,
+      [productId, customerId],
+    );
+
+    return result.rows[0] ?? {
+      delivered_purchase_count: 0,
+      last_delivered_at: null,
+    };
+  }
+
+  private async getVendorReviewEligibility(
+    customerId: string,
+    vendorId: string,
+  ) {
+    const result = await this.databaseService.query<ReviewEligibilityRow>(
+      `SELECT
+         COUNT(*) AS delivered_purchase_count,
+         MAX(COALESCE(o.delivered_at, oi.updated_at, o.created_at)) AS last_delivered_at
+       FROM order_items oi
+       INNER JOIN orders o ON o.id = oi.order_id
+       WHERE oi.vendor_id = $1
+         AND o.customer_id = $2
+         AND oi.status = 'delivered'`,
+      [vendorId, customerId],
+    );
+
+    return result.rows[0] ?? {
+      delivered_purchase_count: 0,
+      last_delivered_at: null,
+    };
+  }
+
+  private async getExistingProductReview(productId: string, customerId: string) {
+    const result = await this.databaseService.query<ReviewRow>(
+      `SELECT TOP 1
+         pr.id,
+         pr.rating,
+         pr.comment,
+         u.full_name,
+         u.email,
+         pr.created_at,
+         pr.updated_at
+       FROM product_reviews pr
+       INNER JOIN users u ON u.id = pr.customer_id
+       WHERE pr.product_id = $1
+         AND pr.customer_id = $2`,
+      [productId, customerId],
+    );
+
+    return result.rows[0] ? this.mapPublicReview(result.rows[0]) : null;
+  }
+
+  private async getExistingVendorReview(vendorId: string, customerId: string) {
+    const result = await this.databaseService.query<ReviewRow>(
+      `SELECT TOP 1
+         vr.id,
+         vr.rating,
+         vr.comment,
+         u.full_name,
+         u.email,
+         vr.created_at,
+         vr.updated_at
+       FROM vendor_reviews vr
+       INNER JOIN users u ON u.id = vr.customer_id
+       WHERE vr.vendor_id = $1
+         AND vr.customer_id = $2`,
+      [vendorId, customerId],
+    );
+
+    return result.rows[0] ? this.mapPublicReview(result.rows[0]) : null;
+  }
+
+  private buildReviewStatus(
+    eligibility: ReviewEligibilityRow,
+    existingReview: PublicReviewEntry | null,
+    lockedReason: string,
+  ): ReviewStatusResponse {
+    const deliveredPurchaseCount = Number(
+      eligibility.delivered_purchase_count ?? 0,
+    );
+    const canReview = deliveredPurchaseCount > 0;
+
+    return {
+      canReview,
+      reason: canReview ? null : lockedReason,
+      deliveredPurchaseCount,
+      lastDeliveredAt: eligibility.last_delivered_at,
+      existingReview,
+    };
+  }
+
+  private normalizeReviewComment(comment?: string | null) {
+    const normalized = comment?.trim();
+    if (!normalized) {
+      return null;
+    }
+
+    return normalized.slice(0, 1500);
   }
 
   private async getProductCategory(client: QueryRunner, productId: string) {

@@ -17,9 +17,14 @@ export default function AdminVendorDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [accountMessage, setAccountMessage] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [platformFee, setPlatformFee] = useState<number | null>(null);
+  const [feeSaving, setFeeSaving] = useState(false);
   const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | null>(
     null,
   );
+  const feeGraceLabel = detail?.feeGraceEndsAt
+    ? new Date(detail.feeGraceEndsAt).toLocaleDateString()
+    : null;
 
   useEffect(() => {
     if (!token || currentRole !== "admin") {
@@ -36,6 +41,7 @@ export default function AdminVendorDetailPage() {
           token,
         );
         setDetail(nextDetail);
+        setPlatformFee(nextDetail.platformFee);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load vendor detail.");
       } finally {
@@ -57,6 +63,7 @@ export default function AdminVendorDetailPage() {
       token,
     );
     setDetail(nextDetail);
+    setPlatformFee(nextDetail.platformFee);
   }
 
   async function handleVendorActivation(nextIsActive: boolean) {
@@ -128,6 +135,39 @@ export default function AdminVendorDetailPage() {
       );
     } finally {
       setAccountSaving(null);
+    }
+  }
+
+  async function handleUpdatePlatformFee() {
+    if (!token || platformFee === null) {
+      return;
+    }
+
+    try {
+      setFeeSaving(true);
+      setAccountMessage(null);
+      setAccountError(null);
+      const response = await apiRequest<{
+        message: string;
+        vendor: AdminVendorDetail;
+      }>(
+        `/admin/vendors/${params.id}/platform-fee`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ platformFee }),
+        },
+        token,
+      );
+      setDetail(response.vendor);
+      setPlatformFee(response.vendor.platformFee);
+      setAccountMessage(response.message);
+      await refreshDetail();
+    } catch (actionError) {
+      setAccountError(
+        actionError instanceof Error ? actionError.message : "Failed to update platform fee.",
+      );
+    } finally {
+      setFeeSaving(false);
     }
   }
 
@@ -233,6 +273,51 @@ export default function AdminVendorDetailPage() {
                   onClick={() => void handlePasswordReset()}
                 >
                   {accountSaving === "reset" ? "Sending..." : "Send reset email"}
+                </button>
+              </div>
+            </section>
+
+            <section className="form-card stack">
+              <div>
+                <h2 className="section-title">Platform Fee</h2>
+                <p className="muted">
+                  Per-vendor fee deducted from earnings once per order. Applied now:{" "}
+                  {formatCurrency(detail.effectivePlatformFee)}
+                </p>
+                <p className="muted">
+                  {feeGraceLabel
+                    ? `This shop is still in the free period. The base fee switches to ${formatCurrency(
+                        detail.platformFee,
+                      )} on ${feeGraceLabel}.`
+                    : `Base fee: ${formatCurrency(detail.platformFee)}.`}
+                </p>
+              </div>
+              <div className="form-grid two">
+                <div className="field">
+                  <label>{feeGraceLabel ? "Base fee after free period" : "Fee amount"}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={platformFee ?? detail.platformFee}
+                    onChange={(event) =>
+                      setPlatformFee(
+                        event.target.value === ""
+                          ? 0
+                          : Number(event.target.value),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+              <div className="inline-actions">
+                <button
+                  className="button"
+                  type="button"
+                  disabled={feeSaving}
+                  onClick={() => void handleUpdatePlatformFee()}
+                >
+                  {feeSaving ? "Updating..." : "Update Fee"}
                 </button>
               </div>
             </section>

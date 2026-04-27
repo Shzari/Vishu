@@ -628,7 +628,7 @@ async function main() {
   const passwordHash = await bcrypt.hash('123456', 10);
 
   const customerEmail = 'customer@vishu.local';
-  const customerUserId = await ensureUser(pool, {
+  await ensureUser(pool, {
     email: customerEmail,
     fullName: 'Vishu Demo Customer',
     role: 'customer',

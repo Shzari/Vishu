@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import Stripe from 'stripe';
@@ -38,12 +38,35 @@ import {
 
 @Injectable()
 export class AccountService {
+  private static readonly CUSTOMER_EMAIL_CHANGE_OTP_MINUTES = 10;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
     private readonly vendorAccessService: VendorAccessService,
   ) {}
+
+  private generateCustomerEmailChangeOtp() {
+    return String(randomInt(0, 1_000_000)).padStart(6, '0');
+  }
+
+  private async getPendingCustomerEmailChange(userId: string) {
+    const result = await this.databaseService.query<{
+      pending_email: string;
+      expires_at: Date;
+      created_at: Date;
+    }>(
+      `SELECT TOP 1 pending_email, expires_at, created_at
+       FROM customer_email_change_verifications
+       WHERE user_id = $1
+         AND used_at IS NULL
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+
+    return result.rows[0] ?? null;
+  }
 
   async getSettings(userId: string) {
     const result = await this.databaseService.query<{
@@ -70,6 +93,10 @@ export class AccountService {
     const vendorAccess =
       user.role === 'vendor'
         ? await this.vendorAccessService.getVendorAccessForUser(userId)
+        : null;
+    const pendingEmailChange =
+      user.role === 'customer'
+        ? await this.getPendingCustomerEmailChange(userId)
         : null;
 
     const [vendorDetails] = vendorAccess
@@ -152,6 +179,8 @@ export class AccountService {
       fullName: user.full_name,
       phoneNumber: user.phone_number,
       emailVerifiedAt: user.email_verified_at,
+      pendingEmail: pendingEmailChange?.pending_email ?? null,
+      pendingEmailVerificationExpiresAt: pendingEmailChange?.expires_at ?? null,
       role: user.role,
       createdAt: user.created_at,
       updatedAt: user.updated_at,
@@ -184,8 +213,12 @@ export class AccountService {
               bankIban: canViewFinance ? vendorDetails.rows[0].bank_iban : null,
               payoutSummary: canViewFinance
                 ? {
-                    pendingBalance: Number(vendorDetails.rows[0].pending_balance),
-                    shippedBalance: Number(vendorDetails.rows[0].shipped_balance),
+                    pendingBalance: Number(
+                      vendorDetails.rows[0].pending_balance,
+                    ),
+                    shippedBalance: Number(
+                      vendorDetails.rows[0].shipped_balance,
+                    ),
                     totalEarnings: Number(vendorDetails.rows[0].total_earnings),
                     paidOut: Number(vendorDetails.rows[0].paid_out),
                     outstandingShippedBalance: Math.max(
@@ -213,6 +246,7 @@ export class AccountService {
       cartItems,
       claimableGuestOrders,
       orderTotals,
+      pendingEmailChange,
     ] = await Promise.all([
       this.databaseService.query<{
         id: string;
@@ -314,6 +348,7 @@ export class AccountService {
          WHERE customer_id = $1`,
         [userId],
       ),
+      this.getPendingCustomerEmailChange(userId),
     ]);
 
     const user = profile.rows[0];
@@ -321,14 +356,15 @@ export class AccountService {
       throw new NotFoundException('Account not found');
     }
 
-    const paymentMethods = await this.loadStripePaymentMethodsForCustomerAccount({
-      id: user.id,
-      email: user.email,
-      fullName: user.full_name,
-      phoneNumber: user.phone_number,
-      stripeTestCustomerId: user.stripe_test_customer_id,
-      stripeLiveCustomerId: user.stripe_live_customer_id,
-    });
+    const paymentMethods =
+      await this.loadStripePaymentMethodsForCustomerAccount({
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        phoneNumber: user.phone_number,
+        stripeTestCustomerId: user.stripe_test_customer_id,
+        stripeLiveCustomerId: user.stripe_live_customer_id,
+      });
 
     const cartItemCount = cartItems.rows.reduce(
       (sum, row) => sum + row.quantity,
@@ -342,6 +378,9 @@ export class AccountService {
         fullName: user.full_name,
         phoneNumber: user.phone_number,
         emailVerifiedAt: user.email_verified_at,
+        pendingEmail: pendingEmailChange?.pending_email ?? null,
+        pendingEmailVerificationExpiresAt:
+          pendingEmailChange?.expires_at ?? null,
         createdAt: user.created_at,
         updatedAt: user.updated_at,
       },
@@ -410,7 +449,8 @@ export class AccountService {
     }
 
     const normalizedEmail = user.email.trim().toLowerCase();
-    const normalizedPhone = phoneNumber?.trim() || user.phone_number?.trim() || null;
+    const normalizedPhone =
+      phoneNumber?.trim() || user.phone_number?.trim() || null;
     const claimableOrders = await this.databaseService.query<{ id: string }>(
       `SELECT id
        FROM orders
@@ -456,29 +496,34 @@ export class AccountService {
 
   async verifyGuestOrderClaim(token: string) {
     const hashedToken = hashOpaqueToken(token);
-    const result = await this.databaseService.withTransaction(async (client) => {
-      const tokenResult = await client.query<{
-        id: string;
-        user_id: string;
-        email: string;
-        expires_at: Date;
-        used_at: Date | null;
-      }>(
-        `SELECT TOP 1 id, user_id, email, expires_at, used_at
+    const result = await this.databaseService.withTransaction(
+      async (client) => {
+        const tokenResult = await client.query<{
+          id: string;
+          user_id: string;
+          email: string;
+          expires_at: Date;
+          used_at: Date | null;
+        }>(
+          `SELECT TOP 1 id, user_id, email, expires_at, used_at
          FROM guest_order_claim_tokens
          WHERE token IN ($1, $2)`,
-        [token, hashedToken],
-      );
-
-      const record = tokenResult.rows[0];
-      if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
-        throw new BadRequestException(
-          'Invalid or expired guest order claim token',
+          [token, hashedToken],
         );
-      }
 
-      const linked = await client.query<{ id: string }>(
-        `UPDATE orders
+        const record = tokenResult.rows[0];
+        if (
+          !record ||
+          record.used_at ||
+          new Date(record.expires_at) < new Date()
+        ) {
+          throw new BadRequestException(
+            'Invalid or expired guest order claim token',
+          );
+        }
+
+        const linked = await client.query<{ id: string }>(
+          `UPDATE orders
          SET customer_id = $1,
              guest_claimed_at = SYSDATETIME(),
              guest_claimed_by_user_id = $1,
@@ -486,18 +531,19 @@ export class AccountService {
          OUTPUT INSERTED.id
          WHERE customer_id IS NULL
            AND guest_email = $2`,
-        [record.user_id, record.email],
-      );
+          [record.user_id, record.email],
+        );
 
-      await client.query(
-        `UPDATE guest_order_claim_tokens
+        await client.query(
+          `UPDATE guest_order_claim_tokens
          SET used_at = SYSDATETIME()
          WHERE id = $1`,
-        [record.id],
-      );
+          [record.id],
+        );
 
-      return linked.rows.length;
-    });
+        return linked.rows.length;
+      },
+    );
 
     return {
       message:
@@ -546,15 +592,161 @@ export class AccountService {
     return this.getSettings(userId);
   }
 
+  async verifyPendingEmailChange(userId: string, code: string) {
+    const normalizedCode = code.trim();
+    if (!/^[0-9]{6}$/.test(normalizedCode)) {
+      throw new BadRequestException('Enter the 6-digit verification code.');
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const verificationResult = await client.query<{
+        id: string;
+        pending_email: string;
+        code_hash: string;
+        expires_at: Date;
+      }>(
+        `SELECT TOP 1 id, pending_email, code_hash, expires_at
+         FROM customer_email_change_verifications
+         WHERE user_id = $1
+           AND used_at IS NULL
+         ORDER BY created_at DESC`,
+        [userId],
+      );
+
+      const record = verificationResult.rows[0];
+      if (!record || new Date(record.expires_at) < new Date()) {
+        throw new BadRequestException(
+          'That verification code is invalid or expired. Request a new code.',
+        );
+      }
+
+      if (record.code_hash !== hashOpaqueToken(normalizedCode)) {
+        throw new BadRequestException(
+          'That verification code is invalid or expired. Request a new code.',
+        );
+      }
+
+      const conflictResult = await client.query<{ id: string }>(
+        'SELECT TOP 1 id FROM users WHERE email = $1 AND id <> $2',
+        [record.pending_email, userId],
+      );
+      if (conflictResult.rows[0]) {
+        await client.query(
+          `DELETE FROM customer_email_change_verifications
+           WHERE user_id = $1
+             AND used_at IS NULL`,
+          [userId],
+        );
+        throw new BadRequestException(
+          'That email is no longer available. Choose a different one.',
+        );
+      }
+
+      await client.query(
+        `UPDATE users
+         SET email = $1,
+             email_verified_at = SYSDATETIME(),
+             updated_at = SYSDATETIME()
+         WHERE id = $2`,
+        [record.pending_email, userId],
+      );
+
+      await client.query(
+        `UPDATE customer_email_change_verifications
+         SET used_at = SYSDATETIME()
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [userId],
+      );
+    });
+
+    return this.getAccount(userId);
+  }
+
+  async resendPendingEmailChange(userId: string) {
+    const userResult = await this.databaseService.query<{
+      email: string;
+      full_name: string | null;
+      role: 'admin' | 'vendor' | 'customer';
+    }>(
+      `SELECT TOP 1 email, full_name, role
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    const user = userResult.rows[0];
+    if (!user || user.role !== 'customer') {
+      throw new NotFoundException('Account not found');
+    }
+
+    const pendingResult = await this.databaseService.query<{
+      pending_email: string;
+    }>(
+      `SELECT TOP 1 pending_email
+       FROM customer_email_change_verifications
+       WHERE user_id = $1
+         AND used_at IS NULL
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+
+    const pending = pendingResult.rows[0];
+    if (!pending) {
+      throw new BadRequestException('No pending email change to verify.');
+    }
+
+    await this.mailService.ensureVerificationDeliveryConfigured();
+
+    const otp = this.generateCustomerEmailChangeOtp();
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `DELETE FROM customer_email_change_verifications
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [userId],
+      );
+
+      await client.query(
+        `INSERT INTO customer_email_change_verifications (
+           user_id,
+           pending_email,
+           code_hash,
+           expires_at
+         )
+         VALUES ($1, $2, $3, $4)`,
+        [
+          userId,
+          pending.pending_email,
+          hashOpaqueToken(otp),
+          new Date(
+            Date.now() +
+              1000 * 60 * AccountService.CUSTOMER_EMAIL_CHANGE_OTP_MINUTES,
+          ),
+        ],
+      );
+    });
+
+    await this.mailService.sendCustomerEmailChangeOtp({
+      email: pending.pending_email,
+      fullName: user.full_name,
+      code: otp,
+      expiresInMinutes: AccountService.CUSTOMER_EMAIL_CHANGE_OTP_MINUTES,
+    });
+
+    return this.getAccount(userId);
+  }
+
   private async applySharedProfileUpdate(
     userId: string,
     dto: UpdateAccountProfileDto,
   ) {
     const currentResult = await this.databaseService.query<{
       email: string;
+      full_name: string | null;
       role: 'admin' | 'vendor' | 'customer';
     }>(
-      `SELECT TOP 1 email, role
+      `SELECT TOP 1 email, full_name, role
        FROM users
        WHERE id = $1`,
       [userId],
@@ -574,11 +766,31 @@ export class AccountService {
     const values: unknown[] = [];
     const normalizedEmail =
       dto.email !== undefined ? dto.email.trim().toLowerCase() : undefined;
+    const currentEmail = currentUser.email.trim().toLowerCase();
+    const pendingEmailChange =
+      currentUser.role === 'customer'
+        ? await this.getPendingCustomerEmailChange(userId)
+        : null;
+    const pendingEmail = pendingEmailChange?.pending_email
+      ?.trim()
+      .toLowerCase();
     const emailChanged =
-      normalizedEmail !== undefined &&
-      normalizedEmail !== currentUser.email.trim().toLowerCase();
+      normalizedEmail !== undefined && normalizedEmail !== currentEmail;
+    const shouldManageCustomerPendingEmail =
+      currentUser.role === 'customer' && normalizedEmail !== undefined;
+    const shouldCreateCustomerPendingEmail =
+      shouldManageCustomerPendingEmail &&
+      emailChanged &&
+      normalizedEmail !== pendingEmail;
+    const shouldCancelCustomerPendingEmail =
+      shouldManageCustomerPendingEmail &&
+      normalizedEmail === currentEmail &&
+      Boolean(pendingEmailChange);
 
-    if (normalizedEmail !== undefined) {
+    if (
+      normalizedEmail !== undefined &&
+      !(currentUser.role === 'customer' && emailChanged)
+    ) {
       values.push(normalizedEmail);
       updates.push(`email = $${values.length}`);
     }
@@ -591,7 +803,11 @@ export class AccountService {
       updates.push(`phone_number = $${values.length}`);
     }
 
-    if (!updates.length) {
+    if (
+      !updates.length &&
+      !shouldCreateCustomerPendingEmail &&
+      !shouldCancelCustomerPendingEmail
+    ) {
       return;
     }
 
@@ -610,6 +826,15 @@ export class AccountService {
       token: string;
       role: 'vendor' | 'customer';
     } | null = null;
+    let customerEmailChangeOtp: {
+      email: string;
+      code: string;
+      fullName: string | null;
+    } | null = null;
+
+    if (shouldCreateCustomerPendingEmail) {
+      await this.mailService.ensureVerificationDeliveryConfigured();
+    }
 
     await this.databaseService.withTransaction(async (client) => {
       const transactionUpdates = [...updates];
@@ -619,13 +844,59 @@ export class AccountService {
         transactionUpdates.push('email_verified_at = NULL');
       }
 
-      transactionValues.push(userId);
-      await client.query(
-        `UPDATE users
-         SET ${transactionUpdates.join(', ')}, updated_at = SYSDATETIME()
-         WHERE id = $${transactionValues.length}`,
-        transactionValues,
-      );
+      if (transactionUpdates.length) {
+        transactionValues.push(userId);
+        await client.query(
+          `UPDATE users
+           SET ${transactionUpdates.join(', ')}, updated_at = SYSDATETIME()
+           WHERE id = $${transactionValues.length}`,
+          transactionValues,
+        );
+      }
+
+      if (currentUser.role === 'customer') {
+        if (
+          shouldCancelCustomerPendingEmail ||
+          shouldCreateCustomerPendingEmail
+        ) {
+          await client.query(
+            `DELETE FROM customer_email_change_verifications
+             WHERE user_id = $1
+               AND used_at IS NULL`,
+            [userId],
+          );
+        }
+
+        if (shouldCreateCustomerPendingEmail && normalizedEmail) {
+          const otp = this.generateCustomerEmailChangeOtp();
+          await client.query(
+            `INSERT INTO customer_email_change_verifications (
+               user_id,
+               pending_email,
+               code_hash,
+               expires_at
+             )
+             VALUES ($1, $2, $3, $4)`,
+            [
+              userId,
+              normalizedEmail,
+              hashOpaqueToken(otp),
+              new Date(
+                Date.now() +
+                  1000 * 60 * AccountService.CUSTOMER_EMAIL_CHANGE_OTP_MINUTES,
+              ),
+            ],
+          );
+
+          customerEmailChangeOtp = {
+            email: normalizedEmail,
+            code: otp,
+            fullName: dto.fullName?.trim() || currentUser.full_name,
+          };
+        }
+
+        return;
+      }
 
       if (
         !emailChanged ||
@@ -676,6 +947,20 @@ export class AccountService {
         pendingVerification.role,
       );
     }
+
+    if (customerEmailChangeOtp !== null) {
+      const pendingEmailChangeOtp = customerEmailChangeOtp as {
+        email: string;
+        code: string;
+        fullName: string | null;
+      };
+      await this.mailService.sendCustomerEmailChangeOtp({
+        email: pendingEmailChangeOtp.email,
+        fullName: pendingEmailChangeOtp.fullName,
+        code: pendingEmailChangeOtp.code,
+        expiresInMinutes: AccountService.CUSTOMER_EMAIL_CHANGE_OTP_MINUTES,
+      });
+    }
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
@@ -710,7 +995,8 @@ export class AccountService {
     userId: string,
     dto: UpdateVendorBankDetailsDto,
   ) {
-    const vendor = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const vendor =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
 
     await this.databaseService.query(
       `UPDATE vendors
@@ -735,14 +1021,15 @@ export class AccountService {
     dto: UpdateVendorProfileDto,
     logoImage?: Express.Multer.File,
   ) {
-    const vendorAccess = await this.vendorAccessService.requireShopHolderAccess(
-      userId,
-    );
+    const vendorAccess =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
 
     const vendor = await this.databaseService.query<{
       id: string;
       logo_url: string | null;
-    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE id = $1', [vendorAccess.id]);
+    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE id = $1', [
+      vendorAccess.id,
+    ]);
 
     if (!vendor.rows[0]) {
       this.cleanupTemporaryFile(logoImage);
@@ -818,7 +1105,8 @@ export class AccountService {
   }
 
   async getVendorTeamAccess(userId: string) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const access =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
 
     const [members, invites] = await Promise.all([
       this.databaseService.query<{
@@ -918,112 +1206,114 @@ export class AccountService {
     };
   }
 
-  async createVendorTeamInvite(
-    userId: string,
-    dto: CreateVendorTeamInviteDto,
-  ) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+  async createVendorTeamInvite(userId: string, dto: CreateVendorTeamInviteDto) {
+    const access =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
     const normalizedEmail = dto.email.trim().toLowerCase();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
 
-    const delivery = await this.databaseService.withTransaction(async (client) => {
-      if (normalizedEmail === normalizedEmail.trim().toLowerCase() && normalizedEmail.length === 0) {
-        throw new BadRequestException('Invite email is required');
-      }
+    const delivery = await this.databaseService.withTransaction(
+      async (client) => {
+        if (
+          normalizedEmail === normalizedEmail.trim().toLowerCase() &&
+          normalizedEmail.length === 0
+        ) {
+          throw new BadRequestException('Invite email is required');
+        }
 
-      const existingMember = await client.query<{ id: string }>(
-        `SELECT TOP 1 tm.id
+        const existingMember = await client.query<{ id: string }>(
+          `SELECT TOP 1 tm.id
          FROM vendor_team_members tm
          INNER JOIN users u ON u.id = tm.user_id
          WHERE tm.vendor_id = $1
            AND u.email = $2
            AND tm.status IN ('pending', 'active')`,
-        [access.id, normalizedEmail],
-      );
-
-      if (existingMember.rows[0]) {
-        throw new BadRequestException(
-          'This email already has access or a pending invite for this shop',
+          [access.id, normalizedEmail],
         );
-      }
 
-      const existingInvite = await client.query<{ id: string }>(
-        `SELECT TOP 1 id
+        if (existingMember.rows[0]) {
+          throw new BadRequestException(
+            'This email already has access or a pending invite for this shop',
+          );
+        }
+
+        const existingInvite = await client.query<{ id: string }>(
+          `SELECT TOP 1 id
          FROM vendor_team_invites
          WHERE vendor_id = $1
            AND email = $2
            AND status = 'pending'`,
-        [access.id, normalizedEmail],
-      );
-
-      if (existingInvite.rows[0]) {
-        throw new BadRequestException(
-          'This email already has access or a pending invite for this shop',
+          [access.id, normalizedEmail],
         );
-      }
 
-      const existingUser = await client.query<{
-        id: string;
-        role: 'admin' | 'vendor' | 'customer';
-      }>(
-        `SELECT TOP 1 id, role
-         FROM users
-         WHERE email = $1`,
-        [normalizedEmail],
-      );
-
-      let inviteeUserId = existingUser.rows[0]?.id ?? null;
-      let needsPasswordSetup = false;
-
-      if (inviteeUserId === userId) {
-        throw new BadRequestException(
-          'Your own shop account already has access to this workspace',
-        );
-      }
-
-      if (existingUser.rows[0]) {
-        if (existingUser.rows[0].role !== 'vendor') {
+        if (existingInvite.rows[0]) {
           throw new BadRequestException(
-            'This email is already being used by a non-vendor account',
+            'This email already has access or a pending invite for this shop',
           );
         }
 
-        const otherOwner = await client.query<{ id: string }>(
-          `SELECT TOP 1 id
+        const existingUser = await client.query<{
+          id: string;
+          role: 'admin' | 'vendor' | 'customer';
+        }>(
+          `SELECT TOP 1 id, role
+         FROM users
+         WHERE email = $1`,
+          [normalizedEmail],
+        );
+
+        let inviteeUserId = existingUser.rows[0]?.id ?? null;
+        let needsPasswordSetup = false;
+
+        if (inviteeUserId === userId) {
+          throw new BadRequestException(
+            'Your own shop account already has access to this workspace',
+          );
+        }
+
+        if (existingUser.rows[0]) {
+          if (existingUser.rows[0].role !== 'vendor') {
+            throw new BadRequestException(
+              'This email is already being used by a non-vendor account',
+            );
+          }
+
+          const otherOwner = await client.query<{ id: string }>(
+            `SELECT TOP 1 id
            FROM vendors
            WHERE user_id = $1
              AND id <> $2`,
-          [inviteeUserId, access.id],
-        );
+            [inviteeUserId, access.id],
+          );
 
-        const otherMembership = await client.query<{ id: string }>(
-          `SELECT TOP 1 id
+          const otherMembership = await client.query<{ id: string }>(
+            `SELECT TOP 1 id
            FROM vendor_team_members
            WHERE user_id = $1
              AND vendor_id <> $2
              AND status IN ('pending', 'active')`,
-          [inviteeUserId, access.id],
-        );
-
-        if (otherOwner.rows[0] || otherMembership.rows[0]) {
-          throw new BadRequestException(
-            'This user is already linked to another vendor shop',
+            [inviteeUserId, access.id],
           );
-        }
-      } else {
-        const passwordHash = await bcrypt.hash(randomUUID(), 10);
-        const createdUser = await client.query<{ id: string }>(
-          `INSERT INTO users (email, password_hash, role, email_verified_at)
+
+          if (otherOwner.rows[0] || otherMembership.rows[0]) {
+            throw new BadRequestException(
+              'This user is already linked to another vendor shop',
+            );
+          }
+        } else {
+          const passwordHash = await bcrypt.hash(randomUUID(), 10);
+          const createdUser = await client.query<{ id: string }>(
+            `INSERT INTO users (email, password_hash, role, email_verified_at)
            OUTPUT INSERTED.id
            VALUES ($1, $2, 'vendor', SYSDATETIME())`,
-          [normalizedEmail, passwordHash],
-        );
-        inviteeUserId = createdUser.rows[0].id;
-        needsPasswordSetup = true;
-      }
+            [normalizedEmail, passwordHash],
+          );
+          inviteeUserId = createdUser.rows[0].id;
+          needsPasswordSetup = true;
+        }
 
-      await client.query(
-        `INSERT INTO vendor_team_members (
+        await client.query(
+          `INSERT INTO vendor_team_members (
            vendor_id,
            user_id,
            role,
@@ -1032,23 +1322,27 @@ export class AccountService {
            joined_at
          )
          VALUES ($1, $2, $3, 'pending', $4, NULL)`,
-        [access.id, inviteeUserId, dto.role, userId],
-      );
-
-      let passwordResetToken: string | null = null;
-      if (needsPasswordSetup) {
-        passwordResetToken = generateOpaqueToken();
-        const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
-        await client.query(
-          `INSERT INTO password_resets (user_id, token, expires_at)
-           VALUES ($1, $2, $3)`,
-          [inviteeUserId, hashOpaqueToken(passwordResetToken), resetExpiresAt],
+          [access.id, inviteeUserId, dto.role, userId],
         );
-      }
 
-      const inviteToken = generateOpaqueToken();
-      await client.query(
-        `INSERT INTO vendor_team_invites (
+        let passwordResetToken: string | null = null;
+        if (needsPasswordSetup) {
+          passwordResetToken = generateOpaqueToken();
+          const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+          await client.query(
+            `INSERT INTO password_resets (user_id, token, expires_at)
+           VALUES ($1, $2, $3)`,
+            [
+              inviteeUserId,
+              hashOpaqueToken(passwordResetToken),
+              resetExpiresAt,
+            ],
+          );
+        }
+
+        const inviteToken = generateOpaqueToken();
+        await client.query(
+          `INSERT INTO vendor_team_invites (
            vendor_id,
            user_id,
            email,
@@ -1062,34 +1356,35 @@ export class AccountService {
            expires_at
          )
          VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, SYSDATETIME(), SYSDATETIME(), $8)`,
-        [
-          access.id,
-          inviteeUserId,
-          normalizedEmail,
-          dto.role,
-          dto.note?.trim() || null,
-          inviteToken,
-          userId,
-          expiresAt,
-        ],
-      );
+          [
+            access.id,
+            inviteeUserId,
+            normalizedEmail,
+            dto.role,
+            dto.note?.trim() || null,
+            inviteToken,
+            userId,
+            expiresAt,
+          ],
+        );
 
-      const inviter = await client.query<{ full_name: string | null; email: string }>(
-        'SELECT TOP 1 full_name, email FROM users WHERE id = $1',
-        [userId],
-      );
+        const inviter = await client.query<{
+          full_name: string | null;
+          email: string;
+        }>('SELECT TOP 1 full_name, email FROM users WHERE id = $1', [userId]);
 
-      return {
-        email: normalizedEmail,
-        shopName: access.shop_name,
-        role: dto.role,
-        inviterName:
-          inviter.rows[0]?.full_name?.trim() ||
-          inviter.rows[0]?.email ||
-          'Shop holder',
-        resetToken: passwordResetToken,
-      };
-    });
+        return {
+          email: normalizedEmail,
+          shopName: access.shop_name,
+          role: dto.role,
+          inviterName:
+            inviter.rows[0]?.full_name?.trim() ||
+            inviter.rows[0]?.email ||
+            'Shop holder',
+          resetToken: passwordResetToken,
+        };
+      },
+    );
 
     await this.sendVendorTeamInviteEmail(delivery);
 
@@ -1100,87 +1395,92 @@ export class AccountService {
   }
 
   async resendVendorTeamInvite(userId: string, inviteId: string) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const access =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
 
-    const delivery = await this.databaseService.withTransaction(async (client) => {
-      const invite = await client.query<{
-        id: string;
-        vendor_id: string;
-        user_id: string | null;
-        email: string;
-        role: 'shop_holder' | 'employee';
-      }>(
-        `SELECT TOP 1 id, vendor_id, user_id, email, role
+    const delivery = await this.databaseService.withTransaction(
+      async (client) => {
+        const invite = await client.query<{
+          id: string;
+          vendor_id: string;
+          user_id: string | null;
+          email: string;
+          role: 'shop_holder' | 'employee';
+        }>(
+          `SELECT TOP 1 id, vendor_id, user_id, email, role
          FROM vendor_team_invites
          WHERE id = $1
            AND vendor_id = $2
            AND status = 'pending'`,
-        [inviteId, access.id],
-      );
-
-      const current = invite.rows[0];
-      if (!current) {
-        throw new NotFoundException('Pending invite not found');
-      }
-
-      let resetToken: string | null = null;
-      if (current.user_id) {
-        const userRow = await client.query<{ full_name: string | null }>(
-          'SELECT TOP 1 full_name FROM users WHERE id = $1',
-          [current.user_id],
+          [inviteId, access.id],
         );
 
-        const member = await client.query<{ id: string; status: string }>(
-          `SELECT TOP 1 id, status
+        const current = invite.rows[0];
+        if (!current) {
+          throw new NotFoundException('Pending invite not found');
+        }
+
+        let resetToken: string | null = null;
+        if (current.user_id) {
+          const userRow = await client.query<{ full_name: string | null }>(
+            'SELECT TOP 1 full_name FROM users WHERE id = $1',
+            [current.user_id],
+          );
+
+          const member = await client.query<{ id: string; status: string }>(
+            `SELECT TOP 1 id, status
            FROM vendor_team_members
            WHERE vendor_id = $1
              AND user_id = $2`,
-          [access.id, current.user_id],
-        );
-
-        if (!member.rows[0] || member.rows[0].status === 'removed') {
-          throw new NotFoundException('Team member not found for this invite');
-        }
-
-        if (!userRow.rows[0]?.full_name) {
-          resetToken = generateOpaqueToken();
-          const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
-          await client.query(
-            `INSERT INTO password_resets (user_id, token, expires_at)
-             VALUES ($1, $2, $3)`,
-            [current.user_id, hashOpaqueToken(resetToken), resetExpiresAt],
+            [access.id, current.user_id],
           );
-        }
-      }
 
-      const nextToken = generateOpaqueToken();
-      await client.query(
-        `UPDATE vendor_team_invites
+          if (!member.rows[0] || member.rows[0].status === 'removed') {
+            throw new NotFoundException(
+              'Team member not found for this invite',
+            );
+          }
+
+          if (!userRow.rows[0]?.full_name) {
+            resetToken = generateOpaqueToken();
+            const resetExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+            await client.query(
+              `INSERT INTO password_resets (user_id, token, expires_at)
+             VALUES ($1, $2, $3)`,
+              [current.user_id, hashOpaqueToken(resetToken), resetExpiresAt],
+            );
+          }
+        }
+
+        const nextToken = generateOpaqueToken();
+        await client.query(
+          `UPDATE vendor_team_invites
          SET token = $1,
              expires_at = $2,
              last_sent_at = SYSDATETIME(),
              updated_at = SYSDATETIME()
          WHERE id = $3`,
-        [nextToken, expiresAt, inviteId],
-      );
+          [nextToken, expiresAt, inviteId],
+        );
 
-      const inviter = await client.query<{ full_name: string | null; email: string }>(
-        'SELECT TOP 1 full_name, email FROM users WHERE id = $1',
-        [userId],
-      );
+        const inviter = await client.query<{
+          full_name: string | null;
+          email: string;
+        }>('SELECT TOP 1 full_name, email FROM users WHERE id = $1', [userId]);
 
-      return {
-        email: current.email,
-        shopName: access.shop_name,
-        role: current.role,
-        inviterName:
-          inviter.rows[0]?.full_name?.trim() ||
-          inviter.rows[0]?.email ||
-          'Shop holder',
-        resetToken,
-      };
-    });
+        return {
+          email: current.email,
+          shopName: access.shop_name,
+          role: current.role,
+          inviterName:
+            inviter.rows[0]?.full_name?.trim() ||
+            inviter.rows[0]?.email ||
+            'Shop holder',
+          resetToken,
+        };
+      },
+    );
 
     await this.sendVendorTeamInviteEmail(delivery);
 
@@ -1195,7 +1495,8 @@ export class AccountService {
     memberId: string,
     dto: UpdateVendorTeamMemberRoleDto,
   ) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const access =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
 
     await this.databaseService.withTransaction(async (client) => {
       const member = await client.query<{
@@ -1270,7 +1571,8 @@ export class AccountService {
   }
 
   async removeVendorTeamMember(userId: string, memberId: string) {
-    const access = await this.vendorAccessService.requireShopHolderAccess(userId);
+    const access =
+      await this.vendorAccessService.requireShopHolderAccess(userId);
 
     await this.databaseService.withTransaction(async (client) => {
       const member = await client.query<{
@@ -1446,7 +1748,7 @@ export class AccountService {
     return this.getAccount(userId);
   }
 
-  async createPaymentMethod(userId: string, dto: CreatePaymentMethodDto) {
+  createPaymentMethod(userId: string, dto: CreatePaymentMethodDto) {
     void userId;
     void dto;
     throw new BadRequestException(
@@ -1553,7 +1855,7 @@ export class AccountService {
     const currentDefaultPaymentMethodId =
       typeof customer.invoice_settings?.default_payment_method === 'string'
         ? customer.invoice_settings.default_payment_method
-        : customer.invoice_settings?.default_payment_method?.id ?? null;
+        : (customer.invoice_settings?.default_payment_method?.id ?? null);
     if (currentDefaultPaymentMethodId === paymentMethodId) {
       const replacement = existingMethods.data.find(
         (entry) => entry.id !== paymentMethodId,
@@ -1594,7 +1896,9 @@ export class AccountService {
     const secretColumn =
       mode === 'live' ? 'stripe_live_secret_key' : 'stripe_test_secret_key';
     let storedSecret =
-      mode === 'live' ? row?.stripe_live_secret_key : row?.stripe_test_secret_key;
+      mode === 'live'
+        ? row?.stripe_live_secret_key
+        : row?.stripe_test_secret_key;
 
     if (storedSecret && !isStoredSecretProtected(storedSecret)) {
       const protectedSecret = protectStoredSecret(
@@ -1613,11 +1917,12 @@ export class AccountService {
 
     const envSecretKey =
       mode === 'live'
-        ? this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() || null
-        : this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() || null;
+        ? this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() ||
+          null
+        : this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() ||
+          null;
     const secretKey =
-      envSecretKey ??
-      unprotectStoredSecret(storedSecret, this.configService);
+      envSecretKey ?? unprotectStoredSecret(storedSecret, this.configService);
 
     if (!secretKey) {
       throw new BadRequestException(
@@ -1744,7 +2049,7 @@ export class AccountService {
       const defaultPaymentMethodId =
         typeof customer.invoice_settings?.default_payment_method === 'string'
           ? customer.invoice_settings.default_payment_method
-          : customer.invoice_settings?.default_payment_method?.id ?? null;
+          : (customer.invoice_settings?.default_payment_method?.id ?? null);
       const paymentMethods = await stripe.paymentMethods.list({
         customer: stripeCustomerId,
         type: 'card',
@@ -1850,5 +2155,4 @@ export class AccountService {
       actionLabel: payload.resetToken ? 'Set up account' : 'Sign in',
     });
   }
-
 }

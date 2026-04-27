@@ -74,8 +74,7 @@ export function isAllowedImageMimeType(
 
 export function getSafeImageExtensionForMimeType(mimeType: string) {
   const normalized = normalizeImageMimeType(mimeType);
-  const extension =
-    IMAGE_EXTENSION_BY_MIME[normalized as AllowedImageMimeType];
+  const extension = IMAGE_EXTENSION_BY_MIME[normalized as AllowedImageMimeType];
 
   if (!extension) {
     throw new BadRequestException(
@@ -154,7 +153,10 @@ export function clearAuthCookie(
   });
 }
 
-export function readCookieValue(cookieHeader: string | undefined, name: string) {
+export function readCookieValue(
+  cookieHeader: string | undefined,
+  name: string,
+) {
   if (!cookieHeader) {
     return null;
   }
@@ -192,7 +194,9 @@ export function resolveAllowedBrowserOrigins(
   const configuredOrigins =
     configService?.get<string>('CORS_ORIGIN') ?? process.env.CORS_ORIGIN ?? '';
   const appBaseUrl =
-    configService?.get<string>('APP_BASE_URL') ?? process.env.APP_BASE_URL ?? '';
+    configService?.get<string>('APP_BASE_URL') ??
+    process.env.APP_BASE_URL ??
+    '';
   const nodeEnv =
     configService?.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '';
   const defaults =
@@ -279,20 +283,32 @@ function extractOriginFromUrl(value: string | undefined) {
   }
 }
 
-function shouldUseSecureCookies(
-  configService?: Pick<ConfigService, 'get'>,
-) {
-  const appBaseUrl =
-    configService?.get<string>('APP_BASE_URL') ?? process.env.APP_BASE_URL ?? '';
+function shouldUseSecureCookies(configService?: Pick<ConfigService, 'get'>) {
   const nodeEnv =
     configService?.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '';
 
-  return nodeEnv === 'production' || appBaseUrl.startsWith('https://');
+  if (nodeEnv === 'production') {
+    return true;
+  }
+
+  const allowedOrigins = resolveAllowedBrowserOrigins(configService);
+  const hasLocalDevOrigin = allowedOrigins.some((origin) =>
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin),
+  );
+
+  if (hasLocalDevOrigin) {
+    return false;
+  }
+
+  const appBaseUrl =
+    configService?.get<string>('APP_BASE_URL') ??
+    process.env.APP_BASE_URL ??
+    '';
+
+  return appBaseUrl.startsWith('https://');
 }
 
-function getAuthCookieMaxAge(
-  configService?: Pick<ConfigService, 'get'>,
-) {
+function getAuthCookieMaxAge(configService?: Pick<ConfigService, 'get'>) {
   const value =
     configService?.get<string>('JWT_EXPIRES_IN') ??
     process.env.JWT_EXPIRES_IN ??

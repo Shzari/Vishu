@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { VendorWorkspaceShell } from "@/components/vendor-workspace-shell";
@@ -40,7 +40,7 @@ export default function VendorSettingsPage() {
   const vendorAccessRole = profile?.vendor?.access_role ?? "shop_holder";
   const canManageSettings = profile?.vendor?.access_role === "shop_holder";
 
-  async function loadSettings() {
+  const loadSettings = useCallback(async () => {
     if (!token) return;
     try {
       setLoading(true);
@@ -72,13 +72,13 @@ export default function VendorSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [canManageSettings, token]);
 
   useEffect(() => {
     if (token && currentRole === "vendor" && canManageSettings) {
       void loadSettings();
     }
-  }, [canManageSettings, currentRole, token]);
+  }, [canManageSettings, currentRole, loadSettings, token]);
 
   async function refreshTeamAccess() {
     if (!token || !canManageSettings) return;

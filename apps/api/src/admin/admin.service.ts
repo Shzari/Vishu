@@ -13,7 +13,9 @@ import {
   generateOpaqueToken,
   getSafeImageExtensionForMimeType,
   hashOpaqueToken,
+  resolveAllowedBrowserOrigins,
 } from '../common/security/security.utils';
+import { COMMISSION_RATE } from '../common/types';
 import {
   isStoredSecretProtected,
   protectStoredSecret,
@@ -22,6 +24,10 @@ import { DatabaseService, QueryRunner } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
 import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
+import {
+  type PaginationInput,
+  toPaginatedResponse,
+} from '../common/dto/pagination.dto';
 import {
   BrandMutationDto,
   CatalogMasterDataMutationDto,
@@ -551,11 +557,11 @@ export class AdminService {
       null;
     const stripeTestSecretConfigured = Boolean(
       this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() ||
-        row?.stripe_test_secret_key,
+      row?.stripe_test_secret_key,
     );
     const stripeLiveSecretConfigured = Boolean(
       this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() ||
-        row?.stripe_live_secret_key,
+      row?.stripe_live_secret_key,
     );
     const stripeTestWebhookConfigured = Boolean(
       this.configService
@@ -1114,7 +1120,11 @@ export class AdminService {
     return this.getCatalogStructure();
   }
 
-  async updateCategory(adminUserId: string, id: string, dto: CategoryMutationDto) {
+  async updateCategory(
+    adminUserId: string,
+    id: string,
+    dto: CategoryMutationDto,
+  ) {
     await this.updateNamedCatalogEntity(adminUserId, id, {
       table: 'categories',
       labelField: 'name',
@@ -1148,26 +1158,39 @@ export class AdminService {
         `INSERT INTO subcategories (category_id, name, is_active, sort_order, updated_at)
          OUTPUT INSERTED.id
          VALUES ($1, $2, $3, $4, SYSDATETIME())`,
-        [dto.categoryId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999))],
+        [
+          dto.categoryId,
+          normalized,
+          dto.isActive ?? true,
+          Math.max(0, Math.min(dto.sortOrder ?? 0, 999)),
+        ],
       );
-      await this.recordAdminActivity(adminUserId, {
-        actionType: 'subcategory_created',
-        entityType: 'subcategory',
-        entityId: created.rows[0]?.id ?? null,
-        entityLabel: normalized,
-        description: `Created subcategory "${normalized}".`,
-        metadata: { categoryId: dto.categoryId },
-      }, client);
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'subcategory_created',
+          entityType: 'subcategory',
+          entityId: created.rows[0]?.id ?? null,
+          entityLabel: normalized,
+          description: `Created subcategory "${normalized}".`,
+          metadata: { categoryId: dto.categoryId },
+        },
+        client,
+      );
     });
     return this.getCatalogStructure();
   }
 
-  async updateSubcategory(adminUserId: string, id: string, dto: SubcategoryMutationDto) {
+  async updateSubcategory(
+    adminUserId: string,
+    id: string,
+    dto: SubcategoryMutationDto,
+  ) {
     await this.assertCategoryExists(dto.categoryId);
-    const current = await this.databaseService.query<{ id: string; name: string }>(
-      `SELECT TOP 1 id, name FROM subcategories WHERE id = $1`,
-      [id],
-    );
+    const current = await this.databaseService.query<{
+      id: string;
+      name: string;
+    }>(`SELECT TOP 1 id, name FROM subcategories WHERE id = $1`, [id]);
     if (!current.rows[0]) {
       throw new NotFoundException('Subcategory not found');
     }
@@ -1181,16 +1204,26 @@ export class AdminService {
              sort_order = $4,
              updated_at = SYSDATETIME()
          WHERE id = $5`,
-        [dto.categoryId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999)), id],
+        [
+          dto.categoryId,
+          normalized,
+          dto.isActive ?? true,
+          Math.max(0, Math.min(dto.sortOrder ?? 0, 999)),
+          id,
+        ],
       );
-      await this.recordAdminActivity(adminUserId, {
-        actionType: 'subcategory_updated',
-        entityType: 'subcategory',
-        entityId: id,
-        entityLabel: normalized,
-        description: `Updated subcategory "${normalized}".`,
-        metadata: { categoryId: dto.categoryId },
-      }, client);
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'subcategory_updated',
+          entityType: 'subcategory',
+          entityId: id,
+          entityLabel: normalized,
+          description: `Updated subcategory "${normalized}".`,
+          metadata: { categoryId: dto.categoryId },
+        },
+        client,
+      );
     });
     return this.getCatalogStructure();
   }
@@ -1290,7 +1323,11 @@ export class AdminService {
     return this.getCatalogStructure();
   }
 
-  async updateSizeType(adminUserId: string, id: string, dto: SizeTypeMutationDto) {
+  async updateSizeType(
+    adminUserId: string,
+    id: string,
+    dto: SizeTypeMutationDto,
+  ) {
     await this.updateNamedCatalogEntity(adminUserId, id, {
       table: 'size_types',
       labelField: 'name',
@@ -1323,16 +1360,25 @@ export class AdminService {
         `INSERT INTO sizes (size_type_id, label, is_active, sort_order, updated_at)
          OUTPUT INSERTED.id
          VALUES ($1, $2, $3, $4, SYSDATETIME())`,
-        [dto.sizeTypeId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999))],
+        [
+          dto.sizeTypeId,
+          normalized,
+          dto.isActive ?? true,
+          Math.max(0, Math.min(dto.sortOrder ?? 0, 999)),
+        ],
       );
-      await this.recordAdminActivity(adminUserId, {
-        actionType: 'size_created',
-        entityType: 'size',
-        entityId: created.rows[0]?.id ?? null,
-        entityLabel: normalized,
-        description: `Created size "${normalized}".`,
-        metadata: { sizeTypeId: dto.sizeTypeId },
-      }, client);
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'size_created',
+          entityType: 'size',
+          entityId: created.rows[0]?.id ?? null,
+          entityLabel: normalized,
+          description: `Created size "${normalized}".`,
+          metadata: { sizeTypeId: dto.sizeTypeId },
+        },
+        client,
+      );
     });
     return this.getCatalogStructure();
   }
@@ -1356,16 +1402,26 @@ export class AdminService {
              sort_order = $4,
              updated_at = SYSDATETIME()
          WHERE id = $5`,
-        [dto.sizeTypeId, normalized, dto.isActive ?? true, Math.max(0, Math.min(dto.sortOrder ?? 0, 999)), id],
+        [
+          dto.sizeTypeId,
+          normalized,
+          dto.isActive ?? true,
+          Math.max(0, Math.min(dto.sortOrder ?? 0, 999)),
+          id,
+        ],
       );
-      await this.recordAdminActivity(adminUserId, {
-        actionType: 'size_updated',
-        entityType: 'size',
-        entityId: id,
-        entityLabel: normalized,
-        description: `Updated size "${normalized}".`,
-        metadata: { sizeTypeId: dto.sizeTypeId },
-      }, client);
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'size_updated',
+          entityType: 'size',
+          entityId: id,
+          entityLabel: normalized,
+          description: `Updated size "${normalized}".`,
+          metadata: { sizeTypeId: dto.sizeTypeId },
+        },
+        client,
+      );
     });
     return this.getCatalogStructure();
   }
@@ -1393,7 +1449,11 @@ export class AdminService {
     return this.getCatalogStructure();
   }
 
-  async updateGenderGroup(adminUserId: string, id: string, dto: GenderGroupMutationDto) {
+  async updateGenderGroup(
+    adminUserId: string,
+    id: string,
+    dto: GenderGroupMutationDto,
+  ) {
     await this.updateNamedCatalogEntity(adminUserId, id, {
       table: 'gender_groups',
       labelField: 'name',
@@ -1808,6 +1868,8 @@ export class AdminService {
       displayOrder?: number;
       startDate?: string;
       endDate?: string;
+      clearStartDate?: boolean;
+      clearEndDate?: boolean;
       clearMobileImage?: boolean;
     },
     desktopImage?: UploadedFile,
@@ -1821,16 +1883,20 @@ export class AdminService {
       isActive: dto.isActive ?? current.is_active,
       displayOrder: dto.displayOrder ?? current.sort_order,
       startDate:
-        dto.startDate !== undefined
+        dto.clearStartDate
+          ? undefined
+          : dto.startDate !== undefined
           ? dto.startDate
           : current.starts_at
-            ? current.starts_at.toISOString()
-            : undefined,
+              ? current.starts_at.toISOString()
+              : undefined,
       endDate:
-        dto.endDate !== undefined
+        dto.clearEndDate
+          ? undefined
+          : dto.endDate !== undefined
           ? dto.endDate
           : current.ends_at
-            ? current.ends_at.toISOString()
+              ? current.ends_at.toISOString()
             : undefined,
     });
 
@@ -1934,7 +2000,11 @@ export class AdminService {
       this.deleteStoredMedia(current.mobile_image_url);
     }
 
-    if (dto.clearMobileImage && current.mobile_image_url && !storedMobileImageUrl) {
+    if (
+      dto.clearMobileImage &&
+      current.mobile_image_url &&
+      !storedMobileImageUrl
+    ) {
       this.deleteStoredMedia(current.mobile_image_url);
     }
 
@@ -2092,6 +2162,213 @@ export class AdminService {
     }));
   }
 
+  async getVendorFeeSummary() {
+    const result = await this.databaseService.query<{
+      vendor_id: string;
+      shop_name: string;
+      vendor_email: string;
+      platform_fee: number | string | null;
+      vendor_created_at: Date | null;
+      total_fee_generated: number | string;
+      online_fee_collected: number | string;
+      cod_fee_owed: number | string;
+      total_fee_paid: number | string;
+      outstanding_fee: number | string;
+      charged_order_count: number;
+      online_collected_order_count: number;
+      cod_owed_order_count: number;
+      last_paid_at: Date | null;
+      total_platform_take: number | string;
+    }>(
+      `SELECT
+         v.id AS vendor_id,
+         v.shop_name,
+         u.email AS vendor_email,
+         v.platform_fee,
+         v.created_at AS vendor_created_at,
+         ISNULL(fees.total_fee_generated, 0) AS total_fee_generated,
+         ISNULL(fees.online_fee_collected, 0) AS online_fee_collected,
+         ISNULL(fees.cod_fee_owed, 0) AS cod_fee_owed,
+         ISNULL(fees.total_fee_paid, 0) AS total_fee_paid,
+         ISNULL(fees.outstanding_fee, 0) AS outstanding_fee,
+         ISNULL(fees.charged_order_count, 0) AS charged_order_count,
+         ISNULL(fees.online_collected_order_count, 0) AS online_collected_order_count,
+         ISNULL(fees.cod_owed_order_count, 0) AS cod_owed_order_count,
+         fees.last_paid_at,
+         ISNULL(fees.total_platform_take, 0) AS total_platform_take
+       FROM vendors v
+       INNER JOIN users u ON u.id = v.user_id
+       OUTER APPLY (
+         SELECT
+           ISNULL(SUM(order_fee.fee_amount), 0) AS total_fee_generated,
+           ISNULL(SUM(CASE WHEN order_fee.payment_method = 'card' THEN order_fee.fee_amount ELSE 0 END), 0) AS online_fee_collected,
+           ISNULL(SUM(CASE
+             WHEN order_fee.payment_method = 'cash_on_delivery'
+              AND order_fee.payment_status <> 'cod_refused'
+               THEN order_fee.fee_amount
+             ELSE 0
+           END), 0) AS cod_fee_owed,
+           ISNULL(SUM(CASE WHEN order_fee.payment_method = 'card' THEN order_fee.fee_amount ELSE 0 END), 0) AS total_fee_paid,
+           ISNULL(SUM(CASE
+             WHEN order_fee.payment_method = 'cash_on_delivery'
+              AND order_fee.payment_status <> 'cod_refused'
+               THEN order_fee.fee_amount
+             ELSE 0
+           END), 0) AS outstanding_fee,
+           ISNULL(SUM(CASE WHEN order_fee.fee_amount > 0 THEN 1 ELSE 0 END), 0) AS charged_order_count,
+           ISNULL(SUM(CASE WHEN order_fee.payment_method = 'card' AND order_fee.fee_amount > 0 THEN 1 ELSE 0 END), 0) AS online_collected_order_count,
+           ISNULL(SUM(CASE
+             WHEN order_fee.payment_method = 'cash_on_delivery'
+              AND order_fee.payment_status <> 'cod_refused'
+              AND order_fee.fee_amount > 0
+               THEN 1
+             ELSE 0
+           END), 0) AS cod_owed_order_count,
+           MAX(CASE
+             WHEN order_fee.fee_amount > 0
+               THEN order_fee.paid_at
+             ELSE NULL
+           END) AS last_paid_at,
+           ISNULL(SUM(order_fee.total_platform_take), 0) AS total_platform_take
+         FROM (
+           SELECT
+             o.id,
+             o.created_at AS paid_at,
+             o.payment_method,
+             o.payment_status,
+             ISNULL(SUM(oi.commission_amount), 0) AS total_platform_take,
+             ISNULL(
+               SUM(
+                 CASE
+                   WHEN oi.commission_amount > ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
+                     THEN oi.commission_amount - ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
+                   ELSE 0
+                 END
+               ),
+               0
+             ) AS fee_amount
+           FROM order_items oi
+           INNER JOIN orders o ON o.id = oi.order_id
+           WHERE oi.vendor_id = v.id
+           GROUP BY o.id, o.created_at, o.payment_method, o.payment_status
+         ) order_fee
+       ) fees
+       ORDER BY
+         ISNULL(fees.cod_fee_owed, 0) DESC,
+         ISNULL(fees.online_fee_collected, 0) DESC,
+         ISNULL(fees.total_platform_take, 0) DESC,
+         v.shop_name ASC`,
+    );
+
+    return result.rows.map((row) => {
+      const configuredFee = Number(row.platform_fee ?? 0);
+      const feePreview = this.getVendorPlatformFeePreview(
+        configuredFee,
+        row.vendor_created_at,
+      );
+
+      return {
+        vendorId: row.vendor_id,
+        shopName: row.shop_name,
+        vendorEmail: row.vendor_email,
+        basePlatformFee: configuredFee,
+        effectivePlatformFee: feePreview.effectiveFee,
+        feeGraceEndsAt: feePreview.graceEndsAt,
+        totalFeeGenerated: Number(row.total_fee_generated),
+        onlineFeeCollected: Number(row.online_fee_collected),
+        cashOnDeliveryFeeOwed: Number(row.cod_fee_owed),
+        totalFeeOwed: Number(row.total_fee_generated),
+        totalFeePaid: Number(row.total_fee_paid),
+        outstandingFee: Math.max(0, Number(row.outstanding_fee)),
+        totalPlatformTake: Number(row.total_platform_take),
+        chargedOrderCount: row.charged_order_count,
+        onlineCollectedOrderCount: row.online_collected_order_count,
+        cashOnDeliveryOwedOrderCount: row.cod_owed_order_count,
+        lastPaidAt: row.last_paid_at,
+      };
+    });
+  }
+
+  async getVendorFeeHistory(vendorId: string) {
+    const vendor = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE id = $1',
+      [vendorId],
+    );
+
+    if (!vendor.rows[0]) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const result = await this.databaseService.query<{
+      order_id: string;
+      order_number: string | null;
+      paid_at: Date;
+      order_status: string;
+      payment_method: string;
+      payment_status: string;
+      gross_sales: number | string;
+      total_platform_take: number | string;
+      fee_amount: number | string;
+    }>(
+      `SELECT
+         o.id AS order_id,
+         o.order_number,
+         o.created_at AS paid_at,
+         o.status AS order_status,
+         o.payment_method,
+         o.payment_status,
+         ISNULL(SUM(oi.unit_price * oi.quantity), 0) AS gross_sales,
+         ISNULL(SUM(oi.commission_amount), 0) AS total_platform_take,
+         ISNULL(
+           SUM(
+             CASE
+               WHEN oi.commission_amount > ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
+                 THEN oi.commission_amount - ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
+               ELSE 0
+             END
+           ),
+           0
+         ) AS fee_amount
+       FROM order_items oi
+       INNER JOIN orders o ON o.id = oi.order_id
+       WHERE oi.vendor_id = $1
+       GROUP BY
+         o.id,
+         o.order_number,
+         o.created_at,
+         o.status,
+         o.payment_method,
+         o.payment_status
+       ORDER BY o.created_at DESC, o.id DESC`,
+      [vendorId],
+    );
+
+    return result.rows.map((row) => ({
+      orderId: row.order_id,
+      orderNumber: row.order_number ?? row.order_id,
+      paidAt: row.paid_at,
+      orderStatus: row.order_status,
+      paymentMethod: row.payment_method,
+      paymentStatus: row.payment_status,
+      grossSales: Number(row.gross_sales),
+      totalPlatformTake: Number(row.total_platform_take),
+      feeAmount: Number(row.fee_amount),
+      paidAmount:
+        row.payment_method === 'card' ? Number(row.fee_amount) : 0,
+      owedAmount:
+        row.payment_method === 'cash_on_delivery' &&
+        row.payment_status !== 'cod_refused'
+          ? Number(row.fee_amount)
+          : 0,
+      settlementStatus:
+        row.payment_method === 'card'
+          ? 'collected_online'
+          : row.payment_status === 'cod_refused'
+            ? 'voided'
+            : 'owed_cod',
+    }));
+  }
+
   async recordVendorPayout(
     adminUserId: string,
     payload: {
@@ -2143,8 +2420,12 @@ export class AdminService {
     };
   }
 
-  async getUsers() {
-    const result = await this.databaseService.query<{
+  async getUsers(pagination?: PaginationInput | null) {
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [result, totalCount] = await Promise.all([
+      this.databaseService.query<{
       id: string;
       email: string;
       role: string;
@@ -2152,10 +2433,12 @@ export class AdminService {
       created_at: Date;
       vendor_id: string | null;
       shop_name: string | null;
+      platform_fee: number | string | null;
+      vendor_created_at: Date | null;
       vendor_active: boolean | null;
       vendor_verified: boolean | null;
     }>(
-      `SELECT
+        `SELECT
          u.id,
          u.email,
          u.role,
@@ -2163,14 +2446,45 @@ export class AdminService {
          u.created_at,
          v.id AS vendor_id,
          v.shop_name,
+         v.platform_fee,
+         v.created_at AS vendor_created_at,
          v.is_active AS vendor_active,
          v.is_verified AS vendor_verified
        FROM users u
        LEFT JOIN vendors v ON v.user_id = u.id
-       ORDER BY u.created_at DESC`,
-    );
+       ORDER BY u.created_at DESC${pagingClause}`,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            'SELECT COUNT(*) AS total FROM users',
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
-    return result.rows;
+    const items = result.rows.map((row) => {
+      const configuredFee = Number(row.platform_fee ?? 0);
+      const feePreview = this.getVendorPlatformFeePreview(
+        configuredFee,
+        row.vendor_created_at,
+      );
+
+      return {
+        ...row,
+        platform_fee: configuredFee,
+        effective_platform_fee: feePreview.effectiveFee,
+        fee_grace_ends_at: feePreview.graceEndsAt,
+      };
+    });
+
+    if (!pagination) {
+      return items;
+    }
+
+    return toPaginatedResponse(
+      items,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
+    );
   }
 
   async getUserById(userId: string) {
@@ -2338,6 +2652,7 @@ export class AdminService {
     const vendor = await this.databaseService.query<{
       id: string;
       shop_name: string;
+      platform_fee: number | string;
       is_active: boolean;
       is_verified: boolean;
       approved_at: Date | null;
@@ -2350,6 +2665,7 @@ export class AdminService {
       `SELECT TOP 1
          v.id,
          v.shop_name,
+         v.platform_fee,
          v.is_active,
          v.is_verified,
          v.approved_at,
@@ -2369,24 +2685,26 @@ export class AdminService {
       throw new NotFoundException('Vendor not found');
     }
 
-    const [
-      metrics,
-      categoryRows,
-      recentOrders,
-      payoutHistory,
-    ] = await Promise.all([
-      this.databaseService.query<{
-        product_count: number;
-        inventory_units: number;
-        order_count: number;
-        total_earnings: number | string;
-        total_commission: number | string;
-        pending_items: number;
-        shipped_items: number;
-        paid_out: number | string;
-        outstanding_shipped_balance: number | string;
-      }>(
-        `SELECT
+    const configuredFee = Number(record.platform_fee ?? 0);
+    const feePreview = this.getVendorPlatformFeePreview(
+      configuredFee,
+      record.created_at,
+    );
+
+    const [metrics, categoryRows, recentOrders, payoutHistory] =
+      await Promise.all([
+        this.databaseService.query<{
+          product_count: number;
+          inventory_units: number;
+          order_count: number;
+          total_earnings: number | string;
+          total_commission: number | string;
+          pending_items: number;
+          shipped_items: number;
+          paid_out: number | string;
+          outstanding_shipped_balance: number | string;
+        }>(
+          `SELECT
            (SELECT COUNT(*) FROM products WHERE vendor_id = $1) AS product_count,
            (SELECT ISNULL(SUM(stock), 0) FROM products WHERE vendor_id = $1) AS inventory_units,
            (SELECT COUNT(DISTINCT order_id) FROM order_items WHERE vendor_id = $1) AS order_count,
@@ -2402,33 +2720,33 @@ export class AdminService {
               AND oi.status = 'delivered'
               AND (o.payment_method = 'card' OR o.payment_status = 'cod_collected'))
              - (SELECT ISNULL(SUM(amount), 0) FROM vendor_payouts WHERE vendor_id = $1) AS outstanding_shipped_balance`,
-        [vendorId],
-      ),
-      this.databaseService.query<{
-        category: string;
-        product_count: number;
-      }>(
-        `SELECT category, COUNT(*) AS product_count
+          [vendorId],
+        ),
+        this.databaseService.query<{
+          category: string;
+          product_count: number;
+        }>(
+          `SELECT category, COUNT(*) AS product_count
          FROM products
          WHERE vendor_id = $1
          GROUP BY category
          ORDER BY product_count DESC, category ASC`,
-        [vendorId],
-      ),
-      this.databaseService.query<{
-        order_id: string;
-        order_number: string | null;
-        quantity: number;
-        vendor_earnings: number | string;
-        status: string;
-        product_title: string;
-        product_code: string | null;
-        shipping_carrier: string | null;
-        tracking_number: string | null;
-        shipped_at: Date | null;
-        created_at: Date;
-      }>(
-        `SELECT TOP 6
+          [vendorId],
+        ),
+        this.databaseService.query<{
+          order_id: string;
+          order_number: string | null;
+          quantity: number;
+          vendor_earnings: number | string;
+          status: string;
+          product_title: string;
+          product_code: string | null;
+          shipping_carrier: string | null;
+          tracking_number: string | null;
+          shipped_at: Date | null;
+          created_at: Date;
+        }>(
+          `SELECT TOP 6
           oi.order_id,
           o.order_number,
           oi.quantity,
@@ -2445,26 +2763,29 @@ export class AdminService {
          INNER JOIN products p ON p.id = oi.product_id
          WHERE oi.vendor_id = $1
          ORDER BY oi.created_at DESC`,
-        [vendorId],
-      ),
-      this.databaseService.query<{
-        id: string;
-        amount: number | string;
-        reference: string | null;
-        note: string | null;
-        paid_at: Date;
-      }>(
-        `SELECT TOP 8 id, amount, reference, note, paid_at
+          [vendorId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          amount: number | string;
+          reference: string | null;
+          note: string | null;
+          paid_at: Date;
+        }>(
+          `SELECT TOP 8 id, amount, reference, note, paid_at
          FROM vendor_payouts
          WHERE vendor_id = $1
          ORDER BY paid_at DESC`,
-        [vendorId],
-      ),
-    ]);
+          [vendorId],
+        ),
+      ]);
 
     return {
       id: record.id,
       shopName: record.shop_name,
+      platformFee: configuredFee,
+      effectivePlatformFee: feePreview.effectiveFee,
+      feeGraceEndsAt: feePreview.graceEndsAt,
       isActive: record.is_active,
       isVerified: record.is_verified,
       approvedAt: record.approved_at,
@@ -2518,7 +2839,43 @@ export class AdminService {
     };
   }
 
-  async getVendorOrders(vendorId: string, status?: string) {
+  async updateVendorPlatformFee(vendorId: string, fee: number) {
+    const normalizedFee = Number(fee);
+    if (!Number.isFinite(normalizedFee) || normalizedFee < 0) {
+      throw new BadRequestException(
+        'Platform fee must be a number greater than or equal to 0.',
+      );
+    }
+
+    const roundedFee = Number(normalizedFee.toFixed(2));
+    const vendor = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE id = $1',
+      [vendorId],
+    );
+
+    if (!vendor.rows[0]) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    await this.databaseService.query(
+      `UPDATE vendors
+       SET platform_fee = $1,
+           updated_at = SYSDATETIME()
+       WHERE id = $2`,
+      [roundedFee, vendorId],
+    );
+
+    return {
+      message: 'Platform fee updated.',
+      vendor: await this.getVendorById(vendorId),
+    };
+  }
+
+  async getVendorOrders(
+    vendorId: string,
+    status?: string,
+    pagination?: PaginationInput | null,
+  ) {
     const vendor = await this.databaseService.query<{ id: string }>(
       'SELECT TOP 1 id FROM vendors WHERE id = $1',
       [vendorId],
@@ -2537,7 +2894,11 @@ export class AdminService {
       values.push(normalizedStatus);
     }
 
-    const orders = await this.databaseService.query<{
+    const pagingClause = pagination
+      ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
+      : '';
+    const [orders, totalCount] = await Promise.all([
+      this.databaseService.query<{
       order_id: string;
       order_number: string | null;
       customer_email: string | null;
@@ -2551,7 +2912,7 @@ export class AdminService {
       shipped_at: Date | null;
       created_at: Date;
     }>(
-      `SELECT
+        `SELECT
          oi.order_id,
          o.order_number,
          COALESCE(u.email, o.guest_email) AS customer_email,
@@ -2567,13 +2928,23 @@ export class AdminService {
        FROM order_items oi
        INNER JOIN orders o ON o.id = oi.order_id
        INNER JOIN products p ON p.id = oi.product_id
-       LEFT JOIN users u ON u.id = o.user_id
+       LEFT JOIN users u ON u.id = o.customer_id
        WHERE ${filters.join(' AND ')}
-       ORDER BY oi.created_at DESC`,
-      values,
-    );
+       ORDER BY oi.created_at DESC${pagingClause}`,
+        values,
+      ),
+      pagination
+        ? this.databaseService.query<{ total: number }>(
+            `SELECT COUNT(*) AS total
+             FROM order_items oi
+             INNER JOIN orders o ON o.id = oi.order_id
+             WHERE ${filters.join(' AND ')}`,
+            values,
+          )
+        : Promise.resolve({ rows: [] as { total: number }[] }),
+    ]);
 
-    return orders.rows.map((row) => ({
+    const items = orders.rows.map((row) => ({
       orderId: row.order_id,
       orderNumber: row.order_number ?? row.order_id,
       customerEmail: row.customer_email ?? 'Guest checkout',
@@ -2589,17 +2960,20 @@ export class AdminService {
       },
       createdAt: row.created_at,
     }));
+
+    if (!pagination) {
+      return items;
+    }
+
+    return toPaginatedResponse(
+      items,
+      totalCount.rows[0]?.total ?? 0,
+      pagination,
+    );
   }
 
   async getOrderById(orderId: string) {
-    const orders = await this.ordersService.getAllOrders();
-    const order = orders.find((entry) => entry.id === orderId);
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
-    return order;
+    return this.ordersService.getOrderSnapshotById(orderId);
   }
 
   async updateCodStatus(
@@ -2675,7 +3049,10 @@ export class AdminService {
 
   async getCodOrders() {
     const orders = await this.ordersService.getAllOrders();
-    return orders.filter((order) => order.paymentMethod === 'cash_on_delivery');
+    const orderItems = Array.isArray(orders) ? orders : orders.items;
+    return orderItems.filter(
+      (order) => order.paymentMethod === 'cash_on_delivery',
+    );
   }
 
   async updateUserContact(
@@ -2734,12 +3111,12 @@ export class AdminService {
     return this.getUserById(userId);
   }
 
-  getOrders() {
-    return this.ordersService.getAllOrders();
+  getOrders(pagination?: PaginationInput | null) {
+    return this.ordersService.getAllOrders(pagination);
   }
 
-  getProducts() {
-    return this.productsService.adminListProducts();
+  getProducts(pagination?: PaginationInput | null) {
+    return this.productsService.adminListProducts(pagination);
   }
 
   async deleteProduct(adminUserId: string, productId: string) {
@@ -3010,6 +3387,37 @@ export class AdminService {
     }));
   }
 
+  private getVendorPlatformFeePreview(
+    configuredFee: number,
+    vendorCreatedAt: Date | null,
+  ) {
+    if (
+      !vendorCreatedAt ||
+      !Number.isFinite(configuredFee) ||
+      configuredFee <= 0
+    ) {
+      return {
+        effectiveFee: Math.max(0, configuredFee || 0),
+        graceEndsAt: null as Date | null,
+      };
+    }
+
+    const graceEndsAt = new Date(vendorCreatedAt);
+    graceEndsAt.setMonth(graceEndsAt.getMonth() + 2);
+
+    if (new Date() < graceEndsAt) {
+      return {
+        effectiveFee: 0,
+        graceEndsAt,
+      };
+    }
+
+    return {
+      effectiveFee: configuredFee,
+      graceEndsAt: null as Date | null,
+    };
+  }
+
   async getExport(
     adminUserId: string,
     resource: 'vendors' | 'customers' | 'orders',
@@ -3106,11 +3514,11 @@ export class AdminService {
       };
     }
 
-      const result = await this.databaseService.query<{
-        id: string;
-        order_number: string | null;
-        customer_email: string;
-        status: string;
+    const result = await this.databaseService.query<{
+      id: string;
+      order_number: string | null;
+      customer_email: string;
+      status: string;
       payment_method: string;
       payment_status: string;
       total_price: number | string;
@@ -3253,7 +3661,9 @@ export class AdminService {
     const targetPath = join(targetDir, fileName);
 
     if (!existsSync(file.path)) {
-      throw new BadRequestException('Uploaded promotion image could not be processed');
+      throw new BadRequestException(
+        'Uploaded promotion image could not be processed',
+      );
     }
 
     assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
@@ -3328,7 +3738,11 @@ export class AdminService {
       throw new BadRequestException('Promotion URL is invalid');
     }
 
-    if (parsed.origin !== 'https://vishu.shop') {
+    const allowedOrigins = new Set(resolveAllowedBrowserOrigins(this.configService));
+    allowedOrigins.add('https://vishu.shop');
+    allowedOrigins.add('https://www.vishu.shop');
+
+    if (!allowedOrigins.has(parsed.origin)) {
       throw new BadRequestException(
         'Promotion URLs must stay within this marketplace',
       );
@@ -3569,7 +3983,11 @@ export class AdminService {
         `INSERT INTO ${input.table} (${input.labelField}, is_active, sort_order, updated_at)
          OUTPUT INSERTED.id
          VALUES ($1, $2, $3, SYSDATETIME())`,
-        [normalized, input.isActive, Math.max(0, Math.min(input.sortOrder, 999))],
+        [
+          normalized,
+          input.isActive,
+          Math.max(0, Math.min(input.sortOrder, 999)),
+        ],
       );
 
       await this.recordAdminActivity(
@@ -3598,7 +4016,12 @@ export class AdminService {
       sortOrder?: number;
     },
   ) {
-    const current = await this.databaseService.query<{ id: string; label: string; is_active: boolean; sort_order: number }>(
+    const current = await this.databaseService.query<{
+      id: string;
+      label: string;
+      is_active: boolean;
+      sort_order: number;
+    }>(
       `SELECT TOP 1 id, ${input.labelField} AS label, is_active, sort_order
        FROM ${input.table}
        WHERE id = $1`,
@@ -3606,7 +4029,9 @@ export class AdminService {
     );
 
     if (!current.rows[0]) {
-      throw new NotFoundException(`${input.entityType.replace(/_/g, ' ')} not found`);
+      throw new NotFoundException(
+        `${input.entityType.replace(/_/g, ' ')} not found`,
+      );
     }
 
     const normalized = this.normalizeNamedCatalogValue(input.value, 120);
@@ -3621,7 +4046,10 @@ export class AdminService {
         [
           normalized,
           input.isActive ?? current.rows[0].is_active,
-          Math.max(0, Math.min(input.sortOrder ?? current.rows[0].sort_order, 999)),
+          Math.max(
+            0,
+            Math.min(input.sortOrder ?? current.rows[0].sort_order, 999),
+          ),
           id,
         ],
       );
@@ -3650,7 +4078,11 @@ export class AdminService {
       inUseQuery: string;
     },
   ) {
-    const current = await this.databaseService.query<{ id: string; label: string; is_active: boolean }>(
+    const current = await this.databaseService.query<{
+      id: string;
+      label: string;
+      is_active: boolean;
+    }>(
       `SELECT TOP 1 id, ${input.labelField} AS label, is_active
        FROM ${input.table}
        WHERE id = $1`,
@@ -3658,13 +4090,14 @@ export class AdminService {
     );
 
     if (!current.rows[0]) {
-      throw new NotFoundException(`${input.entityType.replace(/_/g, ' ')} not found`);
+      throw new NotFoundException(
+        `${input.entityType.replace(/_/g, ' ')} not found`,
+      );
     }
 
-    const usage = await this.databaseService.query<{ usage_count: number | string }>(
-      input.inUseQuery,
-      [input.id],
-    );
+    const usage = await this.databaseService.query<{
+      usage_count: number | string;
+    }>(input.inUseQuery, [input.id]);
     const usageCount = Number(usage.rows[0]?.usage_count ?? 0);
 
     await this.databaseService.withTransaction(async (client) => {
@@ -3677,13 +4110,18 @@ export class AdminService {
           [input.id],
         );
       } else {
-        await client.query(`DELETE FROM ${input.table} WHERE id = $1`, [input.id]);
+        await client.query(`DELETE FROM ${input.table} WHERE id = $1`, [
+          input.id,
+        ]);
       }
 
       await this.recordAdminActivity(
         adminUserId,
         {
-          actionType: usageCount > 0 ? `${input.entityType}_deactivated` : `${input.entityType}_deleted`,
+          actionType:
+            usageCount > 0
+              ? `${input.entityType}_deactivated`
+              : `${input.entityType}_deleted`,
           entityType: input.entityType,
           entityId: input.id,
           entityLabel: current.rows[0].label,

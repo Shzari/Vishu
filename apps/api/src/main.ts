@@ -64,9 +64,9 @@ async function bootstrap() {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader(
-        'Permissions-Policy',
-        'camera=(), microphone=(), geolocation=()',
-      );
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
     if (
       req.path.startsWith('/auth') ||
       req.path.startsWith('/account') ||

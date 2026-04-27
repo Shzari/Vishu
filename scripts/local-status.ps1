@@ -31,13 +31,51 @@ function Test-Url {
   }
 }
 
+function Resolve-PortPid {
+  param([int]$Port)
+
+  try {
+    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
+      Select-Object -First 1
+    if ($connection -and $connection.OwningProcess) {
+      return [int]$connection.OwningProcess
+    }
+  } catch {
+    return $null
+  }
+
+  return $null
+}
+
 $apiPid = Read-PidValue -PidFile $apiPidFile
 $webPid = Read-PidValue -PidFile $webPidFile
 
-$apiProcess = if ($apiPid) { Get-Process -Id $apiPid -ErrorAction SilentlyContinue } else { $null }
-$webProcess = if ($webPid) { Get-Process -Id $webPid -ErrorAction SilentlyContinue } else { $null }
+$apiResolvedPid = $apiPid
+$webResolvedPid = $webPid
+
+$apiProcess = if ($apiResolvedPid) { Get-Process -Id $apiResolvedPid -ErrorAction SilentlyContinue } else { $null }
+$webProcess = if ($webResolvedPid) { Get-Process -Id $webResolvedPid -ErrorAction SilentlyContinue } else { $null }
+
+if (-not $apiProcess) {
+  $apiResolvedPid = Resolve-PortPid -Port 3000
+  $apiProcess = if ($apiResolvedPid) { Get-Process -Id $apiResolvedPid -ErrorAction SilentlyContinue } else { $null }
+}
+
+if (-not $webProcess) {
+  $webResolvedPid = Resolve-PortPid -Port 3001
+  $webProcess = if ($webResolvedPid) { Get-Process -Id $webResolvedPid -ErrorAction SilentlyContinue } else { $null }
+}
+
 $apiPidLabel = if ($apiProcess) { $apiProcess.Id } else { 'not running' }
 $webPidLabel = if ($webProcess) { $webProcess.Id } else { 'not running' }
+
+if (($apiResolvedPid -ne $apiPid) -and $apiProcess) {
+  $apiPidLabel = "$apiPidLabel (detected by port)"
+}
+
+if (($webResolvedPid -ne $webPid) -and $webProcess) {
+  $webPidLabel = "$webPidLabel (detected by port)"
+}
 
 Write-Host "API PID: $apiPidLabel"
 Write-Host "WEB PID: $webPidLabel"

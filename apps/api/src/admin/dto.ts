@@ -5,6 +5,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
@@ -209,6 +210,16 @@ export class PromotionUpdateDto {
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
+  clearStartDate?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  clearEndDate?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
   clearMobileImage?: boolean;
 }
 
@@ -220,6 +231,13 @@ export class ReviewCatalogRequestDto {
   @IsString()
   @MaxLength(500)
   adminNote?: string;
+}
+
+export class UpdateVendorPlatformFeeDto {
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  platformFee!: number;
 }
 
 export class CategoryMutationDto {
@@ -365,12 +383,7 @@ export class GenderGroupMutationDto {
 
 export class CatalogMasterDataMutationDto {
   @IsIn(['category', 'subcategory', 'brand', 'size', 'color'])
-  optionType!:
-    | 'category'
-    | 'subcategory'
-    | 'brand'
-    | 'size'
-    | 'color';
+  optionType!: 'category' | 'subcategory' | 'brand' | 'size' | 'color';
 
   @IsOptional()
   @Transform(({ value }) =>

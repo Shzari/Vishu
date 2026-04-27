@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
+import { getCustomerLoginRedirectHref } from "@/lib/login-redirect";
 
 let favoriteTokenKey: string | null = null;
 let favoriteIdsCache: Set<string> | null = null;
@@ -50,18 +52,18 @@ export function FavoriteToggleButton({
   productId: string;
   className?: string;
 }) {
-  const { currentRole, token, user } = useAuth();
+  const { currentRole, token, user, loading } = useAuth();
   const [isFavorite, setIsFavorite] = useState(false);
   const [saving, setSaving] = useState(false);
   const [available, setAvailable] = useState(true);
   const favoriteOwnerKey = user?.sub ?? token ?? "";
+  const canLoadFavorites =
+    currentRole === "customer" && Boolean(token) && Boolean(favoriteOwnerKey);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (currentRole !== "customer" || !token || !favoriteOwnerKey) {
-      setIsFavorite(false);
-      setAvailable(true);
+    if (!canLoadFavorites || !token) {
       return () => {
         cancelled = true;
       };
@@ -83,24 +85,83 @@ export function FavoriteToggleButton({
     return () => {
       cancelled = true;
     };
-  }, [currentRole, favoriteOwnerKey, productId, token]);
+  }, [canLoadFavorites, favoriteOwnerKey, productId, token]);
 
-  if (currentRole !== "customer") {
+  if (currentRole && currentRole !== "customer") {
     return null;
+  }
+
+  const resolvedIsFavorite = canLoadFavorites ? isFavorite : false;
+  const resolvedAvailable = canLoadFavorites ? available : true;
+  const classNames = `favorite-toggle-button${resolvedIsFavorite ? " active" : ""}${className ? ` ${className}` : ""}`;
+  const label = resolvedIsFavorite ? "Remove from favorites" : "Add to favorites";
+
+  if (loading) {
+    return (
+      <button
+        type="button"
+        className={classNames}
+        aria-pressed={resolvedIsFavorite}
+        aria-label={label}
+        disabled
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 3.4 14.7 8.88 20.75 9.76 16.37 14.03 17.4 20.06 12 17.22 6.6 20.06 7.63 14.03 3.25 9.76 9.3 8.88 12 3.4Z"
+            fill={resolvedIsFavorite ? "currentColor" : "none"}
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+    );
+  }
+
+  if (!token || currentRole !== "customer") {
+    return (
+      <Link
+        href={getCustomerLoginRedirectHref()}
+        className={classNames}
+        aria-label={label}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 3.4 14.7 8.88 20.75 9.76 16.37 14.03 17.4 20.06 12 17.22 6.6 20.06 7.63 14.03 3.25 9.76 9.3 8.88 12 3.4Z"
+            fill={resolvedIsFavorite ? "currentColor" : "none"}
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </Link>
+    );
   }
 
   return (
     <button
       type="button"
-      className={`favorite-toggle-button${isFavorite ? " active" : ""}${className ? ` ${className}` : ""}`}
-      aria-pressed={isFavorite}
-      aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-      disabled={saving || !available}
+      className={classNames}
+      aria-pressed={resolvedIsFavorite}
+      aria-label={label}
+      disabled={
+        saving ||
+        !resolvedAvailable ||
+        (currentRole === "customer" && !canLoadFavorites)
+      }
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
 
-        if (!token || !favoriteOwnerKey || saving || !available) {
+        if (
+          !favoriteOwnerKey ||
+          saving ||
+          !resolvedAvailable ||
+          !canLoadFavorites
+        ) {
           return;
         }
 
@@ -112,7 +173,7 @@ export function FavoriteToggleButton({
         }>(
           `/account/favorites/${productId}`,
           {
-            method: isFavorite ? "DELETE" : "POST",
+            method: resolvedIsFavorite ? "DELETE" : "POST",
           },
           token,
         )
@@ -120,6 +181,7 @@ export function FavoriteToggleButton({
             const nextIds = response.items.map((item) => item.productId);
             writeFavoriteIds(favoriteOwnerKey, nextIds);
             setIsFavorite(nextIds.includes(productId));
+            setAvailable(true);
           })
           .catch(() => {
             setAvailable(false);
@@ -132,7 +194,7 @@ export function FavoriteToggleButton({
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M12 3.4 14.7 8.88 20.75 9.76 16.37 14.03 17.4 20.06 12 17.22 6.6 20.06 7.63 14.03 3.25 9.76 9.3 8.88 12 3.4Z"
-          fill={isFavorite ? "currentColor" : "none"}
+          fill={resolvedIsFavorite ? "currentColor" : "none"}
           stroke="currentColor"
           strokeWidth="1.8"
           strokeLinejoin="round"

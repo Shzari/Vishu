@@ -29,6 +29,12 @@ export class UpdateAccountProfileDto {
   email?: string;
 }
 
+export class VerifyPendingEmailChangeDto {
+  @IsString()
+  @Matches(/^[0-9]{6}$/)
+  code!: string;
+}
+
 export class UpdateEmailPreferencesDto {
   @IsOptional()
   @IsBoolean()

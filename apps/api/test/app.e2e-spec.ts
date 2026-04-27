@@ -87,7 +87,30 @@ async function registerVerifyAndLoginCustomer(
     .send({ email, password, ...extra })
     .expect(201);
 
-  const loginResponse = registerResponse;
+  const pool = await createPool(DB_NAME);
+  const tokenLookup = await pool.request().input('email', email).query<{
+    token: string;
+  }>(`
+    SELECT TOP 1 pr.token
+    FROM dbo.password_resets pr
+    INNER JOIN dbo.users u ON u.id = pr.user_id
+    WHERE u.email = @email
+    ORDER BY pr.created_at DESC
+  `);
+  await pool.close();
+
+  await request(app.getHttpServer())
+    .post('/auth/password-reset/confirm')
+    .send({
+      token: tokenLookup.recordset[0].token,
+      newPassword: password,
+    })
+    .expect(201);
+
+  const loginResponse = await request(app.getHttpServer())
+    .post('/auth/login')
+    .send({ email, password })
+    .expect(201);
 
   await request(app.getHttpServer())
     .post('/account/addresses')
@@ -105,6 +128,153 @@ async function registerVerifyAndLoginCustomer(
     .expect(201);
 
   return { registerResponse, loginResponse };
+}
+
+async function getStructuredCatalogFixture() {
+  const pool = await createPool(DB_NAME);
+
+  const brand = await pool.request().input('name', 'Adidas').query<{
+    id: string;
+  }>(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.brands WHERE name = @name)
+      INSERT INTO dbo.brands (name, is_active, sort_order) VALUES (@name, 1, 0);
+
+    SELECT TOP 1 id
+    FROM dbo.brands
+    WHERE name = @name
+  `);
+
+  const primaryCategory = await pool
+    .request()
+    .input('categoryName', 'tops')
+    .input('subcategoryName', 'tops').query<{
+    category_id: string;
+    subcategory_id: string;
+  }>(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.categories WHERE name = @categoryName)
+        INSERT INTO dbo.categories (name, is_active, sort_order)
+        VALUES (@categoryName, 1, 0);
+
+      DECLARE @categoryId UNIQUEIDENTIFIER = (
+        SELECT TOP 1 id FROM dbo.categories WHERE name = @categoryName
+      );
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM dbo.subcategories
+        WHERE category_id = @categoryId
+          AND name = @subcategoryName
+      )
+        INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
+        VALUES (@categoryId, @subcategoryName, 1, 0);
+
+      SELECT TOP 1
+        @categoryId AS category_id,
+        sc.id AS subcategory_id
+      FROM dbo.subcategories sc
+      WHERE sc.category_id = @categoryId
+        AND sc.name = @subcategoryName
+    `);
+
+  const secondaryCategory = await pool
+    .request()
+    .input('categoryName', 'dresses')
+    .input('subcategoryName', 'dresses').query<{
+    category_id: string;
+    subcategory_id: string;
+  }>(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.categories WHERE name = @categoryName)
+        INSERT INTO dbo.categories (name, is_active, sort_order)
+        VALUES (@categoryName, 1, 1);
+
+      DECLARE @categoryId UNIQUEIDENTIFIER = (
+        SELECT TOP 1 id FROM dbo.categories WHERE name = @categoryName
+      );
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM dbo.subcategories
+        WHERE category_id = @categoryId
+          AND name = @subcategoryName
+      )
+        INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
+        VALUES (@categoryId, @subcategoryName, 1, 0);
+
+      SELECT TOP 1
+        @categoryId AS category_id,
+        sc.id AS subcategory_id
+      FROM dbo.subcategories sc
+      WHERE sc.category_id = @categoryId
+        AND sc.name = @subcategoryName
+    `);
+
+  const color = await pool.request().input('name', 'gray').query<{
+    id: string;
+  }>(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.colors WHERE name = @name)
+      INSERT INTO dbo.colors (name, is_active, sort_order) VALUES (@name, 1, 0);
+
+    SELECT TOP 1 id
+    FROM dbo.colors
+    WHERE name = @name
+  `);
+
+  const size = await pool
+    .request()
+    .input('sizeTypeName', 'Apparel')
+    .input('sizeLabel', 'one-size').query<{
+    size_type_id: string;
+    size_id: string;
+  }>(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.size_types WHERE name = @sizeTypeName)
+        INSERT INTO dbo.size_types (name, is_active, sort_order)
+        VALUES (@sizeTypeName, 1, 0);
+
+      DECLARE @sizeTypeId UNIQUEIDENTIFIER = (
+        SELECT TOP 1 id FROM dbo.size_types WHERE name = @sizeTypeName
+      );
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM dbo.sizes
+        WHERE size_type_id = @sizeTypeId
+          AND label = @sizeLabel
+      )
+        INSERT INTO dbo.sizes (size_type_id, label, is_active, sort_order)
+        VALUES (@sizeTypeId, @sizeLabel, 1, 0);
+
+      SELECT TOP 1
+        @sizeTypeId AS size_type_id,
+        s.id AS size_id
+      FROM dbo.sizes s
+      WHERE s.size_type_id = @sizeTypeId
+        AND s.label = @sizeLabel
+    `);
+
+  const genderGroup = await pool.request().input('name', 'Men').query<{
+    id: string;
+  }>(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.gender_groups WHERE name = @name)
+      INSERT INTO dbo.gender_groups (name, is_active, sort_order)
+      VALUES (@name, 1, 0);
+
+    SELECT TOP 1 id
+    FROM dbo.gender_groups
+    WHERE name = @name
+  `);
+
+  await pool.close();
+
+  return {
+    brandId: brand.recordset[0].id,
+    primaryCategoryId: primaryCategory.recordset[0].category_id,
+    primarySubcategoryId: primaryCategory.recordset[0].subcategory_id,
+    secondarySubcategoryId: secondaryCategory.recordset[0].subcategory_id,
+    colorId: color.recordset[0].id,
+    sizeTypeId: size.recordset[0].size_type_id,
+    sizeId: size.recordset[0].size_id,
+    genderGroupId: genderGroup.recordset[0].id,
+  };
 }
 
 async function seedVerifiedCustomer(
@@ -188,10 +358,15 @@ describe('Marketplace API (e2e)', () => {
     process.env.DB_SERVER = process.env.DB_SERVER || 'localhost';
     process.env.DB_TRUSTED_CONNECTION =
       process.env.DB_TRUSTED_CONNECTION || 'true';
+    process.env.NODE_ENV = 'test';
+    process.env.APP_BASE_URL = 'http://localhost:3001';
+    process.env.CORS_ORIGIN = 'http://localhost:3001';
     process.env.JWT_SECRET = 'test-secret';
     process.env.JWT_EXPIRES_IN = '1h';
 
-    const AppModule = require('../src/app.module').AppModule;
+    // Jest runs this suite in CommonJS mode, so require keeps bootstrap compatible.
+
+    const { AppModule } = require('../src/app.module');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -243,9 +418,7 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(response.body.siteName).toBe('Vishu.shop');
-    expect(response.body.tagline).toBe(
-      'Unified fashion storefront, hidden vendor identity',
-    );
+    expect(response.body.tagline).toBe('Unified fashion store');
     expect(response.body).toHaveProperty('logoSvg');
     expect(response.body).toHaveProperty('logoDataUrl');
   });
@@ -258,7 +431,7 @@ describe('Marketplace API (e2e)', () => {
       await registerVerifyAndLoginCustomer(app, email, password);
 
     expect(registerResponse.body.message).toContain('Customer account created');
-    expect(registerResponse.body).toHaveProperty('accessToken');
+    expect(loginResponse.body).toHaveProperty('accessToken');
 
     const meResponse = await request(app.getHttpServer())
       .get('/auth/me')
@@ -284,9 +457,7 @@ describe('Marketplace API (e2e)', () => {
       .expect(201);
 
     expect(loginResponse.headers['set-cookie']).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(`${AUTH_COOKIE_NAME}=`),
-      ]),
+      expect.arrayContaining([expect.stringContaining(`${AUTH_COOKIE_NAME}=`)]),
     );
 
     const meResponse = await agent.get('/auth/me').expect(200);
@@ -850,24 +1021,6 @@ describe('Marketplace API (e2e)', () => {
 
     const defaultAddressId = accountResponse.body.addresses[0].id;
 
-    const savedCard = await request(app.getHttpServer())
-      .post('/account/payment-methods')
-      .set(
-        'Authorization',
-        `Bearer ${customerAuth.loginResponse.body.accessToken}`,
-      )
-      .send({
-        nickname: 'Primary Visa',
-        cardholderName: 'Order Customer',
-        cardNumber: '4111111111111111',
-        expMonth: 12,
-        expYear: 2030,
-        isDefault: true,
-      })
-      .expect(201);
-
-    const defaultCardId = savedCard.body.paymentMethods[0].id;
-
     const orderResponse = await request(app.getHttpServer())
       .post('/orders')
       .set(
@@ -880,14 +1033,13 @@ describe('Marketplace API (e2e)', () => {
           { productId: productTwo.recordset[0].id, quantity: 1 },
         ],
         addressId: defaultAddressId,
-        paymentMethod: 'card',
-        paymentMethodId: defaultCardId,
+        paymentMethod: 'cash_on_delivery',
       })
       .expect(201);
 
     expect(orderResponse.body.totalPrice).toBe(130);
-    expect(orderResponse.body.paymentMethod).toBe('card');
-    expect(orderResponse.body.paymentStatus).toBe('paid');
+    expect(orderResponse.body.paymentMethod).toBe('cash_on_delivery');
+    expect(orderResponse.body.paymentStatus).toBe('cod_pending');
     expect(orderResponse.body.status).toBe('pending');
     expect(orderResponse.body.fulfillment.placedAt).toBeTruthy();
     expect(orderResponse.body.fulfillment.confirmedAt).toBeNull();
@@ -895,8 +1047,7 @@ describe('Marketplace API (e2e)', () => {
     expect(orderResponse.body.fulfillment.deliveredAt).toBeNull();
     expect(orderResponse.body.shippingAddress.label).toBe('Home');
     expect(orderResponse.body.shippingAddress.line1).toBe('Demo Street 1');
-    expect(orderResponse.body.paymentCard.last4).toBe('1111');
-    expect(orderResponse.body.paymentCard.brand).toBe('Visa');
+    expect(orderResponse.body.paymentCard).toBeNull();
     expect(orderResponse.body.items).toHaveLength(2);
     expect(orderResponse.body.items[0]).not.toHaveProperty('vendor_id');
     expect(orderResponse.body.items[0].product).not.toHaveProperty('vendor_id');
@@ -913,7 +1064,7 @@ describe('Marketplace API (e2e)', () => {
     expect(ordersResponse.body[0].totalPrice).toBe(130);
     expect(ordersResponse.body[0].fulfillment.placedAt).toBeTruthy();
     expect(ordersResponse.body[0].shippingAddress.city).toBe('Prishtine');
-    expect(ordersResponse.body[0].paymentCard.last4).toBe('1111');
+    expect(ordersResponse.body[0].paymentCard).toBeNull();
 
     const verifyPool = await createPool(DB_NAME);
     const stockCheck = await verifyPool.query<{
@@ -937,8 +1088,8 @@ describe('Marketplace API (e2e)', () => {
     const orderSnapshotCheck = await verifyPool.query<{
       shipping_label: string;
       shipping_city: string;
-      payment_card_last4: string;
-      payment_card_brand: string;
+      payment_card_last4: string | null;
+      payment_card_brand: string | null;
     }>(`
       SELECT TOP 1 shipping_label, shipping_city, payment_card_last4, payment_card_brand
       FROM dbo.orders
@@ -955,8 +1106,8 @@ describe('Marketplace API (e2e)', () => {
     expect(orderSnapshotCheck.recordset[0]).toEqual({
       shipping_label: 'Home',
       shipping_city: 'Prishtine',
-      payment_card_last4: '1111',
-      payment_card_brand: 'Visa',
+      payment_card_last4: null,
+      payment_card_brand: null,
     });
   });
 
@@ -1270,7 +1421,7 @@ describe('Marketplace API (e2e)', () => {
       .expect(201);
   });
 
-  it('rejects categories that do not belong to the selected department', async () => {
+  it('rejects subcategories that do not belong to the selected category', async () => {
     const vendorPassword = 'departmentguard';
     await request(app.getHttpServer())
       .post('/auth/vendor/register')
@@ -1299,6 +1450,8 @@ describe('Marketplace API (e2e)', () => {
       })
       .expect(201);
 
+    const catalog = await getStructuredCatalogFixture();
+
     const imagePayload = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm1cAAAAASUVORK5CYII=',
       'base64',
@@ -1311,8 +1464,11 @@ describe('Marketplace API (e2e)', () => {
       .field('description', 'Category mismatch test')
       .field('price', '39')
       .field('stock', '2')
-      .field('department', 'men')
-      .field('category', 'dresses')
+      .field('brandId', catalog.brandId)
+      .field('categoryId', catalog.primaryCategoryId)
+      .field('subcategoryId', catalog.secondarySubcategoryId)
+      .field('genderGroupId', catalog.genderGroupId)
+      .field('colorIds', JSON.stringify([catalog.colorId]))
       .attach('images', imagePayload, {
         filename: 'department-test.png',
         contentType: 'image/png',
@@ -1320,7 +1476,7 @@ describe('Marketplace API (e2e)', () => {
       .expect(400);
 
     expect(response.body.message).toContain(
-      'not available under the men gender',
+      'Select a valid active subcategory under the chosen category',
     );
   });
 
@@ -1358,6 +1514,8 @@ describe('Marketplace API (e2e)', () => {
       })
       .expect(201);
 
+    const catalog = await getStructuredCatalogFixture();
+
     const imagePayload = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm1cAAAAASUVORK5CYII=',
       'base64',
@@ -1370,10 +1528,16 @@ describe('Marketplace API (e2e)', () => {
       .field('description', 'Normalization test')
       .field('price', '39')
       .field('stock', '6')
-      .field('department', 'men')
-      .field('category', 'tops')
-      .field('color', 'Grey')
-      .field('size', 'One Size')
+      .field('brandId', catalog.brandId)
+      .field('categoryId', catalog.primaryCategoryId)
+      .field('subcategoryId', catalog.primarySubcategoryId)
+      .field('genderGroupId', catalog.genderGroupId)
+      .field('colorIds', JSON.stringify([catalog.colorId]))
+      .field('sizeTypeId', catalog.sizeTypeId)
+      .field(
+        'sizeVariants',
+        JSON.stringify([{ sizeId: catalog.sizeId, stock: 6 }]),
+      )
       .attach('images', imagePayload, {
         filename: 'normalized-test.png',
         contentType: 'image/png',
@@ -1427,7 +1591,7 @@ describe('Marketplace API (e2e)', () => {
       'secret123',
     );
 
-    const createdOrder = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/orders')
       .set(
         'Authorization',
@@ -1473,8 +1637,9 @@ describe('Marketplace API (e2e)', () => {
     const adminPassword = 'adminsecret';
     const adminHash = await bcrypt.hash(adminPassword, 10);
 
-    const adminUser = await pool.request().input('passwordHash', adminHash)
-      .query<{ id: string }>(`
+    await pool.request().input('passwordHash', adminHash).query<{
+      id: string;
+    }>(`
       INSERT INTO dbo.users (email, password_hash, role, is_active)
       OUTPUT INSERTED.id
       VALUES ('ops-admin@example.com', @passwordHash, 'admin', 1)
@@ -1571,9 +1736,9 @@ describe('Marketplace API (e2e)', () => {
 
     expect(orderExport.body.filename).toBe('orders-export.csv');
     expect(orderExport.body.csv).toContain(
-      'Order ID,Customer email,Status,Payment method,Payment status,Total price,Created at',
+      'Order number,Customer email,Status,Payment method,Payment status,Total price,Created at',
     );
-    expect(orderExport.body.csv).toContain(createdOrder.body.id);
+    expect(orderExport.body.csv).toContain(createdOrder.body.orderNumber);
 
     const reporting = await request(app.getHttpServer())
       .get('/admin/reporting?rangeDays=7')
@@ -1746,6 +1911,13 @@ describe('Marketplace API (e2e)', () => {
     );
 
     const token = customerAuth.loginResponse.body.accessToken as string;
+    const mailService = app.get(MailService);
+    const ensureVerificationSpy = jest
+      .spyOn(mailService, 'ensureVerificationDeliveryConfigured')
+      .mockResolvedValue(undefined);
+    const emailChangeSpy = jest
+      .spyOn(mailService, 'sendCustomerEmailChangeOtp')
+      .mockResolvedValue(undefined);
 
     const initialAccount = await request(app.getHttpServer())
       .get('/account/me')
@@ -1769,9 +1941,27 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(updatedProfile.body.fullName).toBe('Updated Customer');
-    expect(updatedProfile.body.email).toBe('updated-account@example.com');
+    expect(updatedProfile.body.email).toBe('account-customer@example.com');
+    expect(updatedProfile.body.pendingEmail).toBe(
+      'updated-account@example.com',
+    );
     expect(updatedProfile.body.phoneNumber).toBe('+3557778888');
     expect(updatedProfile.body.emailVerifiedAt).not.toBeNull();
+
+    expect(ensureVerificationSpy).toHaveBeenCalled();
+    const otpCode = emailChangeSpy.mock.calls[0]?.[0]?.code;
+    expect(otpCode).toMatch(/^[0-9]{6}$/);
+
+    const verifiedEmailChange = await request(app.getHttpServer())
+      .post('/account/email-change/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: otpCode })
+      .expect(201);
+
+    expect(verifiedEmailChange.body.profile.email).toBe(
+      'updated-account@example.com',
+    );
+    expect(verifiedEmailChange.body.profile.pendingEmail).toBeNull();
 
     const withAddress = await request(app.getHttpServer())
       .post('/account/addresses')
@@ -1793,7 +1983,7 @@ describe('Marketplace API (e2e)', () => {
     expect(withAddress.body.addresses).toHaveLength(2);
     expect(withAddress.body.addresses[0].isDefault).toBe(true);
 
-    const withCard = await request(app.getHttpServer())
+    const manualCardAttempt = await request(app.getHttpServer())
       .post('/account/payment-methods')
       .set('Authorization', `Bearer ${token}`)
       .send({
@@ -1804,11 +1994,11 @@ describe('Marketplace API (e2e)', () => {
         expYear: 2030,
         isDefault: true,
       })
-      .expect(201);
+      .expect(400);
 
-    expect(withCard.body.paymentMethods).toHaveLength(1);
-    expect(withCard.body.paymentMethods[0].last4).toBe('1111');
-    expect(withCard.body.paymentMethods[0].brand).toBe('Visa');
+    expect(manualCardAttempt.body.message).toContain(
+      'Manual card entry is no longer supported',
+    );
 
     await request(app.getHttpServer())
       .patch('/account/password')
@@ -1826,6 +2016,9 @@ describe('Marketplace API (e2e)', () => {
         password: 'secret456',
       })
       .expect(201);
+
+    ensureVerificationSpy.mockRestore();
+    emailChangeSpy.mockRestore();
   });
 
   it('lets vendors and admins use shared account settings while keeping customer account data private', async () => {
@@ -2346,7 +2539,6 @@ describe('Marketplace API (e2e)', () => {
       .expect(200);
 
     expect(payouts.body[0].shopName).toBe('Payout Shop');
-    expect(payouts.body[0].bankReady).toBe(true);
     expect(payouts.body[0].payableNow).toBe(0);
     expect(payouts.body[0].outstandingShippedBalance).toBe(0);
     expect(payouts.body[0].totalCommission).toBe(10);

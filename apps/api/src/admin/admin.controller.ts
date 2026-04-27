@@ -12,9 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import {
-  FileFieldsInterceptor,
-} from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -25,6 +23,10 @@ import {
   isAllowedImageMimeType,
 } from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
+import {
+  PaginationQueryDto,
+  resolvePagination,
+} from '../common/dto/pagination.dto';
 import { AdminService } from './admin.service';
 import { AdminCodStatusDto } from '../orders/dto';
 import {
@@ -41,6 +43,7 @@ import {
   SizeMutationDto,
   SizeTypeMutationDto,
   SubcategoryMutationDto,
+  UpdateVendorPlatformFeeDto,
   UpdatePromotionSettingsDto,
   UpdatePlatformSettingsDto,
 } from './dto';
@@ -57,7 +60,10 @@ function promotionUploadInterceptor() {
           callback(null, ensureTemporaryUploadDir());
         },
         filename: (_req, file, callback) => {
-          callback(null, buildSafeUploadedImageName('promotion', file.mimetype));
+          callback(
+            null,
+            buildSafeUploadedImageName('promotion', file.mimetype),
+          );
         },
       }),
       fileFilter: (_req, file, callback) => {
@@ -90,8 +96,8 @@ export class AdminController {
   }
 
   @Get('users')
-  getUsers() {
-    return this.adminService.getUsers();
+  getUsers(@Query() pagination: PaginationQueryDto) {
+    return this.adminService.getUsers(resolvePagination(pagination));
   }
 
   @Get('exports/:resource')
@@ -284,10 +290,7 @@ export class AdminController {
   }
 
   @Delete('catalog/sizes/:id')
-  deleteSize(
-    @Req() req: { user: AuthenticatedUser },
-    @Param('id') id: string,
-  ) {
+  deleteSize(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
     return this.adminService.deleteSize(req.user.sub, id);
   }
 
@@ -434,13 +437,23 @@ export class AdminController {
   }
 
   @Get('orders')
-  getOrders() {
-    return this.adminService.getOrders();
+  getOrders(@Query() pagination: PaginationQueryDto) {
+    return this.adminService.getOrders(resolvePagination(pagination));
   }
 
   @Get('payouts')
   getVendorPayouts() {
     return this.adminService.getVendorPayouts();
+  }
+
+  @Get('vendor-fees')
+  getVendorFeeSummary() {
+    return this.adminService.getVendorFeeSummary();
+  }
+
+  @Get('vendor-fees/:id/history')
+  getVendorFeeHistory(@Param('id') id: string) {
+    return this.adminService.getVendorFeeHistory(id);
   }
 
   @Post('payouts')
@@ -476,17 +489,31 @@ export class AdminController {
     return this.adminService.getVendorById(id);
   }
 
+  @Patch('vendors/:id/platform-fee')
+  updateVendorPlatformFee(
+    @Param('id') id: string,
+    @Body() dto: UpdateVendorPlatformFeeDto,
+  ) {
+    return this.adminService.updateVendorPlatformFee(id, dto.platformFee);
+  }
+
   @Get('vendors/:id/orders')
   getVendorOrders(
     @Param('id') id: string,
-    @Query('status') status?: string,
+    @Query('status') status: string | undefined,
+    @Query('page') page?: number,
+    @Query('pageSize') pageSize?: number,
   ) {
-    return this.adminService.getVendorOrders(id, status);
+    return this.adminService.getVendorOrders(
+      id,
+      status,
+      resolvePagination({ page, pageSize }),
+    );
   }
 
   @Get('products')
-  getProducts() {
-    return this.adminService.getProducts();
+  getProducts(@Query() pagination: PaginationQueryDto) {
+    return this.adminService.getProducts(resolvePagination(pagination));
   }
 
   @Delete('products/:id')

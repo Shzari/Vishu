@@ -59,7 +59,7 @@ export default function PrivacyPage() {
           <ul>
             <li>Access the personal data we hold about you</li>
             <li>Correct inaccurate data</li>
-            <li>Request deletion of your data ("right to be forgotten")</li>
+            <li>Request deletion of your data (&quot;right to be forgotten&quot;)</li>
             <li>Object to processing or request restriction</li>
             <li>Data portability</li>
           </ul>
@@ -73,8 +73,8 @@ export default function PrivacyPage() {
           <h2>6. Data Security</h2>
           <p>
             We use industry-standard measures including HTTPS, hashed passwords, and JWT-based
-            authentication. No transmission over the internet is 100% secure — use the Platform
-            at your own risk.
+            authentication. No transmission over the internet is 100% secure. Use the Platform at
+            your own risk.
           </p>
         </section>
 

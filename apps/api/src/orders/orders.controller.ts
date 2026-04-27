@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -20,6 +21,10 @@ import {
 } from './dto';
 import { OrdersService } from './orders.service';
 import { Public } from '../common/decorators/public.decorator';
+import {
+  PaginationQueryDto,
+  resolvePagination,
+} from '../common/dto/pagination.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
@@ -58,8 +63,14 @@ export class OrdersController {
 
   @Roles('customer')
   @Get('orders/my')
-  getMyOrders(@Req() req: { user: AuthenticatedUser }) {
-    return this.ordersService.getCustomerOrders(req.user.sub);
+  getMyOrders(
+    @Req() req: { user: AuthenticatedUser },
+    @Query() pagination: PaginationQueryDto,
+  ) {
+    return this.ordersService.getCustomerOrders(
+      req.user.sub,
+      resolvePagination(pagination),
+    );
   }
 
   @Roles('customer')
@@ -80,8 +91,14 @@ export class OrdersController {
 
   @Roles('vendor')
   @Get('vendor/orders')
-  getVendorOrders(@Req() req: { user: AuthenticatedUser }) {
-    return this.ordersService.getVendorOrders(req.user.sub);
+  getVendorOrders(
+    @Req() req: { user: AuthenticatedUser },
+    @Query() pagination: PaginationQueryDto,
+  ) {
+    return this.ordersService.getVendorOrders(
+      req.user.sub,
+      resolvePagination(pagination),
+    );
   }
 
   @Roles('vendor')

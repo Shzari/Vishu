@@ -25,9 +25,14 @@ import {
 } from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import {
+  PaginationQueryDto,
+  resolvePagination,
+} from '../common/dto/pagination.dto';
+import {
   ProductBulkStockDto,
   ProductListingDto,
   ProductMutationDto,
+  ReviewSubmissionDto,
   ProductUpdateDto,
   VendorCatalogRequestDto,
 } from './dto';
@@ -40,7 +45,10 @@ function productUploadInterceptor() {
         callback(null, ensureTemporaryUploadDir());
       },
       filename: (_req, file, callback) => {
-        callback(null, buildSafeUploadedImageName('product-image', file.mimetype));
+        callback(
+          null,
+          buildSafeUploadedImageName('product-image', file.mimetype),
+        );
       },
     }),
     fileFilter: (_req, file, callback) => {
@@ -61,20 +69,39 @@ export class ProductsController {
 
   @Public()
   @Get()
-  getProducts() {
-    return this.productsService.listPublicProducts();
+  getProducts(@Query() pagination: PaginationQueryDto) {
+    return this.productsService.listPublicProducts(resolvePagination(pagination));
   }
 
   @Public()
   @Get('vendors')
-  getPublicVendors() {
-    return this.productsService.listPublicVendors();
+  getPublicVendors(@Query() pagination: PaginationQueryDto) {
+    return this.productsService.listPublicVendors(resolvePagination(pagination));
   }
 
   @Public()
   @Get('vendors/:id')
   getPublicVendor(@Param('id') id: string) {
     return this.productsService.getPublicVendorById(id);
+  }
+
+  @Roles('customer')
+  @Get('vendors/:id/review-status')
+  getCustomerVendorReviewStatus(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.productsService.getCustomerVendorReviewStatus(req.user.sub, id);
+  }
+
+  @Roles('customer')
+  @Post('vendors/:id/reviews')
+  submitVendorReview(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ReviewSubmissionDto,
+  ) {
+    return this.productsService.upsertVendorReview(req.user.sub, id, dto);
   }
 
   @Public()
@@ -124,6 +151,28 @@ export class ProductsController {
   @Get(':id')
   getProduct(@Param('id') id: string) {
     return this.productsService.getPublicProductById(id);
+  }
+
+  @Roles('customer')
+  @Get(':id/review-status')
+  getCustomerProductReviewStatus(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.productsService.getCustomerProductReviewStatus(
+      req.user.sub,
+      id,
+    );
+  }
+
+  @Roles('customer')
+  @Post(':id/reviews')
+  submitProductReview(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ReviewSubmissionDto,
+  ) {
+    return this.productsService.upsertProductReview(req.user.sub, id, dto);
   }
 
   @Roles('vendor')

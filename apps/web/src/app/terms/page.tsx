@@ -15,8 +15,8 @@ export default function TermsPage() {
         <section className="legal-section">
           <h2>1. Acceptance of Terms</h2>
           <p>
-            By accessing or using Vishu ("the Platform"), you agree to be bound by these Terms of
-            Service. If you do not agree, please do not use the Platform.
+            By accessing or using Vishu (&quot;the Platform&quot;), you agree to be bound by these
+            Terms of Service. If you do not agree, please do not use the Platform.
           </p>
         </section>
 
@@ -58,7 +58,7 @@ export default function TermsPage() {
         <section className="legal-section">
           <h2>6. Intellectual Property</h2>
           <p>
-            All content on the Platform — including logos, design, and text — belongs to Vishu or
+            All content on the Platform, including logos, design, and text, belongs to Vishu or
             its licensors. Product images remain the property of the respective vendors.
           </p>
         </section>

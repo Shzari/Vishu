@@ -31,24 +31,34 @@ export class CreateOrderDto {
   @Type(() => OrderItemInputDto)
   items!: OrderItemInputDto[];
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  fullName!: string;
+  addressId?: string;
 
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  fullName?: string;
+
+  @IsOptional()
   @IsEmail()
-  email!: string;
+  email?: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^[0-9+\-\s()]{6,40}$/)
-  phoneNumber!: string;
+  phoneNumber?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  city!: string;
+  city?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  addressLine1!: string;
+  addressLine1?: string;
 
   @IsOptional()
   @IsString()

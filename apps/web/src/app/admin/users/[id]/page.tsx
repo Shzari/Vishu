@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { apiRequest, formatCurrency } from "@/lib/api";
@@ -21,7 +21,7 @@ export default function AdminUserDetailPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadDetail() {
+  const loadDetail = useCallback(async () => {
     if (!token || currentRole !== "admin") {
       return;
     }
@@ -37,11 +37,11 @@ export default function AdminUserDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [currentRole, params.id, token]);
 
   useEffect(() => {
     void loadDetail();
-  }, [currentRole, params.id, token]);
+  }, [loadDetail]);
 
   async function saveContact() {
     if (!token) return;

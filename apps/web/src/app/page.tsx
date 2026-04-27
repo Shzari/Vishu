@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/components/providers";
@@ -21,6 +22,7 @@ import type {
 } from "@/lib/types";
 
 const NEW_ARRIVAL_LIMIT = 24;
+const PRODUCTS_BEFORE_SHOP_ROW = 15;
 
 type BrowseMode = "catalog" | "new";
 
@@ -435,8 +437,9 @@ export default function HomePage() {
     category !== "all" ||
     search.trim().length > 0;
 
-  const featuredVendors = useMemo(() => {
-    const relevantVendors = vendors.filter((vendor) => {
+  const storefrontVendors = useMemo(() => {
+    const activeVendors = vendors.filter((vendor) => vendor.productCount > 0);
+    const relevantVendors = activeVendors.filter((vendor) => {
       const matchesDepartment =
         department === "all" || vendor.departments.includes(department);
       const matchesCategory =
@@ -444,20 +447,17 @@ export default function HomePage() {
 
       return matchesDepartment && matchesCategory;
     });
-    const shuffled = [
-      ...(relevantVendors.length > 0 ? relevantVendors : vendors),
-    ];
 
-    for (let index = shuffled.length - 1; index > 0; index -= 1) {
-      const randomIndex = Math.floor(Math.random() * (index + 1));
-      [shuffled[index], shuffled[randomIndex]] = [
-        shuffled[randomIndex],
-        shuffled[index],
-      ];
-    }
-
-    return shuffled.slice(0, 8);
+    return [...(relevantVendors.length > 0 ? relevantVendors : activeVendors)]
+      .sort(
+        (left, right) =>
+          right.productCount - left.productCount ||
+          right.categoryCount - left.categoryCount ||
+          left.shopName.localeCompare(right.shopName),
+      );
   }, [category, department, vendors]);
+  const leadingProducts = displayProducts.slice(0, PRODUCTS_BEFORE_SHOP_ROW);
+  const remainingProducts = displayProducts.slice(PRODUCTS_BEFORE_SHOP_ROW);
   const activeHeroSlide = homepageHero.slides[activeHeroIndex] ?? null;
   useEffect(() => {
     if (!quickViewProduct) {
@@ -540,6 +540,95 @@ export default function HomePage() {
     setActiveHeroIndex((current) => (current + 1) % homepageHero.slides.length);
   }
 
+  function renderProductCard(product: Product) {
+    return (
+      <article key={product.id} className="product-card">
+        <FavoriteStarButton product={product} className="product-card-favorite" />
+        <Link
+          href={`/products/${product.id}`}
+          className="product-card-link"
+          aria-label={`Open ${product.title}`}
+        >
+          <div className="product-thumb">
+            <div className="product-media-shell">
+              <ProductMedia
+                image={assetUrl(product.images[0])}
+                title={product.title}
+              />
+            </div>
+          </div>
+          <div className="product-card-body">
+            <div className="product-title-link">{product.title}</div>
+            <div className="product-secondary-line">
+              {browseMode === "new"
+                ? `New arrival \u00b7 ${formatCatalogLabel(product.category)}`
+                : formatCatalogLabel(product.category)}
+              {product.color
+                ? ` \u00b7 ${formatCatalogLabel(product.color)}`
+                : ""}
+              {product.size
+                ? ` \u00b7 ${String(product.size).toUpperCase()}`
+                : ""}
+            </div>
+            <div className="product-price-row product-price-row-stacked">
+              <span className="price">{formatCurrency(product.price)}</span>
+            </div>
+            <div
+              className={
+                product.stock > 0
+                  ? "product-stock-line"
+                  : "product-stock-line product-stock-line-empty"
+              }
+            >
+              {product.stock > 0
+                ? `${product.stock} available now`
+                : "Currently unavailable"}
+            </div>
+          </div>
+        </Link>
+        <div className="product-card-foot">
+          {product.vendor ? (
+            <Link
+              className="product-card-vendor"
+              href={`/shops/${product.vendor.id}`}
+            >
+              {product.vendor.shopName}
+            </Link>
+          ) : (
+            <span className="product-card-vendor muted">Marketplace listing</span>
+          )}
+          <div className="product-card-actions">
+            <button
+              type="button"
+              className="product-action-button product-action-button-secondary"
+              onClick={() => openQuickView(product)}
+            >
+              Quick view
+            </button>
+            <button
+              type="button"
+              className="product-action-button button"
+              onClick={() =>
+                addItem({
+                  productId: product.id,
+                  title: product.title,
+                  price: product.price,
+                  image: product.images[0],
+                  color: product.color ?? product.colors[0]?.name ?? null,
+                  size: product.size ?? product.sizeVariants[0]?.label ?? null,
+                  quantity: 1,
+                  stock: product.stock,
+                })
+              }
+              disabled={product.stock === 0}
+            >
+              {product.stock === 0 ? "Sold out" : "Add to cart"}
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   function clearBrowseFilters() {
     setBrowseMode("catalog");
@@ -759,147 +848,96 @@ export default function HomePage() {
         )}
 
         <div className="catalog-grid">
-          {displayProducts.map((product) => (
-            <article key={product.id} className="product-card">
-              <FavoriteStarButton product={product} className="product-card-favorite" />
-              <Link
-                href={`/products/${product.id}`}
-                className="product-card-link"
-                aria-label={`Open ${product.title}`}
-              >
-                <div className="product-thumb">
-                  <div className="product-media-shell">
-                    <ProductMedia
-                      image={assetUrl(product.images[0])}
-                      title={product.title}
-                    />
-                  </div>
-                </div>
-                <div className="product-card-body">
-                  <div className="product-title-link">{product.title}</div>
-                  <div className="product-secondary-line">
-                    {browseMode === "new"
-                      ? `New arrival \u00b7 ${formatCatalogLabel(product.category)}`
-                      : formatCatalogLabel(product.category)}
-                    {product.color
-                      ? ` \u00b7 ${formatCatalogLabel(product.color)}`
-                      : ""}
-                    {product.size
-                      ? ` \u00b7 ${String(product.size).toUpperCase()}`
-                      : ""}
-                  </div>
-                  <div className="product-price-row product-price-row-stacked">
-                    <span className="price">
-                      {formatCurrency(product.price)}
-                    </span>
-                  </div>
-                  <div
-                    className={
-                      product.stock > 0
-                        ? "product-stock-line"
-                        : "product-stock-line product-stock-line-empty"
-                    }
-                  >
-                    {product.stock > 0
-                      ? `${product.stock} available now`
-                      : "Currently unavailable"}
-                  </div>
-                </div>
-              </Link>
-              <div className="product-card-foot">
-                {product.vendor ? (
-                  <Link
-                    className="product-card-vendor"
-                    href={`/shops/${product.vendor.id}`}
-                  >
-                    {product.vendor.shopName}
-                  </Link>
-                ) : (
-                  <span className="product-card-vendor muted">Marketplace listing</span>
-                )}
-                <div className="product-card-actions">
-                  <button
-                    type="button"
-                    className="product-action-button product-action-button-secondary"
-                    onClick={() => openQuickView(product)}
-                  >
-                    Quick view
-                  </button>
-                  <button
-                    type="button"
-                    className="product-action-button button"
-                    onClick={() =>
-                      addItem({
-                        productId: product.id,
-                        title: product.title,
-                        price: product.price,
-                        image: product.images[0],
-                        color: product.color ?? product.colors[0]?.name ?? null,
-                        size: product.size ?? product.sizeVariants[0]?.label ?? null,
-                        quantity: 1,
-                        stock: product.stock,
-                      })
-                    }
-                    disabled={product.stock === 0}
-                  >
-                    {product.stock === 0 ? "Sold out" : "Add to cart"}
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
+          {leadingProducts.map(renderProductCard)}
         </div>
 
         <section className="vendors-strip-panel storefront-shops-section">
-          <div className="vendors-strip-head">
-            <div>
-              <h2>Shops</h2>
-              {(department !== "all" || category !== "all") && (
-                <p className="muted">
-                  {category !== "all"
-                    ? `Shops matching ${formatCatalogLabel(category)}`
-                    : `Shops matching ${formatCatalogLabel(department)}`}
-                </p>
-              )}
-            </div>
-            <Link
-              className="table-link"
-              href={`/shops${
-                department !== "all" || category !== "all"
-                  ? `?${new URLSearchParams({
-                      ...(department !== "all" ? { department } : {}),
-                      ...(category !== "all" ? { category } : {}),
-                    }).toString()}`
-                  : ""
-              }`}
-            >
-              See all
-            </Link>
-          </div>
+          <Link
+            className="table-link storefront-shops-see-all"
+            href={`/shops${
+              department !== "all" || category !== "all"
+                ? `?${new URLSearchParams({
+                    ...(department !== "all" ? { department } : {}),
+                    ...(category !== "all" ? { category } : {}),
+                  }).toString()}`
+                : ""
+            }`}
+          >
+            See all
+          </Link>
           {loading && <div className="message">Loading shops...</div>}
-          {!loading && !error && featuredVendors.length === 0 && (
+          {!loading && !error && storefrontVendors.length === 0 && (
             <div className="empty">No public shops yet.</div>
           )}
-          <div className="vendors-strip-grid">
-            {featuredVendors.map((vendor) => (
-              <Link
-                key={vendor.id}
-                href={`/shops/${vendor.id}`}
-                className="vendor-public-card"
+          <div className="vendors-strip-carousel">
+            <button
+              type="button"
+              className="vendors-strip-arrow vendors-strip-arrow-left"
+              aria-label="Scroll all shops left"
+              onClick={() => {
+                document
+                  .getElementById("all-shops-strip")
+                  ?.scrollBy({ left: -360, behavior: "smooth" });
+              }}
+              disabled={storefrontVendors.length <= 4}
+            >
+              ‹
+            </button>
+            <div
+              id="all-shops-strip"
+              className="vendors-strip-grid"
+              aria-label="All shops"
+            >
+              {storefrontVendors.map((vendor) => (
+                <Link
+                  key={vendor.id}
+                  href={`/shops/${vendor.id}`}
+                  className="vendor-public-card"
               >
-                <div className="vendor-public-logo">
-                  {vendor.logoUrl ? (
-                    <img src={assetUrl(vendor.logoUrl)} alt={vendor.shopName} />
-                  ) : (
-                    <span>{vendor.shopName.slice(0, 1)}</span>
-                  )}
-                </div>
-                <strong>{vendor.shopName}</strong>
-                <span>{vendor.productCount} products</span>
-              </Link>
-            ))}
+                  <div className="vendor-public-logo">
+                    {vendor.logoUrl ? (
+                      <Image
+                        src={assetUrl(vendor.logoUrl)}
+                        alt={vendor.shopName}
+                        width={72}
+                        height={72}
+                        unoptimized
+                      />
+                    ) : (
+                      <span>{vendor.shopName.slice(0, 1)}</span>
+                    )}
+                  </div>
+                  <strong>{vendor.shopName}</strong>
+                  <span>{vendor.productCount} products</span>
+                  <div className="vendor-public-categories">
+                    {vendor.categories.slice(0, 2).map((entry) => (
+                      <em key={`${vendor.id}-${entry}`}>{formatCatalogLabel(entry)}</em>
+                    ))}
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="vendors-strip-arrow vendors-strip-arrow-right"
+              aria-label="Scroll all shops right"
+              onClick={() => {
+                document
+                  .getElementById("all-shops-strip")
+                  ?.scrollBy({ left: 360, behavior: "smooth" });
+              }}
+              disabled={storefrontVendors.length <= 4}
+            >
+              ›
+            </button>
           </div>
         </section>
+
+        {remainingProducts.length > 0 && (
+          <div className="catalog-grid catalog-grid-continued">
+            {remainingProducts.map(renderProductCard)}
+          </div>
+        )}
       </section>
 
       {quickViewProduct && (
