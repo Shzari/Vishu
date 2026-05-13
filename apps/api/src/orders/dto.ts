@@ -18,6 +18,11 @@ export class OrderItemInputDto {
   @IsNotEmpty()
   productId!: string;
 
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  sizeId?: string;
+
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -112,6 +117,11 @@ export class CartItemSyncDto {
   @IsString()
   @IsNotEmpty()
   productId!: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  sizeId?: string;
 
   @Type(() => Number)
   @IsInt()

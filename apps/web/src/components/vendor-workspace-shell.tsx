@@ -20,7 +20,6 @@ const VENDOR_WORKSPACE_LINKS: Array<{
   { id: "dashboard", label: "Dashboard", href: "/vendor/dashboard" },
   { id: "orders", label: "Orders", href: "/vendor/orders" },
   { id: "products", label: "Products", href: "/vendor/products" },
-  { id: "inventory", label: "Inventory", href: "/vendor/inventory" },
   { id: "earnings", label: "Earnings", href: "/vendor/earnings" },
   { id: "settings", label: "Settings", href: "/vendor/settings" },
 ];

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { MouseEvent } from "react";
 import { useAuth, useFavorites } from "@/components/providers";
 import { getCustomerLoginRedirectHref } from "@/lib/login-redirect";
 import type { Product } from "@/lib/types";
@@ -16,9 +17,10 @@ export function FavoriteStarButton({
   className,
   showLabel = false,
 }: FavoriteStarButtonProps) {
-  const { isAuthenticated, loading } = useAuth();
+  const { currentRole, isAuthenticated, loading } = useAuth();
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorite = isFavorite(product.id);
+  const canUseFavorites = isAuthenticated && currentRole === "customer";
   const classNames = `favorite-star-button${favorite ? " is-active" : ""}${className ? ` ${className}` : ""}`;
   const label = favorite
     ? `Remove ${product.title} from favorites`
@@ -41,13 +43,13 @@ export function FavoriteStarButton({
     );
   }
 
-  if (!isAuthenticated) {
+  if (!canUseFavorites) {
     return (
       <Link
         href={getCustomerLoginRedirectHref()}
         className={classNames}
         aria-label={label}
-        onClick={(event) => {
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
           event.stopPropagation();
         }}
       >
@@ -65,7 +67,7 @@ export function FavoriteStarButton({
       className={classNames}
       aria-label={label}
       aria-pressed={favorite}
-      onClick={(event) => {
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
 

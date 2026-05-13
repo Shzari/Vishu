@@ -76,12 +76,41 @@ const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
   ],
   jeans: ['jean', 'jeans', 'denim', 'denims'],
   shorts: ['short', 'shorts'],
+  underwear: [
+    'underwear',
+    'underclothes',
+    'undergarment',
+    'undergarments',
+    'brief',
+    'briefs',
+    'boxer',
+    'boxers',
+    'bra',
+    'bras',
+    'panty',
+    'panties',
+    'lingerie',
+  ],
   suits: ['suit', 'suits', 'tailoring', 'formalwear'],
   sportswear: ['sportswear', 'sport', 'sports', 'activewear', 'gymwear'],
   accessories: ['accessory', 'accessories', 'bag', 'bags', 'belt', 'belts'],
   leggings: ['legging', 'leggings', 'tights'],
   dresses: ['dress', 'dresses', 'gown', 'gowns'],
   skirts: ['skirt', 'skirts'],
+  shoes: [
+    'shoe',
+    'shoes',
+    'sneaker',
+    'sneakers',
+    'boot',
+    'boots',
+    'heel',
+    'heels',
+    'sandal',
+    'sandals',
+    'trainer',
+    'trainers',
+  ],
   bodysuits: ['bodysuit', 'bodysuits', 'body suit', 'body suits'],
   rompers: ['romper', 'rompers', 'onesie', 'onesies'],
   sets: ['set', 'sets', 'outfit', 'outfits'],
@@ -95,6 +124,7 @@ const SEARCH_CATEGORY_LABELS: Record<string, string> = {
   sportswear: 'Sportswear',
   schoolwear: 'Schoolwear',
   sleepwear: 'Sleepwear',
+  underwear: 'Underwear',
 };
 
 interface ProductRow {
@@ -139,6 +169,14 @@ interface ProductSizeRow {
   size_id: string;
   size_label: string;
   size_stock: number;
+  size_type_id: string;
+  size_type_name: string;
+}
+
+interface ProductSizeOptionRow {
+  product_id: string;
+  size_id: string;
+  size_label: string;
   size_type_id: string;
   size_type_name: string;
 }
@@ -194,6 +232,14 @@ interface PublicCatalogProduct {
     stock: number;
     sizeTypeId: string;
     sizeTypeName: string;
+  }[];
+  sizeOptions: {
+    id: string;
+    label: string;
+    stock: number;
+    sizeTypeId: string;
+    sizeTypeName: string;
+    isAvailable: boolean;
   }[];
   productCode?: string | null;
   ratingSummary: {
@@ -282,6 +328,8 @@ interface AnnotatedSearchProduct {
 }
 
 interface VendorLowStockAlertPayload {
+  vendorId: string;
+  productId: string;
   email: string;
   shopName: string;
   productTitle: string;
@@ -313,7 +361,7 @@ export class ProductsService {
        FROM products p
        INNER JOIN vendors v ON v.id = p.vendor_id
        WHERE ${this.publicProductVisibilityClause('p', 'v')}
-       ORDER BY p.created_at DESC${pagingClause}`,
+       ORDER BY ${this.publicProductDiscoveryOrderClause('p')}${pagingClause}`,
       ),
       pagination
         ? this.databaseService.query<{ total: number }>(
@@ -447,19 +495,26 @@ export class ProductsService {
          v.shop_description,
          v.logo_url,
          v.banner_url,
-         COUNT(CASE WHEN p.is_listed = 1 THEN p.id END) AS product_count,
-         COUNT(DISTINCT CASE WHEN p.is_listed = 1 THEN p.category END) AS category_count
+         COUNT(CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.id END) AS product_count,
+         COUNT(DISTINCT CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.category END) AS category_count
        FROM vendors v
        LEFT JOIN products p ON p.vendor_id = v.id
        WHERE ${this.publicVendorVisibilityClause('v')}
        GROUP BY v.id, v.shop_name, v.shop_description, v.logo_url, v.banner_url
-       ORDER BY COUNT(CASE WHEN p.is_listed = 1 THEN p.id END) DESC, v.shop_name ASC${pagingClause}`,
+       HAVING COUNT(CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.id END) > 0
+       ORDER BY COUNT(CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.id END) DESC, v.shop_name ASC${pagingClause}`,
       ),
       pagination
         ? this.databaseService.query<{ total: number }>(
             `SELECT COUNT(*) AS total
              FROM vendors v
-             WHERE ${this.publicVendorVisibilityClause('v')}`,
+             WHERE ${this.publicVendorVisibilityClause('v')}
+               AND EXISTS (
+                 SELECT 1
+                 FROM products p
+                 WHERE p.vendor_id = v.id
+                   AND ${this.publicProductVisibilityClause('p', 'v')}
+               )`,
           )
         : Promise.resolve({ rows: [] as { total: number }[] }),
     ]);
@@ -591,7 +646,13 @@ export class ProductsService {
          v.return_policy
        FROM vendors v
        WHERE v.id = $1
-         AND ${this.publicVendorVisibilityClause('v')}`,
+         AND ${this.publicVendorVisibilityClause('v')}
+         AND EXISTS (
+           SELECT 1
+           FROM products p
+           WHERE p.vendor_id = v.id
+             AND ${this.publicProductVisibilityClause('p', 'v')}
+         )`,
       [vendorId],
     );
 
@@ -607,7 +668,7 @@ export class ProductsService {
        INNER JOIN vendors v ON v.id = p.vendor_id
        WHERE p.vendor_id = $1
          AND ${this.publicProductVisibilityClause('p', 'v')}
-       ORDER BY p.created_at DESC`,
+       ORDER BY ${this.publicProductDiscoveryOrderClause('p')}`,
       [vendorId],
     );
 
@@ -850,6 +911,7 @@ export class ProductsService {
           `SELECT id, name, sort_order
            FROM colors
            WHERE is_active = 1
+             AND LOWER(LTRIM(RTRIM(name))) <> 'other'
            ORDER BY sort_order ASC, name ASC`,
         ),
         this.databaseService.query<{
@@ -1067,10 +1129,11 @@ export class ProductsService {
     this.assertImageCount(files.length);
 
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
     const normalizedDto = this.normalizeProductMutationDto(dto);
     const selection =
       await this.resolveStructuredProductSelection(normalizedDto);
+    let lowStockAlert: VendorLowStockAlertPayload | null = null;
 
     try {
       const product = await this.databaseService.withTransaction(
@@ -1126,6 +1189,31 @@ export class ProductsService {
             [productCode, created.rows[0].id],
           );
 
+          if (
+            vendor.low_stock_threshold > 0 &&
+            selection.totalStock <= vendor.low_stock_threshold
+          ) {
+            await client.query(
+              `UPDATE products
+               SET low_stock_alert_sent_at = SYSDATETIME(),
+                   updated_at = SYSDATETIME()
+               WHERE id = $1`,
+              [created.rows[0].id],
+            );
+
+            lowStockAlert = {
+              vendorId: vendor.id,
+              productId: created.rows[0].id,
+              email: vendor.email,
+              shopName: vendor.shop_name,
+              productTitle: normalizedDto.title,
+              productCode,
+              stock: selection.totalStock,
+              threshold: vendor.low_stock_threshold,
+            };
+            await this.createVendorLowStockNotification(client, lowStockAlert);
+          }
+
           for (const [index, color] of selection.colors.entries()) {
             await client.query(
               `INSERT INTO product_colors (product_id, color_id, sort_order)
@@ -1142,7 +1230,11 @@ export class ProductsService {
             );
           }
 
-          for (const [index, file] of files.entries()) {
+          const orderedFiles = this.orderUploadedImages(
+            files,
+            normalizedDto.primaryUploadIndex,
+          );
+          for (const [index, file] of orderedFiles.entries()) {
             const imageUrl = this.storeProductImage(
               vendor,
               selection.category,
@@ -1160,6 +1252,9 @@ export class ProductsService {
       );
 
       await this.syncProductToSearchIndexSafely(product.id);
+      if (lowStockAlert) {
+        await this.mailService.sendVendorLowStockAlert(lowStockAlert);
+      }
       return this.getVendorProductById(product.id, vendor.id);
     } catch (error) {
       this.cleanupTemporaryFiles(files);
@@ -1174,7 +1269,7 @@ export class ProductsService {
     files: UploadedFile[],
   ) {
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
     const normalizedDto = this.normalizeProductUpdateDto(dto);
@@ -1329,6 +1424,8 @@ export class ProductsService {
             );
 
             lowStockAlert = {
+              vendorId: vendor.id,
+              productId,
               email: vendor.email,
               shopName: vendor.shop_name,
               productTitle: normalizedDto.title ?? currentRow.title,
@@ -1336,6 +1433,7 @@ export class ProductsService {
               stock: nextStock,
               threshold,
             };
+            await this.createVendorLowStockNotification(client, lowStockAlert);
           }
         }
 
@@ -1377,6 +1475,8 @@ export class ProductsService {
           }
         }
 
+        let primaryUploadedImageUrl: string | null = null;
+
         if (files.length) {
           const shouldReplace = normalizedDto.replaceImages === true;
           const nextImageCount = shouldReplace
@@ -1402,8 +1502,15 @@ export class ProductsService {
             selection?.category ??
             (await this.getProductCategory(client, productId));
 
-          for (const [index, file] of files.entries()) {
+          const orderedFiles = this.orderUploadedImages(
+            files,
+            normalizedDto.primaryUploadIndex,
+          );
+          for (const [index, file] of orderedFiles.entries()) {
             const imageUrl = this.storeProductImage(vendor, category, file);
+            if (index === 0 && normalizedDto.primaryUploadIndex !== undefined) {
+              primaryUploadedImageUrl = imageUrl;
+            }
             await client.query(
               `INSERT INTO product_images (product_id, image_url, sort_order)
                VALUES ($1, $2, $3)`,
@@ -1411,6 +1518,15 @@ export class ProductsService {
             );
           }
         }
+
+        await this.applyPrimaryProductImage(
+          client,
+          productId,
+          primaryUploadedImageUrl ??
+            (normalizedDto.replaceImages === true
+              ? null
+              : normalizedDto.primaryExistingImageUrl),
+        );
       });
 
       if (lowStockAlert) {
@@ -1427,7 +1543,7 @@ export class ProductsService {
 
   async deleteProduct(user: AuthenticatedUser, productId: string) {
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
     const response = await this.deleteProductAndImages(productId);
     await this.syncProductToSearchIndexSafely(productId);
@@ -1440,7 +1556,7 @@ export class ProductsService {
     isListed: boolean,
   ) {
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
     await this.databaseService.query(
@@ -1457,7 +1573,7 @@ export class ProductsService {
 
   async bulkUpdateStock(user: AuthenticatedUser, dto: ProductBulkStockDto) {
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
 
     const productIds = [...new Set(dto.productIds)];
     if (!productIds.length) {
@@ -1520,18 +1636,22 @@ export class ProductsService {
         [vendor.id, productIdsJson],
       );
 
-      productRows.rows
-        .filter((row) => !row.low_stock_alert_sent_at)
-        .forEach((row) => {
-          lowStockAlerts.push({
+      for (const row of productRows.rows.filter(
+        (entry) => !entry.low_stock_alert_sent_at,
+      )) {
+        const alert = {
+            vendorId: vendor.id,
+            productId: row.id,
             email: vendor.email,
             shopName: vendor.shop_name,
             productTitle: row.title,
             productCode: row.product_code,
             stock: dto.stock,
             threshold,
-          });
-        });
+          };
+        lowStockAlerts.push(alert);
+        await this.createVendorLowStockNotification(client, alert);
+      }
     });
 
     for (const lowStockAlert of lowStockAlerts) {
@@ -1552,7 +1672,7 @@ export class ProductsService {
 
   async duplicateProduct(user: AuthenticatedUser, productId: string) {
     const vendor = await this.getVendorForUser(user.sub);
-    this.assertVendorReady(vendor);
+    this.assertVendorVerifiedForCatalog(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
     const sourceResult = await this.databaseService.query<
@@ -1796,43 +1916,51 @@ export class ProductsService {
       imageMap.set(image.product_id, current);
     }
 
-    return products.map((row) => ({
-      ...(relations.get(row.id) ?? {
+    return products.map((row) => {
+      const relation = relations.get(row.id) ?? {
         brand: null,
         categoryRef: null,
         subcategory: null,
         genderGroup: null,
         colors: [],
         sizeVariants: [],
-      }),
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      price: Number(row.price),
-      stock: row.stock,
-      isListed: row.is_listed ?? true,
-      department: row.department,
-      category: row.category,
-      color: row.color,
-      size: row.size,
-      ratingSummary:
-        productRatingMap.get(row.id) ?? this.createEmptyRatingSummary(),
-      ...(row.product_code ? { productCode: row.product_code } : {}),
-      ...(row.vendor_id && row.shop_name
-        ? {
-            vendor: {
-              id: row.vendor_id,
-              shopName: row.shop_name,
-              logoUrl: row.logo_url ?? null,
-              ratingSummary:
-                vendorRatingMap.get(row.vendor_id) ??
-                this.createEmptyRatingSummary(),
-            },
-          }
-        : {}),
-      images: imageMap.get(row.id) ?? [],
-      createdAt: row.created_at,
-    }));
+        sizeOptions: [],
+      };
+      const displayColor =
+        relation.colors[0]?.name ??
+        (row.color?.trim().toLowerCase() === 'other' ? null : row.color);
+
+      return {
+        ...relation,
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        price: Number(row.price),
+        stock: row.stock,
+        isListed: row.is_listed ?? true,
+        department: row.department,
+        category: row.category,
+        color: displayColor,
+        size: row.size,
+        ratingSummary:
+          productRatingMap.get(row.id) ?? this.createEmptyRatingSummary(),
+        ...(row.product_code ? { productCode: row.product_code } : {}),
+        ...(row.vendor_id && row.shop_name
+          ? {
+              vendor: {
+                id: row.vendor_id,
+                shopName: row.shop_name,
+                logoUrl: row.logo_url ?? null,
+                ratingSummary:
+                  vendorRatingMap.get(row.vendor_id) ??
+                  this.createEmptyRatingSummary(),
+              },
+            }
+          : {}),
+        images: imageMap.get(row.id) ?? [],
+        createdAt: row.created_at,
+      };
+    });
   }
 
   private async getProductRatingSummaries(productIds: string[]) {
@@ -1978,12 +2106,13 @@ export class ProductsService {
           | 'genderGroup'
           | 'colors'
           | 'sizeVariants'
+          | 'sizeOptions'
         >
       >();
     }
 
     const clause = this.buildGuidLiteralClause(productIds);
-    const [structureRows, colorRows, sizeRows] = await Promise.all([
+    const [structureRows, colorRows, sizeRows, sizeOptionRows] = await Promise.all([
       this.databaseService.query<ProductStructureRow>(
         `SELECT
            p.id AS product_id,
@@ -2010,6 +2139,8 @@ export class ProductsService {
          FROM product_colors pc
          INNER JOIN colors c ON c.id = pc.color_id
          WHERE pc.product_id IN (${clause})
+           AND c.is_active = 1
+           AND LOWER(LTRIM(RTRIM(c.name))) <> 'other'
          ORDER BY pc.product_id ASC, pc.sort_order ASC, c.name ASC`,
       ),
       this.databaseService.query<ProductSizeRow>(
@@ -2026,6 +2157,28 @@ export class ProductsService {
          WHERE ps.product_id IN (${clause})
          ORDER BY ps.product_id ASC, st.sort_order ASC, s.sort_order ASC, s.label ASC`,
       ),
+      this.databaseService.query<ProductSizeOptionRow>(
+        `SELECT
+           p.id AS product_id,
+           s.id AS size_id,
+           s.label AS size_label,
+           st.id AS size_type_id,
+           st.name AS size_type_name,
+           st.sort_order AS size_type_sort_order,
+           s.sort_order AS size_sort_order
+         FROM products p
+         INNER JOIN size_types st
+           ON st.name = CASE
+             WHEN LOWER(LTRIM(RTRIM(p.department))) = 'babies' THEN 'Babies'
+             WHEN LOWER(LTRIM(RTRIM(p.department))) = 'kids' THEN 'Kids'
+             ELSE 'EU'
+           END
+         INNER JOIN sizes s ON s.size_type_id = st.id
+         WHERE p.id IN (${clause})
+           AND s.is_active = 1
+           AND st.is_active = 1
+         ORDER BY p.id ASC, size_type_sort_order ASC, size_sort_order ASC, s.label ASC`,
+      ),
     ]);
 
     const map = new Map<
@@ -2038,7 +2191,8 @@ export class ProductsService {
         | 'genderGroup'
         | 'colors'
         | 'sizeVariants'
-      >
+        | 'sizeOptions'
+        >
     >();
 
     structureRows.rows.forEach((row) => {
@@ -2061,6 +2215,7 @@ export class ProductsService {
             : null,
         colors: [],
         sizeVariants: [],
+        sizeOptions: [],
       });
     });
 
@@ -2072,6 +2227,7 @@ export class ProductsService {
         genderGroup: null,
         colors: [],
         sizeVariants: [],
+        sizeOptions: [],
       };
       current.colors.push({ id: row.color_id, name: row.color_name });
       map.set(row.product_id, current);
@@ -2085,6 +2241,7 @@ export class ProductsService {
         genderGroup: null,
         colors: [],
         sizeVariants: [],
+        sizeOptions: [],
       };
       current.sizeVariants.push({
         id: row.size_id,
@@ -2096,7 +2253,40 @@ export class ProductsService {
       map.set(row.product_id, current);
     });
 
+    sizeOptionRows.rows.forEach((row) => {
+      const current = map.get(row.product_id) ?? {
+        brand: null,
+        categoryRef: null,
+        subcategory: null,
+        genderGroup: null,
+        colors: [],
+        sizeVariants: [],
+        sizeOptions: [],
+      };
+      const normalizedOptionLabel = this.normalizeSizeLabel(row.size_label);
+      const selectedVariant =
+        current.sizeVariants.find((entry) => entry.id === row.size_id) ??
+        current.sizeVariants.find(
+          (entry) =>
+            this.normalizeSizeLabel(entry.label) === normalizedOptionLabel,
+        );
+
+      current.sizeOptions.push({
+        id: row.size_id,
+        label: row.size_label,
+        stock: selectedVariant?.stock ?? 0,
+        sizeTypeId: row.size_type_id,
+        sizeTypeName: row.size_type_name,
+        isAvailable: Boolean(selectedVariant),
+      });
+      map.set(row.product_id, current);
+    });
+
     return map;
+  }
+
+  private normalizeSizeLabel(label?: string | null) {
+    return (label ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
   }
 
   private async getPublicSearchCatalog(input?: {
@@ -2173,7 +2363,7 @@ export class ProductsService {
         ...product,
         totalUnitsSold,
         popularityScore: totalUnitsSold * 10 + (product.stock > 0 ? 3 : 0),
-        brandName: product.brand?.name ?? product.vendor?.shopName ?? null,
+        brandName: product.brand?.name ?? null,
         tags: this.buildSearchTags(product),
       };
     });
@@ -2783,6 +2973,36 @@ export class ProductsService {
     return { message: 'Product deleted' };
   }
 
+  private async createVendorLowStockNotification(
+    client: QueryRunner,
+    payload: VendorLowStockAlertPayload,
+  ) {
+    await client.query(
+      `INSERT INTO vendor_notifications (
+         vendor_id,
+         product_id,
+         notification_type,
+         title,
+         body,
+         action_url,
+         metadata_json
+       )
+       VALUES ($1, $2, 'low_stock', $3, $4, $5, $6)`,
+      [
+        payload.vendorId,
+        payload.productId,
+        `Low stock: ${payload.productTitle}`,
+        `${payload.productTitle} is at ${payload.stock} units, at or below your threshold of ${payload.threshold}.`,
+        '/vendor/products',
+        JSON.stringify({
+          productCode: payload.productCode,
+          stock: payload.stock,
+          threshold: payload.threshold,
+        }),
+      ],
+    );
+  }
+
   private async getVendorForUser(userId: string) {
     const access = await this.vendorAccessService.requireVendorAccess(userId);
     const result = await this.databaseService.query<{
@@ -2792,6 +3012,8 @@ export class ProductsService {
       is_active: boolean;
       is_verified: boolean;
       low_stock_threshold: number;
+      last_login_at: Date | null;
+      last_activity_at: Date | null;
     }>(
       `SELECT TOP 1
          v.id,
@@ -2799,7 +3021,9 @@ export class ProductsService {
          v.shop_name,
          v.is_active,
          v.is_verified,
-         v.low_stock_threshold
+         v.low_stock_threshold,
+         v.last_login_at,
+         v.last_activity_at
        FROM vendors v
        INNER JOIN users owner ON owner.id = v.user_id
        WHERE v.id = $1`,
@@ -2813,11 +3037,17 @@ export class ProductsService {
     is_active: boolean;
     is_verified: boolean;
   }) {
-    if (!vendor.is_verified) {
-      throw new ForbiddenException('Vendor email is not verified');
-    }
+    this.assertVendorVerifiedForCatalog(vendor);
     if (!vendor.is_active) {
       throw new ForbiddenException('Vendor account is awaiting admin approval');
+    }
+  }
+
+  private assertVendorVerifiedForCatalog(vendor: {
+    is_verified: boolean;
+  }) {
+    if (!vendor.is_verified) {
+      throw new ForbiddenException('Vendor email is not verified');
     }
   }
 
@@ -2907,6 +3137,7 @@ export class ProductsService {
           stock: Number(entry?.stock ?? 0),
         }))
         .filter((entry) => entry.sizeId.length > 0),
+      primaryUploadIndex: dto.primaryUploadIndex,
     };
   }
 
@@ -2946,6 +3177,8 @@ export class ProductsService {
               }))
               .filter((entry) => entry.sizeId.length > 0),
       replaceImages: dto.replaceImages,
+      primaryUploadIndex: dto.primaryUploadIndex,
+      primaryExistingImageUrl: dto.primaryExistingImageUrl?.trim(),
     };
   }
 
@@ -3045,6 +3278,9 @@ export class ProductsService {
         'One or more selected colors are not available yet',
       );
     }
+    if (colors.some((row) => row.name.trim().toLowerCase() === 'other')) {
+      throw new BadRequestException('Select a real product color');
+    }
 
     const sizeVariants = input.sizeVariants ?? [];
     let resolvedSizeVariants: Array<{
@@ -3135,8 +3371,9 @@ export class ProductsService {
       grey: 'gray',
       offwhite: 'ivory',
       'off-white': 'ivory',
-      multi: 'multicolor',
-      'multi-color': 'multicolor',
+      multi: 'mixed-colors',
+      multicolor: 'mixed-colors',
+      'multi-color': 'mixed-colors',
       wine: 'burgundy',
     };
 
@@ -3336,6 +3573,11 @@ export class ProductsService {
       dresses: 'DRS',
       skirt: 'SKT',
       skirts: 'SKT',
+      underwear: 'UND',
+      underclothes: 'UND',
+      undergarment: 'UND',
+      undergarments: 'UND',
+      lingerie: 'UND',
       suit: 'SUT',
       suits: 'SUT',
     });
@@ -3503,13 +3745,59 @@ export class ProductsService {
     return result.rows[0]?.category ?? 'general';
   }
 
+  private orderUploadedImages(files: UploadedFile[], primaryIndex?: number) {
+    if (
+      primaryIndex === undefined ||
+      primaryIndex < 0 ||
+      primaryIndex >= files.length
+    ) {
+      return files;
+    }
+
+    return [
+      files[primaryIndex],
+      ...files.filter((_, index) => index !== primaryIndex),
+    ];
+  }
+
+  private async applyPrimaryProductImage(
+    client: QueryRunner,
+    productId: string,
+    primaryImageUrl?: string | null,
+  ) {
+    if (!primaryImageUrl) {
+      return;
+    }
+
+    await client.query(
+      `;WITH ordered_images AS (
+         SELECT
+           id,
+           ROW_NUMBER() OVER (
+             ORDER BY
+               CASE WHEN image_url = $2 THEN 0 ELSE 1 END,
+               sort_order ASC,
+               id ASC
+           ) - 1 AS next_sort_order
+         FROM product_images
+         WHERE product_id = $1
+       )
+       UPDATE pi
+       SET sort_order = ordered_images.next_sort_order
+       FROM product_images pi
+       INNER JOIN ordered_images ON ordered_images.id = pi.id`,
+      [productId, primaryImageUrl],
+    );
+  }
+
   private buildGuidLiteralClause(values: string[]) {
     return values.map((value) => `'${this.assertGuid(value)}'`).join(', ');
   }
 
   private publicVendorVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
-      AND ${vendorAlias}.is_verified = 1`;
+      AND ${vendorAlias}.is_verified = 1
+      AND ${vendorAlias}.is_test = 0`;
   }
 
   private publicProductVisibilityClause(
@@ -3518,6 +3806,25 @@ export class ProductsService {
   ) {
     return `${productAlias}.is_listed = 1
       AND ${this.publicVendorVisibilityClause(vendorAlias)}`;
+  }
+
+  private publicProductDiscoveryOrderClause(productAlias: string) {
+    return `ISNULL((
+        SELECT AVG(CAST(pr.rating AS DECIMAL(10, 2)))
+        FROM product_reviews pr
+        WHERE pr.product_id = ${productAlias}.id
+      ), 0) DESC,
+      ISNULL((
+        SELECT COUNT(*)
+        FROM product_reviews pr
+        WHERE pr.product_id = ${productAlias}.id
+      ), 0) DESC,
+      ISNULL((
+        SELECT SUM(oi.quantity)
+        FROM order_items oi
+        WHERE oi.product_id = ${productAlias}.id
+      ), 0) DESC,
+      NEWID()`;
   }
 
   private assertGuid(value: string) {

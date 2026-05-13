@@ -1,16 +1,11 @@
-import type { Metadata } from "next";
-import { Playfair_Display, Space_Grotesk } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Manrope } from "next/font/google";
 import { Suspense } from "react";
 import { Providers } from "@/components/providers";
 import { SiteShell } from "@/components/site-shell";
 import "./globals.css";
 
-const displayFont = Playfair_Display({
-  variable: "--font-display",
-  subsets: ["latin"],
-});
-
-const bodyFont = Space_Grotesk({
+const bodyFont = Manrope({
   variable: "--font-body",
   subsets: ["latin"],
 });
@@ -47,6 +42,11 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -54,7 +54,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${displayFont.variable} ${bodyFont.variable}`}>
+      <body className={bodyFont.variable}>
         <Providers>
           <Suspense fallback={<div className="page" />}>
             <SiteShell>{children}</SiteShell>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
@@ -124,7 +125,7 @@ export function FavoriteToggleButton({
         href={getCustomerLoginRedirectHref()}
         className={classNames}
         aria-label={label}
-        onClick={(event) => {
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
           event.stopPropagation();
         }}
       >
@@ -152,7 +153,7 @@ export function FavoriteToggleButton({
         !resolvedAvailable ||
         (currentRole === "customer" && !canLoadFavorites)
       }
-      onClick={(event) => {
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
 

@@ -4,6 +4,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $runStateDir = Join-Path $root '.codex\run-state'
 $apiPidFile = Join-Path $runStateDir 'api.pid'
 $webPidFile = Join-Path $runStateDir 'web.pid'
+$caddyPidFile = Join-Path $runStateDir 'caddy.pid'
 
 function Read-PidValue {
   param([string]$PidFile)
@@ -49,12 +50,15 @@ function Resolve-PortPid {
 
 $apiPid = Read-PidValue -PidFile $apiPidFile
 $webPid = Read-PidValue -PidFile $webPidFile
+$caddyPid = Read-PidValue -PidFile $caddyPidFile
 
 $apiResolvedPid = $apiPid
 $webResolvedPid = $webPid
+$caddyResolvedPid = $caddyPid
 
 $apiProcess = if ($apiResolvedPid) { Get-Process -Id $apiResolvedPid -ErrorAction SilentlyContinue } else { $null }
 $webProcess = if ($webResolvedPid) { Get-Process -Id $webResolvedPid -ErrorAction SilentlyContinue } else { $null }
+$caddyProcess = if ($caddyResolvedPid) { Get-Process -Id $caddyResolvedPid -ErrorAction SilentlyContinue } else { $null }
 
 if (-not $apiProcess) {
   $apiResolvedPid = Resolve-PortPid -Port 3000
@@ -68,6 +72,7 @@ if (-not $webProcess) {
 
 $apiPidLabel = if ($apiProcess) { $apiProcess.Id } else { 'not running' }
 $webPidLabel = if ($webProcess) { $webProcess.Id } else { 'not running' }
+$caddyPidLabel = if ($caddyProcess) { $caddyProcess.Id } else { 'not running' }
 
 if (($apiResolvedPid -ne $apiPid) -and $apiProcess) {
   $apiPidLabel = "$apiPidLabel (detected by port)"
@@ -79,5 +84,7 @@ if (($webResolvedPid -ne $webPid) -and $webProcess) {
 
 Write-Host "API PID: $apiPidLabel"
 Write-Host "WEB PID: $webPidLabel"
+Write-Host "CADDY/PROXY PID: $caddyPidLabel"
 Write-Host "API health: $(Test-Url -Url 'http://localhost:3000/health')"
 Write-Host "WEB health: $(Test-Url -Url 'http://localhost:3001')"
+Write-Host "CADDY/PROXY health: $(Test-Url -Url 'http://localhost')"

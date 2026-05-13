@@ -6,8 +6,6 @@ type VendorFeePaymentStatus = 'pending' | 'paid' | 'failed' | 'cancelled';
 
 @Injectable()
 export class VendorBillingService {
-  private readonly feePerOrder = 1;
-
   constructor(private readonly databaseService: DatabaseService) {}
 
   async syncVendorMonthlyFees(
@@ -23,10 +21,11 @@ export class VendorBillingService {
            oi.vendor_id,
            DATEFROMPARTS(YEAR(o.created_at), MONTH(o.created_at), 1) AS billing_month_start,
            EOMONTH(o.created_at) AS billing_month_end,
-           COUNT(DISTINCT oi.order_id) AS billed_order_count
+           COUNT(DISTINCT oi.order_id) AS billed_order_count,
+           CAST(ISNULL(SUM(oi.commission_amount), 0) AS DECIMAL(10, 2)) AS billed_amount
          FROM order_items oi
          INNER JOIN orders o ON o.id = oi.order_id
-         WHERE oi.status NOT IN ('cancelled', 'returned')
+         WHERE oi.commission_amount > 0
          ${filter}
          GROUP BY
            oi.vendor_id,
@@ -41,10 +40,8 @@ export class VendorBillingService {
          UPDATE SET
            billing_month_end = source.billing_month_end,
            billed_order_count = source.billed_order_count,
-           fee_per_order = ${this.feePerOrder.toFixed(2)},
-           billed_amount = CAST(source.billed_order_count * ${this.feePerOrder.toFixed(
-             2,
-           )} AS DECIMAL(10, 2)),
+           fee_per_order = CAST(source.billed_amount / NULLIF(source.billed_order_count, 0) AS DECIMAL(10, 2)),
+           billed_amount = source.billed_amount,
            last_calculated_at = SYSDATETIME(),
            updated_at = SYSDATETIME()
        WHEN NOT MATCHED THEN
@@ -65,10 +62,8 @@ export class VendorBillingService {
            source.billing_month_start,
            source.billing_month_end,
            source.billed_order_count,
-           ${this.feePerOrder.toFixed(2)},
-           CAST(source.billed_order_count * ${this.feePerOrder.toFixed(
-             2,
-           )} AS DECIMAL(10, 2)),
+           CAST(source.billed_amount / NULLIF(source.billed_order_count, 0) AS DECIMAL(10, 2)),
+           source.billed_amount,
            0,
            SYSDATETIME(),
            SYSDATETIME(),
@@ -201,7 +196,7 @@ export class VendorBillingService {
 
     return {
       summary: {
-        feePerOrder: this.feePerOrder,
+        feePerOrder: 0,
         totalBilledOrders: summaryRow?.total_billed_orders ?? 0,
         totalBilledAmount: Number(summaryRow?.total_billed_amount ?? 0),
         totalSettledAmount: Number(summaryRow?.total_settled_amount ?? 0),
@@ -312,7 +307,7 @@ export class VendorBillingService {
       currentMonthAmount: Number(row.current_month_amount),
       currentMonthOutstanding: Number(row.current_month_outstanding),
       openMonthCount: row.open_month_count,
-      feePerOrder: this.feePerOrder,
+      feePerOrder: 0,
     }));
   }
 

@@ -38,14 +38,42 @@ Do not make project changes in:
   - `GET /admin/orders/:id`
   - creating and updating an order issue still works
   - approved cancel requests only cancel `pending` orders and restock inventory
+- After auth, signup, password, or email-delivery changes, verify:
+  - customer signup redirects to `/verify?email=...`
+  - `POST /auth/verify/code`
+  - `POST /auth/verification/resend`
+  - password reset and change-password reject weak passwords
+- After Stripe checkout changes, verify:
+  - `GET /checkout/payment-settings`
+  - `POST /orders/stripe-checkout`
+  - `POST /orders/stripe-checkout/:sessionId/complete`
+  - guest equivalents under `/orders/guest/stripe-checkout`
 - If public products/vendors unexpectedly drop to `0`, check `vendors.admin_status` first.
 - Existing verified+active vendors should not stay stuck on `admin_status = under_review`.
+- Vendor real/test separation is DB-only:
+  - `vendors.is_test = 0` means real vendor
+  - `vendors.is_test = 1` means testing shop
+  - current real vendor is `EL-DO`
+  - do not add storefront/UI separation for this unless explicitly requested
+  - use `scripts/vendor-test-shops.sql` to review or later delete testing shops
 
 ## Current Product Focus
 - Checkout uses Stripe hosted checkout for card payments.
+- Stripe checkout sessions are persisted in `payment_checkout_sessions`; completed sessions create the real order once.
+- Admin login is dedicated to port `8443`: `https://vishu.shop:8443/admin/login`.
+- Main-domain admin routes stay hidden:
+  - `https://vishu.shop/admin*` returns `404`
+  - `https://vishu.shop/api/admin*` returns `404`
+- `ADMIN_BASE_URL` must remain `https://vishu.shop:8443` and `ADMIN_PORT` must remain `8443`.
+- Admin vendor finance now includes a monthly economic panel for card totals, COD totals, card fees, COD fees, and per-vendor monthly history.
+- Vendor order fee is a fixed `1.00` euro platform fee per order; do not reintroduce percentage commission.
+- Vendor accounts can be marked as testing via `vendors.is_test`; this is for backend/DB cleanup only and should not change public visibility by itself.
 - Logged-in checkout uses saved account contact details automatically.
 - Checkout address flow uses one selected address card plus a change modal.
 - Account area is sidebar-based and saved cards are removed from manual UI.
+- Customer and vendor registration collect `firstName` and `lastName`; `fullName` remains a compatibility field.
+- Customer signup verification uses a 6-digit OTP at `/verify?email=...`; vendor verification still uses email links.
+- Passwords must include uppercase, lowercase, and a number, and avoid obvious sequences like `123`, `abc`, or `password`.
 - Customer favorites use a star toggle on product cards and load from `/account/favorites`.
 - Customer account includes a `Favorites` section for saved products.
 - Admin payments settings drive Stripe test/live behavior.

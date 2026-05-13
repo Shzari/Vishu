@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
-export type VendorTeamRole = 'shop_holder' | 'employee';
+export type VendorTeamRole = 'shop_holder' | 'manager' | 'employee';
 
 export interface VendorAccessContext {
   id: string;
@@ -107,6 +107,14 @@ export class VendorAccessService {
       throw new ForbiddenException('Vendor profile not found');
     }
 
+    await this.databaseService.query(
+      `UPDATE vendors
+       SET last_activity_at = SYSDATETIME(),
+           updated_at = SYSDATETIME()
+       WHERE id = $1`,
+      [access.id],
+    );
+
     return access;
   }
 
@@ -115,6 +123,17 @@ export class VendorAccessService {
     if (access.access_role !== 'shop_holder') {
       throw new ForbiddenException(
         'Only a shop holder can manage this part of the vendor account',
+      );
+    }
+
+    return access;
+  }
+
+  async requireManagerAccess(userId: string) {
+    const access = await this.requireVendorAccess(userId);
+    if (access.access_role === 'employee') {
+      throw new ForbiddenException(
+        'Only a shop holder or manager can manage this part of the vendor account',
       );
     }
 

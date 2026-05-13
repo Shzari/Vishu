@@ -28,34 +28,47 @@ export default function ShopsPage() {
     void loadVendors();
   }, []);
 
-  const filteredVendors = useMemo(() => {
+  const activeVendors = useMemo(() => {
     return vendors
-      .filter((vendor) => vendor.productCount > 0)
+      .map((vendor) => ({
+        vendor,
+        categories: filterCatalogCategories(vendor.categories),
+      }))
       .sort((left, right) => {
-        if (right.productCount !== left.productCount) {
-          return right.productCount - left.productCount;
+        if (right.vendor.productCount !== left.vendor.productCount) {
+          return right.vendor.productCount - left.vendor.productCount;
         }
 
-        return left.shopName.localeCompare(right.shopName);
+        return left.vendor.shopName.localeCompare(right.vendor.shopName);
       });
   }, [vendors]);
 
   const vendorCategoryMap = useMemo(
     () =>
       new Map(
-        filteredVendors.map((vendor) => [vendor.id, filterCatalogCategories(vendor.categories)]),
+        activeVendors.map(({ vendor, categories }) => [vendor.id, categories]),
       ),
-    [filteredVendors],
+    [activeVendors],
   );
 
   return (
     <div className="shops-page stack">
       {loading && <div className="message">Loading shops...</div>}
       {error && <div className="message error">{error}</div>}
-      {!loading && !error && filteredVendors.length === 0 && <div className="empty">No active shops yet.</div>}
+      {!loading && !error ? (
+        <section className="shops-directory-head">
+          <div className="shops-directory-copy">
+            <h1>All shops</h1>
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && !error && activeVendors.length === 0 && (
+        <div className="empty">No active shops yet.</div>
+      )}
 
       <section className="shops-grid">
-        {filteredVendors.map((vendor) => {
+        {activeVendors.map(({ vendor }) => {
           const visibleCategories = vendorCategoryMap.get(vendor.id) ?? [];
 
           return (

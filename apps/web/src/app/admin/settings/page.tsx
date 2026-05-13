@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RequireRole } from "@/components/require-role";
 import { useAuth } from "@/components/providers";
 import { apiRequest, formatCurrency } from "@/lib/api";
+import { getPasswordPolicyError, passwordPolicyText } from "@/lib/password-policy";
 import type {
   AdminCatalogRequest,
   AdminCatalogStructure,
@@ -38,7 +39,7 @@ type SimpleForm = { name: string; isActive: boolean; sortOrder: string };
 type ServicesSubsection = "email" | "payments" | "admins";
 
 const emptySimpleForm: SimpleForm = { name: "", isActive: true, sortOrder: "0" };
-const DEFAULT_PLATFORM_FEE_PER_ORDER = 1;
+const DELIVERABLE_EMAIL_PATTERN = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 
 export default function AdminSettingsPage() {
   const { token, currentRole, user } = useAuth();
@@ -155,6 +156,7 @@ export default function AdminSettingsPage() {
         setVendorVerificationEmailsEnabled(emailConfig?.vendorVerificationEmailsEnabled ?? true);
         setAdminVendorApprovalEmailsEnabled(emailConfig?.adminVendorApprovalEmailsEnabled ?? true);
         setPasswordResetEmailsEnabled(emailConfig?.passwordResetEmailsEnabled ?? true);
+        setTestEmailRecipient((current) => current || user?.email || "");
         setPaymentMode(paymentConfig?.mode ?? "test");
         setCashOnDeliveryEnabled(paymentConfig?.cashOnDeliveryEnabled ?? true);
         setCardPaymentsEnabled(paymentConfig?.cardPaymentsEnabled ?? false);
@@ -173,7 +175,7 @@ export default function AdminSettingsPage() {
     return () => {
       active = false;
     };
-  }, [currentRole, loadAdminUsers, token]);
+  }, [currentRole, loadAdminUsers, token, user?.email]);
 
   const filteredRequests = useMemo(
     () =>
@@ -208,9 +210,13 @@ export default function AdminSettingsPage() {
       entry.entityType.includes("admin") ||
       entry.entityType.includes("platform_settings"),
   );
+  const configuredMailFrom = mailFrom || platform?.email.mailFrom || "";
+  const mailFromDeliverable = configuredMailFrom
+    ? DELIVERABLE_EMAIL_PATTERN.test(configuredMailFrom)
+    : false;
   const smtpReady = Boolean(
     (smtpHost || platform?.email.smtpHost) &&
-      (mailFrom || platform?.email.mailFrom) &&
+      mailFromDeliverable &&
       (platform?.email.smtpPasswordConfigured || smtpPassword),
   );
   const emailAutomationEnabledCount = [
@@ -227,7 +233,9 @@ export default function AdminSettingsPage() {
       label: "Email delivery",
       value: smtpReady ? "Ready" : "Needs setup",
       tone: smtpReady ? "success" : "warn",
-      detail: smtpReady ? "SMTP host, sender, and password are in place." : "SMTP settings are still incomplete.",
+      detail: smtpReady
+        ? "SMTP host, sender, and password are in place."
+        : "SMTP settings need a complete sender like admin@vishu.shop.",
     },
     {
       label: "Payments",
@@ -309,12 +317,13 @@ export default function AdminSettingsPage() {
   }
 
   async function sendTestEmail() {
-    if (!token || !testEmailRecipient.trim()) return;
+    const recipient = testEmailRecipient.trim() || user?.email || "";
+    if (!token || !recipient) return;
     try {
       setActiveAction("test-email");
       const response = await apiRequest<{ message: string }>(
         "/admin/platform-settings/test-email",
-        { method: "POST", body: JSON.stringify({ email: testEmailRecipient.trim() }) },
+        { method: "POST", body: JSON.stringify({ email: recipient }) },
         token,
       );
       setMessage(response.message);
@@ -357,6 +366,12 @@ export default function AdminSettingsPage() {
 
   async function createAdmin() {
     if (!token) return;
+    const passwordError = getPasswordPolicyError(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     try {
       setActiveAction("create-admin");
       setMessage(null);
@@ -817,7 +832,7 @@ export default function AdminSettingsPage() {
                             <div className="field"><label>SMTP password</label><input type="password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} /></div>
                           </div>
                           <div className="form-grid two">
-                            <div className="field"><label>Mail from</label><input value={mailFrom} onChange={(event) => setMailFrom(event.target.value)} /></div>
+                            <div className="field"><label>Mail from</label><input type="email" placeholder="admin@vishu.shop" value={mailFrom} onChange={(event) => setMailFrom(event.target.value)} /></div>
                             <div className="field"><label>App base URL</label><input value={appBaseUrl} onChange={(event) => setAppBaseUrl(event.target.value)} /></div>
                           </div>
                           <label className="vendor-row-check"><input type="checkbox" checked={smtpSecure} onChange={(event) => setSmtpSecure(event.target.checked)} /><span>Secure SMTP</span></label>
@@ -959,8 +974,8 @@ export default function AdminSettingsPage() {
                         <strong>Platform fees</strong>
                         <div className="mini-stats">
                           <div className="mini-stat">
-                            <span>Default fee per order</span>
-                            <strong>{formatCurrency(DEFAULT_PLATFORM_FEE_PER_ORDER)}</strong>
+                            <span>Fee method</span>
+                            <strong>Dynamic</strong>
                           </div>
                           <div className="mini-stat">
                             <span>Total collected</span>
@@ -976,9 +991,9 @@ export default function AdminSettingsPage() {
                           </div>
                         </div>
                         <p className="muted">
-                          Vendor fees are managed per vendor, but new shops still start from the
-                          marketplace default before any override. Use the dedicated fee ledger for
-                          payment history and vendor-by-vendor fee review.
+                          Vendor fees are locked when a vendor confirms their order part. Small
+                          accepted subtotals start at 0.50 EUR, scale to 2.00 EUR at 50 EUR,
+                          then add 2% above that point.
                         </p>
                         <div className="inline-actions">
                           <Link className="button-secondary" href="/admin/fees">
@@ -1045,7 +1060,7 @@ export default function AdminSettingsPage() {
                             Create a new admin account for marketplace management, approvals, and settings.
                           </p>
                           <div className="form-grid two"><div className="field"><label>Full name</label><input value={fullName} onChange={(event) => setFullName(event.target.value)} /></div><div className="field"><label>Email</label><input value={email} onChange={(event) => setEmail(event.target.value)} /></div></div>
-                          <div className="form-grid two"><div className="field"><label>Phone number</label><input value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} /></div><div className="field"><label>Password</label><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></div></div>
+                          <div className="form-grid two"><div className="field"><label>Phone number</label><input value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} /></div><div className="field"><label>Password</label><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /><span className="muted">{passwordPolicyText}</span></div></div>
                           <div className="inline-actions"><button className="button" type="button" onClick={() => void createAdmin()} disabled={activeAction === "create-admin"}>Create admin</button></div>
                         </div>
 

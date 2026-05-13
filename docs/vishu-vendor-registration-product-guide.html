@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="sq">
+<head>
+  <meta charset="utf-8" />
+  <title>Vishu Udhezues Shitesi - Regjistrimi dhe Produkti</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      background: #f4f6f8;
+      color: #111111;
+      font-family: Manrope, Arial, sans-serif;
+    }
+
+    .page {
+      position: relative;
+      width: 297mm;
+      height: 210mm;
+      overflow: hidden;
+      page-break-after: always;
+      background: #ffffff;
+      padding: 14mm 16mm;
+    }
+
+    .cover {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14mm;
+      align-items: center;
+      background: #111111;
+      color: #ffffff;
+    }
+
+    .brand {
+      position: absolute;
+      top: 8mm;
+      left: 16mm;
+      font-weight: 900;
+      font-size: 14pt;
+      letter-spacing: 0;
+    }
+
+    .kicker {
+      display: inline-flex;
+      width: max-content;
+      align-items: center;
+      min-height: 9mm;
+      padding: 0 5mm;
+      margin-bottom: 6mm;
+      border: 1px solid #e5e7eb;
+      background: #f6f7f8;
+      color: #111111;
+      font-size: 10pt;
+      font-weight: 800;
+    }
+
+    .cover .kicker {
+      background: #ffffff;
+      border-color: #ffffff;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 39pt;
+      line-height: 1.03;
+      max-width: 130mm;
+    }
+
+    h2 {
+      font-size: 25pt;
+      line-height: 1.08;
+      max-width: 185mm;
+    }
+
+    p {
+      margin: 0;
+      color: #4b5563;
+      font-size: 12.5pt;
+      line-height: 1.42;
+    }
+
+    .cover p {
+      color: #d1d5db;
+      font-size: 15pt;
+      max-width: 120mm;
+    }
+
+    .lead {
+      margin-top: 7mm;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 4mm;
+      margin-top: 8mm;
+    }
+
+    .step {
+      border: 1px solid #e5e7eb;
+      background: #f8fafc;
+      padding: 5mm;
+      min-height: 24mm;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 2mm;
+      color: #111111;
+      font-size: 12pt;
+    }
+
+    .step span {
+      color: #4b5563;
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 76mm 1fr;
+      gap: 9mm;
+      align-items: start;
+      margin-top: 8mm;
+    }
+
+    .layout.wide {
+      grid-template-columns: 68mm 1fr;
+      gap: 8mm;
+    }
+
+    .shot-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5mm;
+    }
+
+    .mini-shot-title {
+      margin-bottom: 2mm;
+      color: #111111;
+      font-size: 11pt;
+      font-weight: 900;
+    }
+
+    .notes {
+      display: grid;
+      gap: 4mm;
+    }
+
+    .note {
+      border-left: 4px solid #ff7a1a;
+      background: #fff7ed;
+      padding: 4mm 5mm;
+      color: #2b2b2b;
+      font-size: 12pt;
+      line-height: 1.35;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 1mm;
+    }
+
+    .shot {
+      position: relative;
+      width: 100%;
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      box-shadow: 0 8mm 18mm rgba(15, 23, 42, 0.11);
+      overflow: hidden;
+    }
+
+    .shot img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .mock-login {
+      min-height: 61mm;
+      padding: 10mm;
+      background: #fbfbfb;
+    }
+
+    .mock-register {
+      min-height: 112mm;
+      padding: 6mm 8mm;
+      background: #fbfbfb;
+    }
+
+    .mock-register-card {
+      width: 72mm;
+      margin: 0 auto;
+      padding: 5mm;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      box-shadow: 0 6mm 14mm rgba(15, 23, 42, 0.08);
+    }
+
+    .mock-register-card h3 {
+      margin: 0 0 4mm;
+      text-align: center;
+      font-size: 14pt;
+      line-height: 1.05;
+    }
+
+    .role-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2mm;
+      margin-bottom: 3mm;
+    }
+
+    .role-box {
+      border: 1px solid #d1d5db;
+      padding: 2.2mm;
+      font-size: 8pt;
+      font-weight: 900;
+    }
+
+    .role-box.selected {
+      border-color: #f97316;
+      background: #fff7ed;
+    }
+
+    .terms-box {
+      margin: 2mm 0;
+      padding: 2.5mm;
+      border: 1px solid #d1d5db;
+      background: #f8fafc;
+      font-size: 7.5pt;
+      font-weight: 900;
+    }
+
+    .mock-login-card {
+      width: 76%;
+      margin: 0 auto;
+      padding: 7mm;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      box-shadow: 0 6mm 14mm rgba(15, 23, 42, 0.08);
+    }
+
+    .mock-login-card h3 {
+      margin: 0 0 5mm;
+      font-size: 15pt;
+      line-height: 1.1;
+    }
+
+    .field-label {
+      margin: 0 0 1.5mm;
+      font-size: 8pt;
+      font-weight: 900;
+    }
+
+    .field-box {
+      height: 9mm;
+      margin-bottom: 3.5mm;
+      border: 1px solid #cfd4dc;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      padding: 0 3mm;
+      color: #4b5563;
+      font-size: 8.5pt;
+    }
+
+    .mock-button {
+      height: 9.5mm;
+      background: #111111;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9pt;
+      font-weight: 900;
+    }
+
+    .badge {
+      position: absolute;
+      width: 10mm;
+      height: 10mm;
+      border: 1.1mm solid #ffffff;
+      border-radius: 999px;
+      background: #ff7a1a;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13pt;
+      font-weight: 900;
+      box-shadow: 0 2mm 5mm rgba(0, 0, 0, 0.25);
+      z-index: 2;
+    }
+
+    .label {
+      position: absolute;
+      min-width: 42mm;
+      max-width: 72mm;
+      padding: 2.2mm 3mm;
+      background: #111111;
+      color: #ffffff;
+      font-size: 9.5pt;
+      font-weight: 800;
+      line-height: 1.22;
+      z-index: 2;
+    }
+
+    .mask {
+      position: absolute;
+      background: #ffffff;
+      color: #111111;
+      display: flex;
+      align-items: center;
+      font-weight: 900;
+      z-index: 2;
+    }
+
+    .arrow {
+      position: absolute;
+      height: 1.1mm;
+      background: #ff7a1a;
+      transform-origin: left center;
+      z-index: 1;
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      right: -1mm;
+      top: -2mm;
+      border-left: 4mm solid #ff7a1a;
+      border-top: 2.5mm solid transparent;
+      border-bottom: 2.5mm solid transparent;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5mm;
+      margin-top: 10mm;
+    }
+
+    .check {
+      border: 1px solid #e5e7eb;
+      padding: 6mm;
+      background: #f8fafc;
+      min-height: 35mm;
+    }
+
+    .check strong {
+      display: block;
+      margin-bottom: 2mm;
+      font-size: 14pt;
+    }
+
+    .check p {
+      font-size: 11.5pt;
+    }
+
+    .footer {
+      position: absolute;
+      bottom: 8mm;
+      left: 16mm;
+      right: 16mm;
+      display: flex;
+      justify-content: space-between;
+      color: #6b7280;
+      font-size: 9pt;
+      font-weight: 800;
+    }
+
+    .cover .footer {
+      color: #d1d5db;
+    }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div class="brand">Vishu.shop</div>
+    <div>
+      <div class="kicker">Udhezues per shites / butik</div>
+      <h1>Regjistrimi dhe ngarkimi i produktit ne Vishu</h1>
+      <p class="lead">Ky udhezues tregon ku duhet klikuar, cfare informacioni duhet plotesuar, si verifikohet emaili dhe si publikohet produkti i pare.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><strong>1. Hyr te Vishu.shop</strong><span>Kliko Login/Hyr ose Register/Regjistrohu.</span></div>
+      <div class="step"><strong>2. Zgjidh Vendor/Shites</strong><span>Ploteso te dhenat e dyqanit dhe prano kushtet.</span></div>
+      <div class="step"><strong>3. Verifiko emailin</strong><span>Hap linkun e verifikimit qe vjen ne email.</span></div>
+      <div class="step"><strong>4. Hyr, OTP, produkte</strong><span>Shkruaj email/password, kodin 6-shifror, pastaj kliko Products.</span></div>
+    </div>
+    <div class="footer"><span>Vishu Vendor Guide</span><span>01</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 1</div>
+    <h2>Ne faqen kryesore, kliko Login/Hyr ose Register/Regjistrohu.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Ku te klikosh</strong>Ne cepin e djathte lart jane butonat Hyr dhe Regjistrohu.</div>
+        <div class="note"><strong>Per shites te ri</strong>Zgjidh Regjistrohu per te hapur formularin e llogarise se dyqanit.</div>
+      </div>
+      <div class="shot">
+        <img src="file:///C:/vishu/docs/vendor-guide-assets/home-3x.png" alt="Faqja kryesore Vishu" />
+        <div class="badge" style="left: 92.8%; top: 2.8%;">1</div>
+        <div class="label" style="left: 74%; top: 8.5%;">Kliko Hyr ose Regjistrohu</div>
+        <div class="arrow" style="left: 85.5%; top: 7%; width: 42mm; transform: rotate(-12deg);"></div>
+      </div>
+    </div>
+    <div class="footer"><span>Regjistrimi i shitesit</span><span>02</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 2</div>
+    <h2>Zgjidh Vendor/Shites dhe ploteso informacionin e dyqanit.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Zgjidh rolin</strong>Kliko Vendor/Shites qe llogaria te hapet per dyqan.</div>
+        <div class="note"><strong>Ploteso fushat</strong>Vendos emrin e dyqanit, emrin, mbiemrin, emailin, telefonin dhe fjalekalimin.</div>
+        <div class="note"><strong>Kujdes</strong>Fjalekalimi duhet te kete shkronje te madhe, shkronje te vogel dhe numer.</div>
+      </div>
+      <div class="shot mock-register">
+        <div class="mock-register-card">
+          <h3>Hapni dyqanin tuaj</h3>
+          <div class="role-row">
+            <div class="role-box">Klient</div>
+            <div class="role-box selected">Shites</div>
+          </div>
+          <div class="field-label">Emri i dyqanit</div>
+          <div class="field-box">Vishu Shop</div>
+          <div class="field-label">Emri</div>
+          <div class="field-box">Vendor</div>
+          <div class="field-label">Mbiemri</div>
+          <div class="field-box">Owner</div>
+          <div class="field-label">Email</div>
+          <div class="field-box">vendor@vishushop.com</div>
+          <div class="field-label">Fjalekalimi</div>
+          <div class="field-box">**********</div>
+          <div class="terms-box">✓ Pranoj kushtet e Vishu per shites.</div>
+          <div class="mock-button">Create vendor account</div>
+        </div>
+        <div class="badge" style="left: 61%; top: 16%;">1</div>
+        <div class="label" style="left: 68%; top: 14%;">Zgjidh Shites</div>
+        <div class="badge" style="left: 42%; top: 37%;">2</div>
+        <div class="label" style="left: 15%; top: 36%;">Ploteso te dhenat</div>
+        <div class="badge" style="left: 42%; top: 79%;">3</div>
+        <div class="label" style="left: 15%; top: 78%;">Prano kushtet</div>
+      </div>
+    </div>
+    <div class="footer"><span>Formulari Vendor</span><span>03</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 3</div>
+    <h2>Krijo llogarine dhe verifiko emailin e dyqanit.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Krijo llogarine</strong>Pasi fushat jane plotesuar, kliko Create vendor account.</div>
+        <div class="note"><strong>Kontrollo emailin</strong>Vishu dergon link verifikimi ne emailin e vendosur ne formular.</div>
+        <div class="note"><strong>Pas verifikimit</strong>Hyr perseri me emailin dhe fjalekalimin e krijuar.</div>
+      </div>
+      <div class="shot mock-register">
+        <div class="mock-register-card">
+          <h3>Hapni dyqanin tuaj</h3>
+          <div class="role-row">
+            <div class="role-box">Klient</div>
+            <div class="role-box selected">Shites</div>
+          </div>
+          <div class="field-label">Emri i dyqanit</div>
+          <div class="field-box">Vishu Shop</div>
+          <div class="field-label">Email</div>
+          <div class="field-box">vendor@vishushop.com</div>
+          <div class="field-label">Fjalekalimi</div>
+          <div class="field-box">**********</div>
+          <div class="terms-box">✓ Pranoj kushtet e Vishu per shites.</div>
+          <div class="mock-button">Create vendor account</div>
+        </div>
+        <div class="badge" style="left: 55%; top: 83%;">1</div>
+        <div class="label" style="left: 64%; top: 81%;">Kliko Create vendor account</div>
+        <div class="arrow" style="left: 55%; top: 85%; width: 38mm; transform: rotate(0deg);"></div>
+      </div>
+    </div>
+    <div class="footer"><span>Verifikimi me email</span><span>04</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 4</div>
+    <h2>Hyr me email/fjalekalim, pastaj shkruaj kodin 6-shifror.</h2>
+    <div class="layout wide">
+      <div class="notes">
+        <div class="note"><strong>1. Shkruaj emailin</strong>Perdor emailin dhe fjalekalimin qe vendose gjate regjistrimit.</div>
+        <div class="note"><strong>2. Kliko Hyr/Login</strong>Pas klikimit, Vishu mund te kerkoje kodin e sigurise.</div>
+        <div class="note"><strong>3. Shkruaj kodin 6-shifror</strong>Hape emailin, merr kodin OTP dhe vendose ne fushen e kodit.</div>
+      </div>
+      <div class="shot-pair">
+        <div>
+          <div class="mini-shot-title">Login</div>
+          <div class="shot mock-login">
+            <div class="mock-login-card">
+              <h3>Hyr ne Vishu</h3>
+              <div class="field-label">Email</div>
+              <div class="field-box">vendor@vishushop.com</div>
+              <div class="field-label">Fjalekalimi</div>
+              <div class="field-box">**********</div>
+              <div class="mock-button">Hyr</div>
+            </div>
+            <div class="badge" style="left: 18%; top: 39%;">1</div>
+            <div class="label" style="left: 3%; top: 25%; min-width: 35mm;">Email + password</div>
+            <div class="badge" style="left: 54%; top: 73%;">2</div>
+            <div class="label" style="left: 64%; top: 71%; min-width: 27mm;">Kliko Hyr</div>
+          </div>
+        </div>
+        <div>
+          <div class="mini-shot-title">OTP</div>
+          <div class="shot">
+            <img src="file:///C:/Users/Administrator/Desktop/Vishu%20Vendor%20Demo%20Albanian%20Screenshots/jpeg/03-hyrja-me-kod-otp.jpg" alt="Kodi OTP" />
+            <div class="badge" style="left: 43%; top: 47%;">3</div>
+            <div class="label" style="left: 54%; top: 45%; min-width: 36mm;">Kodi 6-shifror</div>
+            <div class="badge" style="left: 38%; top: 60%;">4</div>
+            <div class="label" style="left: 9%; top: 60%; min-width: 35mm;">Ridergo kodin</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>Hyrja dhe OTP</span><span>05</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 5</div>
+    <h2>Hap zonen Vendor dhe kliko Products/Produktet.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Pas hyrjes</strong>Do te shohesh dashboard-in e shitesit.</div>
+        <div class="note"><strong>Produktet</strong>Kliko Products/Produktet per te pare listen dhe per te shtuar produkt te ri.</div>
+      </div>
+      <div class="shot">
+        <img src="file:///C:/Users/Administrator/Desktop/Vishu%20Vendor%20Real%20App%20Screenshots/03-vendor-products.png" alt="Produktet e shitesit" />
+        <div class="mask" style="left: 21.4%; top: 9.2%; width: 35%; height: 7.4%; font-size: 13pt; padding-left: 0.4%;">Vishu Shop Products</div>
+        <div class="mask" style="left: 83.8%; top: 1.2%; width: 6.6%; height: 4.2%; border-radius: 14px; justify-content: center; font-size: 9pt;">Vishu</div>
+        <div class="badge" style="left: 17%; top: 32%;">1</div>
+        <div class="label" style="left: 23%; top: 31%;">Hap Products</div>
+        <div class="badge" style="left: 82%; top: 24%;">2</div>
+        <div class="label" style="left: 61%; top: 22%;">Kliko Add product / New product</div>
+      </div>
+    </div>
+    <div class="footer"><span>Zona e produkteve</span><span>06</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 6</div>
+    <h2>Ploteso detajet kryesore te produktit.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Informacioni baze</strong>Vendos emrin, pershkrimin dhe cmimin.</div>
+        <div class="note"><strong>Katalogu</strong>Zgjidh departamentin, kategorine, ngjyren dhe madhesite qe jane ne stok.</div>
+        <div class="note"><strong>Stoku</strong>Vendos sasine reale qe klientet mund te porosisin.</div>
+      </div>
+      <div class="shot">
+        <img src="file:///C:/Users/Administrator/Desktop/Vishu%20Vendor%20Real%20App%20Screenshots/04-add-product-details.png" alt="Detajet e produktit" />
+        <div class="mask" style="left: 21.4%; top: 9.2%; width: 35%; height: 7.4%; font-size: 13pt; padding-left: 0.4%;">Vishu Shop Products</div>
+        <div class="mask" style="left: 83.8%; top: 1.2%; width: 6.6%; height: 4.2%; border-radius: 14px; justify-content: center; font-size: 9pt;">Vishu</div>
+        <div class="badge" style="left: 37%; top: 36%;">1</div>
+        <div class="label" style="left: 10%; top: 36%;">Emri, pershkrimi, cmimi</div>
+        <div class="badge" style="left: 62%; top: 50%;">2</div>
+        <div class="label" style="left: 70%; top: 49%;">Kategori dhe madhesi</div>
+      </div>
+    </div>
+    <div class="footer"><span>Detajet e produktit</span><span>07</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 7</div>
+    <h2>Ngarko foton e produktit dhe kontrollo pamjen paraprake.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Foto e qarte</strong>Perdor foto te ndricuar mire, pa turbullim dhe ku produkti duket plotesisht.</div>
+        <div class="note"><strong>Ngarko foton</strong>Kliko zonen e ngarkimit dhe zgjidh foton nga kompjuteri.</div>
+      </div>
+      <div class="shot">
+        <img src="file:///C:/Users/Administrator/Desktop/Vishu%20Vendor%20Real%20App%20Screenshots/05-upload-photo-preview.png" alt="Ngarkimi i fotos se produktit" />
+        <div class="mask" style="left: 21.4%; top: 9.2%; width: 35%; height: 7.4%; font-size: 13pt; padding-left: 0.4%;">Vishu Shop Products</div>
+        <div class="mask" style="left: 83.8%; top: 1.2%; width: 6.6%; height: 4.2%; border-radius: 14px; justify-content: center; font-size: 9pt;">Vishu</div>
+        <div class="badge" style="left: 39%; top: 45%;">1</div>
+        <div class="label" style="left: 12%; top: 45%;">Kliko Upload photo</div>
+        <div class="badge" style="left: 66%; top: 50%;">2</div>
+        <div class="label" style="left: 72%; top: 49%;">Kontrollo preview</div>
+      </div>
+    </div>
+    <div class="footer"><span>Foto e produktit</span><span>08</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Hapi 8</div>
+    <h2>Krijo produktin dhe kontrollo qe shfaqet ne listen e produkteve.</h2>
+    <div class="layout">
+      <div class="notes">
+        <div class="note"><strong>Publikimi</strong>Pasi gjithcka eshte gati, kliko Create product.</div>
+        <div class="note"><strong>Kontrolli final</strong>Produkti duhet te shfaqet ne listen e produkteve te dyqanit.</div>
+      </div>
+      <div class="shot">
+        <img src="file:///C:/Users/Administrator/Desktop/Vishu%20Vendor%20Real%20App%20Screenshots/06-create-product-button.png" alt="Krijimi i produktit" />
+        <div class="mask" style="left: 21.4%; top: 9.2%; width: 35%; height: 7.4%; font-size: 13pt; padding-left: 0.4%;">Vishu Shop Products</div>
+        <div class="mask" style="left: 83.8%; top: 1.2%; width: 6.6%; height: 4.2%; border-radius: 14px; justify-content: center; font-size: 9pt;">Vishu</div>
+        <div class="badge" style="left: 58%; top: 82%;">1</div>
+        <div class="label" style="left: 65%; top: 80%;">Kliko Create product</div>
+      </div>
+    </div>
+    <div class="footer"><span>Krijimi i produktit</span><span>09</span></div>
+  </section>
+
+  <section class="page">
+    <div class="brand">Vishu.shop</div>
+    <div class="kicker">Kontrolli final</div>
+    <h2>Para se ta dergosh dyqanin per perdorim, kontrollo keto pika.</h2>
+    <div class="checklist">
+      <div class="check"><strong>Llogaria</strong><p>Emaili i dyqanit eshte verifikuar dhe shitesi mund te hyje pa problem.</p></div>
+      <div class="check"><strong>Profili i dyqanit</strong><p>Emri, telefoni, pershkrimi, politikat e kthimit dhe te dhenat e kontaktit jane te sakta.</p></div>
+      <div class="check"><strong>Produkti</strong><p>Fotoja eshte e qarte, cmimi eshte i sakte, madhesite/ngjyrat jane zgjedhur dhe stoku eshte vendosur.</p></div>
+      <div class="check"><strong>Pas publikimit</strong><p>Produkti shfaqet ne listen e produkteve dhe mund te kontrollohet nga faqja publike e dyqanit.</p></div>
+    </div>
+    <p class="lead">Nese nje produkt nuk shfaqet publikisht, kontrollo qe dyqani te jete i verifikuar dhe aktiv, dhe qe produkti te jete i listuar.</p>
+    <div class="footer"><span>Vishu Vendor Guide</span><span>10</span></div>
+  </section>
+</body>
+</html>

@@ -5,7 +5,21 @@ const CSRF_HEADER_VALUE = "1";
 
 export function getApiBaseUrl() {
   if (EXPLICIT_API_BASE_URL) {
-    return EXPLICIT_API_BASE_URL.replace(/\/$/, "");
+    const normalizedExplicitBase = EXPLICIT_API_BASE_URL.replace(/\/$/, "");
+
+    if (normalizedExplicitBase.startsWith("/") && typeof window === "undefined") {
+      return "http://localhost:3000";
+    }
+
+    return normalizedExplicitBase;
+  }
+
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname.toLowerCase();
+
+    if ((host === "vishu.shop" || host === "www.vishu.shop") && window.location.port === "8443") {
+      return "/api";
+    }
   }
 
   if (typeof window !== "undefined") {

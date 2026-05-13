@@ -17,14 +17,24 @@ export default function AdminVendorDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [accountMessage, setAccountMessage] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
-  const [platformFee, setPlatformFee] = useState<number | null>(null);
-  const [feeSaving, setFeeSaving] = useState(false);
+  const [platformFeeMode, setPlatformFeeMode] = useState<"dynamic" | "fixed">("dynamic");
+  const [platformFee, setPlatformFee] = useState("1.00");
+  const [feeFreeEnabled, setFeeFreeEnabled] = useState(false);
+  const [feeFreeUntil, setFeeFreeUntil] = useState("");
   const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | null>(
     null,
   );
+  const [feeSaving, setFeeSaving] = useState(false);
   const feeGraceLabel = detail?.feeGraceEndsAt
     ? new Date(detail.feeGraceEndsAt).toLocaleDateString()
     : null;
+  const lastActivityLabel = detail?.lastActivityAt
+    ? new Date(detail.lastActivityAt).toLocaleString()
+    : "No activity recorded";
+  const lastLoginLabel = detail?.lastLoginAt
+    ? new Date(detail.lastLoginAt).toLocaleString()
+    : "No login recorded";
+  const ownerMobileNumber = detail?.user.phoneNumber?.trim() || detail?.user.supportPhone?.trim() || "";
 
   useEffect(() => {
     if (!token || currentRole !== "admin") {
@@ -41,7 +51,10 @@ export default function AdminVendorDetailPage() {
           token,
         );
         setDetail(nextDetail);
-        setPlatformFee(nextDetail.platformFee);
+        setPlatformFeeMode(nextDetail.platformFeeMode);
+        setPlatformFee(Number(nextDetail.platformFee).toFixed(2));
+        setFeeFreeEnabled(Boolean(nextDetail.feeFreeUntil));
+        setFeeFreeUntil(nextDetail.feeFreeUntil ? nextDetail.feeFreeUntil.slice(0, 10) : "");
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load vendor detail.");
       } finally {
@@ -63,7 +76,10 @@ export default function AdminVendorDetailPage() {
       token,
     );
     setDetail(nextDetail);
-    setPlatformFee(nextDetail.platformFee);
+    setPlatformFeeMode(nextDetail.platformFeeMode);
+    setPlatformFee(Number(nextDetail.platformFee).toFixed(2));
+    setFeeFreeEnabled(Boolean(nextDetail.feeFreeUntil));
+    setFeeFreeUntil(nextDetail.feeFreeUntil ? nextDetail.feeFreeUntil.slice(0, 10) : "");
   }
 
   async function handleVendorActivation(nextIsActive: boolean) {
@@ -139,7 +155,18 @@ export default function AdminVendorDetailPage() {
   }
 
   async function handleUpdatePlatformFee() {
-    if (!token || platformFee === null) {
+    if (!token) {
+      return;
+    }
+
+    const fixedFee = Number(platformFee);
+    if (platformFeeMode === "fixed" && (!Number.isFinite(fixedFee) || fixedFee < 0)) {
+      setAccountError("Fixed fee must be a valid amount.");
+      return;
+    }
+
+    if (feeFreeEnabled && !feeFreeUntil) {
+      setAccountError("Choose the date when the no-fee period ends.");
       return;
     }
 
@@ -154,17 +181,24 @@ export default function AdminVendorDetailPage() {
         `/admin/vendors/${params.id}/platform-fee`,
         {
           method: "PATCH",
-          body: JSON.stringify({ platformFee }),
+          body: JSON.stringify({
+            feeMode: platformFeeMode,
+            platformFee: fixedFee,
+            feeFreeUntil: feeFreeEnabled ? feeFreeUntil : undefined,
+            clearFeeFreeUntil: !feeFreeEnabled,
+          }),
         },
         token,
       );
       setDetail(response.vendor);
-      setPlatformFee(response.vendor.platformFee);
+      setPlatformFeeMode(response.vendor.platformFeeMode);
+      setPlatformFee(Number(response.vendor.platformFee).toFixed(2));
+      setFeeFreeEnabled(Boolean(response.vendor.feeFreeUntil));
+      setFeeFreeUntil(response.vendor.feeFreeUntil ? response.vendor.feeFreeUntil.slice(0, 10) : "");
       setAccountMessage(response.message);
-      await refreshDetail();
     } catch (actionError) {
       setAccountError(
-        actionError instanceof Error ? actionError.message : "Failed to update platform fee.",
+        actionError instanceof Error ? actionError.message : "Failed to update platform fee settings.",
       );
     } finally {
       setFeeSaving(false);
@@ -219,6 +253,10 @@ export default function AdminVendorDetailPage() {
             <div className="mini-stat">
               <strong>{detail.user.isActive ? "Login enabled" : "Login disabled"}</strong>
               <span className="muted">{detail.user.email}</span>
+            </div>
+            <div className="mini-stat">
+              <strong>Last activity</strong>
+              <span className="muted">{lastActivityLabel}</span>
             </div>
           </div>
         </section>
@@ -275,40 +313,84 @@ export default function AdminVendorDetailPage() {
                   {accountSaving === "reset" ? "Sending..." : "Send reset email"}
                 </button>
               </div>
+              <div className="mini-stats">
+                <div className="mini-stat">
+                  <strong>{lastActivityLabel}</strong>
+                  <span className="muted">Last activity</span>
+                </div>
+                <div className="mini-stat">
+                  <strong>{lastLoginLabel}</strong>
+                  <span className="muted">Last login</span>
+                </div>
+                <div className="mini-stat">
+                  <strong>
+                    {detail.inactivityDisabledAt
+                      ? new Date(detail.inactivityDisabledAt).toLocaleDateString()
+                      : "Not disabled"}
+                  </strong>
+                  <span className="muted">Inactivity status</span>
+                </div>
+              </div>
             </section>
 
             <section className="form-card stack">
               <div>
                 <h2 className="section-title">Platform Fee</h2>
                 <p className="muted">
-                  Per-vendor fee deducted from earnings once per order. Applied now:{" "}
-                  {formatCurrency(detail.effectivePlatformFee)}
+                  Dynamic vendor fee is locked when the vendor confirms their part of an order:
+                  0.50 EUR up to 7 EUR, then scales to 2.00 EUR at 50 EUR, then adds 2%.
                 </p>
                 <p className="muted">
                   {feeGraceLabel
-                    ? `This shop is still in the free period. The base fee switches to ${formatCurrency(
-                        detail.platformFee,
-                      )} on ${feeGraceLabel}.`
-                    : `Base fee: ${formatCurrency(detail.platformFee)}.`}
+                    ? `This shop is still in the free period. Dynamic fees start on ${feeGraceLabel}.`
+                    : "The fee is based on this vendor's accepted subtotal, not the full customer order."}
                 </p>
               </div>
               <div className="form-grid two">
-                <div className="field">
-                  <label>{feeGraceLabel ? "Base fee after free period" : "Fee amount"}</label>
+                <label className="field">
+                  <span>Fee method</span>
+                  <select
+                    value={platformFeeMode}
+                    onChange={(event) =>
+                      setPlatformFeeMode(event.target.value as "dynamic" | "fixed")
+                    }
+                  >
+                    <option value="dynamic">Dynamic default</option>
+                    <option value="fixed">Force fixed fee</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Fixed fee amount</span>
                   <input
                     type="number"
                     min="0"
                     step="0.01"
-                    value={platformFee ?? detail.platformFee}
-                    onChange={(event) =>
-                      setPlatformFee(
-                        event.target.value === ""
-                          ? 0
-                          : Number(event.target.value),
-                      )
-                    }
+                    value={platformFee}
+                    disabled={platformFeeMode !== "fixed"}
+                    onChange={(event) => setPlatformFee(event.target.value)}
                   />
-                </div>
+                </label>
+              </div>
+              <div className="form-grid two">
+                <label className="field">
+                  <span>No-fee status</span>
+                  <select
+                    value={feeFreeEnabled ? "free" : "normal"}
+                    onChange={(event) => setFeeFreeEnabled(event.target.value === "free")}
+                  >
+                    <option value="normal">Fees active</option>
+                    <option value="free">No fee until date</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>No fee until</span>
+                  <input
+                    type="date"
+                    value={feeFreeUntil}
+                    disabled={!feeFreeEnabled}
+                    onChange={(event) => setFeeFreeUntil(event.target.value)}
+                  />
+                </label>
               </div>
               <div className="inline-actions">
                 <button
@@ -317,7 +399,7 @@ export default function AdminVendorDetailPage() {
                   disabled={feeSaving}
                   onClick={() => void handleUpdatePlatformFee()}
                 >
-                  {feeSaving ? "Updating..." : "Update Fee"}
+                  {feeSaving ? "Saving..." : "Save fee settings"}
                 </button>
               </div>
             </section>
@@ -428,7 +510,7 @@ export default function AdminVendorDetailPage() {
                 </div>
                 <div className="mini-stat">
                   <strong>{formatCurrency(detail.metrics.totalCommission)}</strong>
-                  <span className="muted">Commission generated</span>
+                  <span className="muted">Platform fees generated</span>
                 </div>
                 <div className="mini-stat">
                   <strong>{formatCurrency(detail.metrics.paidOut)}</strong>
@@ -446,6 +528,12 @@ export default function AdminVendorDetailPage() {
                 <div className="card admin-vendor-info-card">
                   <strong>{detail.user.email}</strong>
                   <span className="muted">Linked user account</span>
+                </div>
+                <div className="card admin-vendor-info-card">
+                  <strong>{ownerMobileNumber || "No mobile number saved"}</strong>
+                  <span className="muted">
+                    {detail.user.phoneNumber?.trim() ? "Owner mobile number" : "Shop support mobile"}
+                  </span>
                 </div>
                 <div className="card admin-vendor-info-card">
                   <strong>{detail.approvedAt ? new Date(detail.approvedAt).toLocaleString() : "Not approved yet"}</strong>

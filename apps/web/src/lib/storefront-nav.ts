@@ -16,7 +16,9 @@ export const STOREFRONT_NAV_GROUPS = [
       "hoodies",
       "jackets",
       "jeans",
+      "shoes",
       "pants",
+      "underwear",
       "outerwear",
       "sportswear",
     ],
@@ -33,23 +35,28 @@ export const STOREFRONT_NAV_GROUPS = [
       "jackets",
       "shirts",
       "jeans",
+      "shoes",
       "skirts",
       "leggings",
+      "underwear",
       "accessories",
     ],
   },
   {
     id: "kids",
     label: "KIDS",
-    available: false,
-    note: "Structured kidswear navigation is prepared for the next catalog expansion.",
+    available: true,
+    department: "kids",
+    note: "Kidswear, school essentials, and shoes.",
     subcategories: [
       "tshirts",
       "hoodies",
       "jackets",
       "sets",
       "jeans",
+      "shoes",
       "pants",
+      "underwear",
       "schoolwear",
       "sleepwear",
     ],
@@ -57,14 +64,17 @@ export const STOREFRONT_NAV_GROUPS = [
   {
     id: "babies",
     label: "BABIES",
-    available: false,
-    note: "Soft essentials, newborn sets, and nursery basics are coming into the catalog.",
+    available: true,
+    department: "babies",
+    note: "Soft essentials, newborn sets, and first shoes.",
     subcategories: [
       "bodysuits",
       "rompers",
       "sets",
       "outerwear",
       "sleepwear",
+      "underwear",
+      "shoes",
       "blankets",
       "accessories",
       "gift sets",
@@ -96,6 +106,12 @@ export function isStorefrontBrowseSelectionValid(
   department: string,
   category: string,
 ) {
+  if (category === "all") {
+    return STOREFRONT_NAV_GROUPS.some(
+      (entry) => entry.available && entry.department === department,
+    );
+  }
+
   return getStorefrontNavCategories(department).includes(category);
 }
 

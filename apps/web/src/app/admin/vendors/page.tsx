@@ -7,10 +7,29 @@ import { RequireRole } from "@/components/require-role";
 import { apiRequest, formatCurrency } from "@/lib/api";
 import type { AdminUserRow } from "@/lib/types";
 
+function matchesVendorSearch(search: string, values: Array<string | null | undefined>) {
+  const terms = search
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const haystack = values.filter(Boolean).join(" ").toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function formatActivityDate(value?: string | null) {
+  if (!value) return "No activity";
+  return new Date(value).toLocaleDateString();
+}
+
 export default function AdminVendorsPage() {
   const { token, currentRole } = useAuth();
   const [users, setUsers] = useState<AdminUserRow[]>([]);
-  const [feeDrafts, setFeeDrafts] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [verificationFilter, setVerificationFilter] = useState("all");
   const [activationFilter, setActivationFilter] = useState("all");
@@ -28,16 +47,6 @@ export default function AdminVendorsPage() {
       setError(null);
       const response = await apiRequest<AdminUserRow[]>("/admin/users", undefined, token);
       setUsers(response);
-      setFeeDrafts(
-        Object.fromEntries(
-          response
-            .filter((entry) => entry.vendor_id)
-            .map((entry) => [
-              entry.vendor_id as string,
-              String(Number(entry.platform_fee ?? 1).toFixed(2)),
-            ]),
-        ),
-      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load vendors.");
     } finally {
@@ -119,45 +128,18 @@ export default function AdminVendorsPage() {
     }
   }
 
-  async function updateVendorFee(vendorId: string) {
-    if (!token) return;
-
-    const nextFee = Number(feeDrafts[vendorId] ?? "0");
-    if (!Number.isFinite(nextFee) || nextFee < 0) {
-      setError("Fee must be a number greater than or equal to 0.");
-      return;
-    }
-
-    try {
-      setActiveAction(`fee-${vendorId}`);
-      setMessage(null);
-      setError(null);
-      await apiRequest(
-        `/admin/vendors/${vendorId}/platform-fee`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ platformFee: nextFee }),
-        },
-        token,
-      );
-      setMessage("Vendor fee updated.");
-      await loadVendors();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to update vendor fee.");
-    } finally {
-      setActiveAction(null);
-    }
-  }
-
   const vendors = useMemo(() => {
     const term = search.trim().toLowerCase();
 
     return users
       .filter((entry) => entry.vendor_id)
       .filter((entry) => {
-        const matchesSearch =
-          !term ||
-          `${entry.email} ${entry.shop_name ?? ""}`.toLowerCase().includes(term);
+        const matchesSearch = matchesVendorSearch(term, [
+          entry.shop_name,
+          entry.email,
+          entry.phone_number,
+          entry.vendor_id,
+        ]);
         const matchesVerification =
           verificationFilter === "all" ||
           (verificationFilter === "verified" && Boolean(entry.vendor_verified)) ||
@@ -207,7 +189,7 @@ export default function AdminVendorsPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by shop or email"
+                placeholder="Search shop name or vendor email"
               />
             </div>
             <div className="field">
@@ -265,6 +247,7 @@ export default function AdminVendorsPage() {
                     <th>Verification</th>
                     <th>Activation</th>
                     <th>Login</th>
+                    <th>Last activity</th>
                     <th>Fee</th>
                     <th>Joined</th>
                     <th>Actions</th>
@@ -277,6 +260,9 @@ export default function AdminVendorsPage() {
                         <div className="admin-table-stack">
                           <strong>{vendor.shop_name ?? "Unnamed shop"}</strong>
                           <span className="muted">{vendor.email}</span>
+                          <span className="muted">
+                            {vendor.phone_number ? `Mobile: ${vendor.phone_number}` : "No mobile number saved"}
+                          </span>
                         </div>
                       </td>
                       <td>
@@ -319,49 +305,43 @@ export default function AdminVendorsPage() {
                         </span>
                       </td>
                       <td>
+                        <div className="admin-table-stack">
+                          <strong>{formatActivityDate(vendor.last_activity_at)}</strong>
+                          {vendor.inactivity_disabled_at ? (
+                            <span className="muted">
+                              Disabled {formatActivityDate(vendor.inactivity_disabled_at)}
+                            </span>
+                          ) : vendor.reactivation_requested_at ? (
+                            <span className="muted">
+                              Reactivation {formatActivityDate(vendor.reactivation_requested_at)}
+                            </span>
+                          ) : vendor.last_login_at ? (
+                            <span className="muted">
+                              Login {formatActivityDate(vendor.last_login_at)}
+                            </span>
+                          ) : (
+                            <span className="muted">No login yet</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
                         {vendor.vendor_id ? (
                           <div className="admin-table-stack">
                             <strong>
-                              {formatCurrency(
-                                Number(
-                                  vendor.effective_platform_fee ?? vendor.platform_fee ?? 0,
-                                ),
-                              )}
+                              {vendor.platform_fee_mode === "fixed"
+                                ? `${formatCurrency(Number(vendor.platform_fee ?? 0))} fixed`
+                                : "Dynamic"}
                             </strong>
-                            {vendor.fee_grace_ends_at ? (
+                            {vendor.fee_free_until || vendor.fee_grace_ends_at ? (
                               <span className="muted">
-                                Applied now: free until{" "}
-                                {new Date(vendor.fee_grace_ends_at).toLocaleDateString()}
+                                Free until{" "}
+                                {new Date(
+                                  vendor.fee_free_until ?? vendor.fee_grace_ends_at!,
+                                ).toLocaleDateString()}
                               </span>
                             ) : (
-                              <span className="muted">
-                                Applied now: {formatCurrency(Number(vendor.platform_fee ?? 0))}
-                              </span>
+                              <span className="muted">Per accepted subtotal</span>
                             )}
-                            <div
-                              className="inline-actions"
-                              style={{ alignItems: "center", flexWrap: "nowrap" }}
-                            >
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={
-                                  feeDrafts[vendor.vendor_id] ??
-                                  String(Number(vendor.platform_fee ?? 1).toFixed(2))
-                                }
-                                onChange={(event) =>
-                                  setFeeDrafts((current) => ({
-                                    ...current,
-                                    [vendor.vendor_id!]: event.target.value,
-                                  }))
-                                }
-                                style={{ width: "92px" }}
-                              />
-                              <span className="muted">
-                                {vendor.fee_grace_ends_at ? "After grace" : "Base"}
-                              </span>
-                            </div>
                           </div>
                         ) : (
                           <span className="muted">-</span>
@@ -370,16 +350,6 @@ export default function AdminVendorsPage() {
                       <td>{new Date(vendor.created_at).toLocaleDateString()}</td>
                       <td>
                         <div className="admin-table-actions">
-                          {vendor.vendor_id ? (
-                            <button
-                              className="button"
-                              type="button"
-                              disabled={activeAction !== null}
-                              onClick={() => void updateVendorFee(vendor.vendor_id!)}
-                            >
-                              {activeAction === `fee-${vendor.vendor_id}` ? "Updating..." : "Update fee"}
-                            </button>
-                          ) : null}
                           {vendor.vendor_id ? (
                             <button
                               className="button-secondary"

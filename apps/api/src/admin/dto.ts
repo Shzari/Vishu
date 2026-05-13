@@ -16,6 +16,11 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
+const PASSWORD_POLICY =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?!.*(?:123|[Aa][Bb][Cc]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])).{6,}$/;
+const PASSWORD_POLICY_MESSAGE =
+  'Password must be at least 6 characters and include uppercase, lowercase, and a number. Avoid simple sequences like 123 or abc.';
+
 export class CreateAdminUserDto {
   @IsEmail()
   email!: string;
@@ -32,6 +37,7 @@ export class CreateAdminUserDto {
 
   @IsString()
   @MinLength(6)
+  @Matches(PASSWORD_POLICY, { message: PASSWORD_POLICY_MESSAGE })
   password!: string;
 }
 
@@ -66,7 +72,10 @@ export class UpdatePlatformSettingsDto {
   clearSmtpPassword?: boolean;
 
   @IsOptional()
-  @IsEmail()
+  @IsEmail(
+    { require_tld: true },
+    { message: 'Mail sender must be a complete email address.' },
+  )
   mailFrom?: string;
 
   @IsOptional()
@@ -234,10 +243,27 @@ export class ReviewCatalogRequestDto {
 }
 
 export class UpdateVendorPlatformFeeDto {
+  @IsOptional()
+  @IsIn(['dynamic', 'fixed'])
+  feeMode?: 'dynamic' | 'fixed';
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  platformFee!: number;
+  platformFee?: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsDateString()
+  feeFreeUntil?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  clearFeeFreeUntil?: boolean;
 }
 
 export class CategoryMutationDto {

@@ -6,6 +6,27 @@ const nextConfig: NextConfig = {
     root: path.join(__dirname, "..", ".."),
   },
   poweredByHeader: false,
+  async redirects() {
+    return [
+      {
+        source: "/vendor/inventory",
+        destination: "/vendor/products",
+        permanent: true,
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://localhost:3000/:path*",
+      },
+      {
+        source: "/uploads/:path*",
+        destination: "http://localhost:3000/uploads/:path*",
+      },
+    ];
+  },
   async headers() {
     return [
       {

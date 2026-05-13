@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
+import { getPasswordPolicyError, passwordPolicyText } from "@/lib/password-policy";
 import type { AccountSettingsProfile, UserRole } from "@/lib/types";
 
 interface AccountSettingsPanelProps {
@@ -82,6 +83,11 @@ export function AccountSettingsPanel({
 
   async function changePassword() {
     if (!token) return;
+    const passwordError = getPasswordPolicyError(newPassword);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
 
     try {
       setSaving(true);
@@ -153,6 +159,7 @@ export function AccountSettingsPanel({
           <div className="field">
             <label>New password</label>
             <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <span className="muted">{passwordPolicyText}</span>
           </div>
           <button className="button" type="button" disabled={saving} onClick={changePassword}>
             {saving ? "Saving..." : "Change password"}

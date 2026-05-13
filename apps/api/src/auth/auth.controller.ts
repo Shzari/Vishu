@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Post,
@@ -18,6 +19,7 @@ import { RateLimitGuard } from '../common/guards/rate-limit.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import {
   clearAuthCookie,
+  isAdminPortRequest,
   setAuthCookie,
 } from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
@@ -25,10 +27,13 @@ import {
   LoginDto,
   PasswordResetConfirmDto,
   PasswordResetRequestDto,
+  ResendVendorLoginOtpDto,
   ResendVerificationDto,
   RegisterCustomerDto,
   RegisterVendorDto,
+  VerifyCustomerRegistrationCodeDto,
   VerifyEmailDto,
+  VerifyVendorLoginOtpDto,
 } from './dto';
 import { AuthService } from './auth.service';
 
@@ -73,6 +78,14 @@ export class AuthController {
   }
 
   @Public()
+  @Post('verify/code')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ max: 10, windowMs: 1000 * 60 * 15 })
+  verifyCustomerCode(@Body() dto: VerifyCustomerRegistrationCodeDto) {
+    return this.authService.verifyCustomerRegistrationCode(dto);
+  }
+
+  @Public()
   @Post('verification/resend')
   @UseGuards(RateLimitGuard)
   @RateLimit({ max: 5, windowMs: 1000 * 60 * 15 })
@@ -90,11 +103,43 @@ export class AuthController {
   })
   async login(
     @Body() dto: LoginDto,
+    @Req() req: { headers?: Record<string, string | string[] | undefined> },
     @Res({ passthrough: true }) response: Response,
   ) {
-    const result = await this.authService.login(dto);
+    const result = await this.authService.login(dto, req);
+    if ('accessToken' in result) {
+      setAuthCookie(response, result.accessToken, this.configService);
+    }
+    return result;
+  }
+
+  @Public()
+  @Post('vendor/login/verify')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    max: 10,
+    windowMs: 1000 * 60 * 15,
+    blockDurationMs: 1000 * 60 * 30,
+  })
+  async verifyVendorLoginOtp(
+    @Body() dto: VerifyVendorLoginOtpDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.verifyVendorLoginOtp(dto);
     setAuthCookie(response, result.accessToken, this.configService);
     return result;
+  }
+
+  @Public()
+  @Post('vendor/login/resend')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    max: 5,
+    windowMs: 1000 * 60 * 15,
+    blockDurationMs: 1000 * 60 * 15,
+  })
+  resendVendorLoginOtp(@Body() dto: ResendVendorLoginOtpDto) {
+    return this.authService.resendVendorLoginOtp(dto);
   }
 
   @Public()
@@ -109,8 +154,13 @@ export class AuthController {
   @Post('password-reset/confirm')
   @UseGuards(RateLimitGuard)
   @RateLimit({ max: 10, windowMs: 1000 * 60 * 15 })
-  confirmPasswordReset(@Body() dto: PasswordResetConfirmDto) {
-    return this.authService.resetPassword(dto);
+  async confirmPasswordReset(
+    @Body() dto: PasswordResetConfirmDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.resetPassword(dto);
+    setAuthCookie(response, result.accessToken, this.configService);
+    return result;
   }
 
   @Public()
@@ -122,7 +172,22 @@ export class AuthController {
   }
 
   @Get('me')
-  getMe(@Req() req: { user: AuthenticatedUser }) {
+  getMe(
+    @Req()
+    req: {
+      user: AuthenticatedUser;
+      headers?: Record<string, string | string[] | undefined>;
+    },
+  ) {
+    if (
+      req.user.role === 'admin' &&
+      !isAdminPortRequest(req, this.configService)
+    ) {
+      throw new ForbiddenException(
+        'Admin access is only available through the admin port.',
+      );
+    }
+
     return this.authService.getProfile(req.user);
   }
 

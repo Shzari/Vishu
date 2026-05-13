@@ -19,15 +19,17 @@ const homePathByRole: Record<UserRole, string> = {
 
 interface RequireRoleProps {
   requiredRole: UserRole;
+  allowedRoles?: UserRole[];
   children: ReactNode;
 }
 
-export function RequireRole({ requiredRole, children }: RequireRoleProps) {
+export function RequireRole({ requiredRole, allowedRoles, children }: RequireRoleProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { token, user, profile, loading } = useAuth();
   const currentRole = profile?.role ?? user?.role ?? null;
   const loginPath = loginPathByRole[requiredRole];
+  const acceptedRoles = allowedRoles ?? [requiredRole];
 
   useEffect(() => {
     if (loading) {
@@ -42,12 +44,13 @@ export function RequireRole({ requiredRole, children }: RequireRoleProps) {
       return;
     }
 
-    if (currentRole && currentRole !== requiredRole) {
+    if (currentRole && !acceptedRoles.includes(currentRole)) {
       router.replace(homePathByRole[currentRole]);
     }
-  }, [currentRole, loading, loginPath, pathname, requiredRole, router, token]);
+  }, [acceptedRoles, currentRole, loading, loginPath, pathname, requiredRole, router, token]);
 
-  if (loading) {
+  // Keep mounted pages alive during background auth refreshes; unmounting clears file inputs.
+  if (loading && (!token || !currentRole)) {
     return <div className="message">Checking your session...</div>;
   }
 
@@ -55,7 +58,7 @@ export function RequireRole({ requiredRole, children }: RequireRoleProps) {
     return <div className="message">Redirecting to sign in...</div>;
   }
 
-  if (currentRole !== requiredRole) {
+  if (!currentRole || !acceptedRoles.includes(currentRole)) {
     return <div className="message">Redirecting to the correct workspace...</div>;
   }
 

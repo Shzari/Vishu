@@ -2,17 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiRequest } from "@/lib/api";
+import { getPasswordPolicyError } from "@/lib/password-policy";
 type RegisterRole = "customer" | "vendor";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [role, setRole] = useState<RegisterRole>("customer");
   const [shopName, setShopName] = useState("");
-  const [fullName, setFullName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [acceptedVendorTerms, setAcceptedVendorTerms] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -34,21 +39,53 @@ export default function RegisterPage() {
     setError(null);
     setMessage(null);
 
+    if (!firstName.trim() || !lastName.trim()) {
+      setError("First name and last name are required.");
+      return;
+    }
+
+    const passwordError = getPasswordPolicyError(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    if (role === "vendor" && !acceptedVendorTerms) {
+      setError("Vendors must accept Vishu terms, marketplace policy, and refund policy.");
+      return;
+    }
+
     try {
       setSubmitting(true);
 
       if (role === "vendor") {
         const response = await apiRequest<{ message: string }>("/auth/vendor/register", {
           method: "POST",
-          body: JSON.stringify({ shopName, fullName, email, phoneNumber, password }),
+          body: JSON.stringify({
+            shopName,
+            firstName,
+            lastName,
+            email,
+            phoneNumber,
+            password,
+            acceptedTerms: acceptedVendorTerms,
+          }),
         });
 
         setMessage(response.message);
         setShopName("");
-        setFullName("");
+        setFirstName("");
+        setLastName("");
         setEmail("");
         setPhoneNumber("");
         setPassword("");
+        setConfirmPassword("");
+        setAcceptedVendorTerms(false);
         window.setTimeout(() => router.push("/login"), 1400);
         return;
       }
@@ -57,16 +94,21 @@ export default function RegisterPage() {
         "/auth/register",
         {
           method: "POST",
-          body: JSON.stringify({ fullName, email, phoneNumber, password }),
+          body: JSON.stringify({ firstName, lastName, email, phoneNumber, password }),
         },
       );
 
       setMessage(response.message);
-      setFullName("");
-      setEmail("");
-      setPhoneNumber("");
-      setPassword("");
-      window.setTimeout(() => router.push("/login"), 1400);
+      setFirstName("");
+        setLastName("");
+        setEmail("");
+        setPhoneNumber("");
+        setPassword("");
+        setConfirmPassword("");
+        setAcceptedVendorTerms(false);
+        window.setTimeout(() => {
+        router.push(`/verify?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+      }, 900);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Registration failed.");
     } finally {
@@ -83,8 +125,8 @@ export default function RegisterPage() {
         </h1>
         <p className="hero-copy">
           {role === "vendor"
-            ? "Create a vendor account, verify your email, and wait for admin approval before listing products."
-            : "Create a customer account, then activate it from your email to track orders and manage future purchases."}
+            ? "Create a vendor account, verify your email, then sign in to add products and manage your shop."
+            : "Create a customer account, then enter the 6-digit email code to track orders and manage future purchases."}
         </p>
       </section>
 
@@ -118,9 +160,15 @@ export default function RegisterPage() {
           </div>
         )}
 
-        <div className="field">
-          <label>Full name</label>
-          <input value={fullName} onChange={(event) => setFullName(event.target.value)} />
+        <div className="form-grid two">
+          <div className="field">
+            <label>First name</label>
+            <input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+          </div>
+          <div className="field">
+            <label>Last name</label>
+            <input value={lastName} onChange={(event) => setLastName(event.target.value)} />
+          </div>
         </div>
         <div className="field">
           <label>Email</label>
@@ -142,6 +190,32 @@ export default function RegisterPage() {
             onChange={(event) => setPassword(event.target.value)}
           />
         </div>
+        <div className="field">
+          <label>Confirm password</label>
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+          />
+        </div>
+        {role === "vendor" && (
+          <label className="account-checkbox-row register-policy-check">
+            <input
+              type="checkbox"
+              checked={acceptedVendorTerms}
+              onChange={(event) => setAcceptedVendorTerms(event.target.checked)}
+            />
+            <span>
+              <strong>I accept Vishu vendor terms and refund rules.</strong>
+              <small>
+                I understand that my shop must follow Vishu&apos;s{" "}
+                <Link href="/policy">Marketplace Policy</Link>,{" "}
+                <Link href="/terms">Terms of Service</Link>, and approved customer
+                refund decisions.
+              </small>
+            </span>
+          </label>
+        )}
         <button className="button" type="submit" disabled={submitting}>
           {submitting
             ? "Creating..."

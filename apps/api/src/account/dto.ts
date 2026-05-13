@@ -13,11 +13,26 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+const PASSWORD_POLICY =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?!.*(?:123|[Aa][Bb][Cc]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])).{6,}$/;
+const PASSWORD_POLICY_MESSAGE =
+  'Password must be at least 6 characters and include uppercase, lowercase, and a number. Avoid simple sequences like 123 or abc.';
+
 export class UpdateAccountProfileDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
   fullName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  lastName?: string;
 
   @IsOptional()
   @IsString()
@@ -52,7 +67,7 @@ export class ChangePasswordDto {
 
   @IsString()
   @IsNotEmpty()
-  @Matches(/^.{6,}$/)
+  @Matches(PASSWORD_POLICY, { message: PASSWORD_POLICY_MESSAGE })
   newPassword!: string;
 }
 
@@ -137,8 +152,8 @@ export class CreateVendorTeamInviteDto {
   email!: string;
 
   @IsString()
-  @IsIn(['shop_holder', 'employee'])
-  role!: 'shop_holder' | 'employee';
+  @IsIn(['shop_holder', 'manager', 'employee'])
+  role!: 'shop_holder' | 'manager' | 'employee';
 
   @IsOptional()
   @IsString()
@@ -148,8 +163,8 @@ export class CreateVendorTeamInviteDto {
 
 export class UpdateVendorTeamMemberRoleDto {
   @IsString()
-  @IsIn(['shop_holder', 'employee'])
-  role!: 'shop_holder' | 'employee';
+  @IsIn(['shop_holder', 'manager', 'employee'])
+  role!: 'shop_holder' | 'manager' | 'employee';
 }
 
 export class UpsertAddressDto {
@@ -240,4 +255,42 @@ export class VerifyGuestOrderClaimDto {
   @IsString()
   @IsNotEmpty()
   token!: string;
+}
+
+export class CreateReturnRequestDto {
+  @IsString()
+  @IsNotEmpty()
+  orderId!: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  orderItemId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  reason!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
+export class CreateSupportTicketDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  orderId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1500)
+  message!: string;
 }

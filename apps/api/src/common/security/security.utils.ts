@@ -17,13 +17,30 @@ const WEAK_JWT_SECRETS = new Set([
 ]);
 
 const IMAGE_EXTENSION_BY_MIME = {
+  'image/avif': '.avif',
   'image/gif': '.gif',
+  'image/heic': '.heic',
+  'image/heif': '.heif',
   'image/jpeg': '.jpg',
   'image/png': '.png',
   'image/webp': '.webp',
 } as const;
 
 type AllowedImageMimeType = keyof typeof IMAGE_EXTENSION_BY_MIME;
+
+const HEIF_FTYP_BRANDS = new Set([
+  'heic',
+  'heix',
+  'hevc',
+  'hevx',
+  'heim',
+  'heis',
+  'hevm',
+  'hevs',
+  'mif1',
+  'msf1',
+]);
+const AVIF_FTYP_BRANDS = new Set(['avif', 'avis']);
 
 export const AUTH_COOKIE_NAME = 'vishu_access_token';
 export const CSRF_HEADER_NAME = 'x-vishu-csrf';
@@ -69,7 +86,7 @@ export function ensureTemporaryUploadDir() {
 export function isAllowedImageMimeType(
   mimeType: string,
 ): mimeType is AllowedImageMimeType {
-  return normalizeImageMimeType(mimeType) in IMAGE_EXTENSION_BY_MIME;
+  return resolveAllowedImageMimeType(mimeType) !== null;
 }
 
 export function getSafeImageExtensionForMimeType(mimeType: string) {
@@ -78,11 +95,43 @@ export function getSafeImageExtensionForMimeType(mimeType: string) {
 
   if (!extension) {
     throw new BadRequestException(
-      'Only JPEG, PNG, WebP, and GIF images are allowed',
+      'Only JPEG, PNG, WebP, GIF, AVIF, HEIC, and HEIF images are allowed',
     );
   }
 
   return extension;
+}
+
+export function resolveAllowedImageMimeType(
+  mimeType: string,
+  fileName?: string,
+): AllowedImageMimeType | null {
+  const normalized = normalizeImageMimeType(mimeType);
+  if (normalized in IMAGE_EXTENSION_BY_MIME) {
+    return normalized as AllowedImageMimeType;
+  }
+
+  const extension = fileName?.trim().toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  switch (extension) {
+    case 'gif':
+      return 'image/gif';
+    case 'avif':
+      return 'image/avif';
+    case 'heic':
+      return 'image/heic';
+    case 'heif':
+      return 'image/heif';
+    case 'jpg':
+    case 'jpeg':
+    case 'jfif':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    default:
+      return null;
+  }
 }
 
 export function buildSafeUploadedImageName(prefix: string, mimeType: string) {
@@ -95,7 +144,7 @@ export function assertStoredImageFileMatchesMimeType(
 ) {
   const normalized = normalizeImageMimeType(mimeType);
   const file = openSync(filePath, 'r');
-  const header = Buffer.alloc(12);
+  const header = Buffer.alloc(64);
 
   try {
     readSync(file, header, 0, header.length, 0);
@@ -118,7 +167,10 @@ export function assertStoredImageFileMatchesMimeType(
       (gifHeader === 'GIF87a' || gifHeader === 'GIF89a')) ||
     (normalized === 'image/webp' &&
       header.subarray(0, 4).toString('ascii') === 'RIFF' &&
-      header.subarray(8, 12).toString('ascii') === 'WEBP');
+      header.subarray(8, 12).toString('ascii') === 'WEBP') ||
+    (normalized === 'image/avif' && hasIsoBaseMediaBrand(header, AVIF_FTYP_BRANDS)) ||
+    ((normalized === 'image/heic' || normalized === 'image/heif') &&
+      hasIsoBaseMediaBrand(header, HEIF_FTYP_BRANDS));
 
   if (!matches) {
     throw new BadRequestException(
@@ -197,6 +249,10 @@ export function resolveAllowedBrowserOrigins(
     configService?.get<string>('APP_BASE_URL') ??
     process.env.APP_BASE_URL ??
     '';
+  const adminBaseUrl =
+    configService?.get<string>('ADMIN_BASE_URL') ??
+    process.env.ADMIN_BASE_URL ??
+    '';
   const nodeEnv =
     configService?.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '';
   const defaults =
@@ -218,6 +274,11 @@ export function resolveAllowedBrowserOrigins(
   const normalizedAppBaseUrl = normalizeOrigin(appBaseUrl);
   if (normalizedAppBaseUrl) {
     origins.add(normalizedAppBaseUrl);
+  }
+
+  const normalizedAdminBaseUrl = normalizeOrigin(adminBaseUrl);
+  if (normalizedAdminBaseUrl) {
+    origins.add(normalizedAdminBaseUrl);
   }
 
   for (const entry of defaults) {
@@ -253,8 +314,98 @@ export function isTrustedBrowserOrigin(
   return false;
 }
 
+export function isAdminPortRequest(
+  request: {
+    headers?: Record<string, string | string[] | undefined>;
+    hostname?: string;
+  },
+  configService?: Pick<ConfigService, 'get'>,
+) {
+  const adminPort =
+    configService?.get<string>('ADMIN_PORT') ?? process.env.ADMIN_PORT ?? '8443';
+  const adminBaseUrl =
+    configService?.get<string>('ADMIN_BASE_URL') ??
+    process.env.ADMIN_BASE_URL ??
+    '';
+  const allowedOrigins = new Set<string>();
+  const normalizedAdminBaseUrl = normalizeOrigin(adminBaseUrl);
+
+  if (normalizedAdminBaseUrl) {
+    allowedOrigins.add(normalizedAdminBaseUrl);
+  }
+
+  const forwardedHost = firstHeaderValue(request.headers?.['x-forwarded-host']);
+  const proxySecret =
+    configService?.get<string>('ADMIN_PROXY_SECRET') ??
+    process.env.ADMIN_PROXY_SECRET ??
+    '';
+  const requestProxySecret = firstHeaderValue(
+    request.headers?.['x-vishu-admin-proxy'],
+  );
+  const candidateHosts = [forwardedHost].filter(Boolean) as string[];
+
+  if (proxySecret.trim() && requestProxySecret !== proxySecret.trim()) {
+    return false;
+  }
+
+  if (candidateHosts.some((value) => hostHasPort(value, adminPort))) {
+    return true;
+  }
+
+  if (
+    candidateHosts.some((value) => {
+      const normalizedHost = value.trim().toLowerCase();
+      const hostOrigins = [
+        normalizeOrigin(`https://${normalizedHost}`),
+        normalizeOrigin(`http://${normalizedHost}`),
+      ].filter(Boolean) as string[];
+
+      return hostOrigins.some((candidate) => allowedOrigins.has(candidate));
+    })
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function firstHeaderValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value;
+}
+
+function hostHasPort(value: string | undefined, port: string) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized === `vishu.shop:${port}` || normalized.endsWith(`:${port}`);
+}
+
 function normalizeImageMimeType(mimeType: string) {
-  return mimeType.trim().toLowerCase();
+  const normalized = mimeType.trim().toLowerCase();
+  return normalized === 'image/jpg' ? 'image/jpeg' : normalized;
+}
+
+function hasIsoBaseMediaBrand(header: Buffer, allowedBrands: Set<string>) {
+  if (
+    header.length < 12 ||
+    header.subarray(4, 8).toString('ascii') !== 'ftyp'
+  ) {
+    return false;
+  }
+
+  for (let offset = 8; offset + 4 <= header.length; offset += 4) {
+    if (allowedBrands.has(header.subarray(offset, offset + 4).toString('ascii'))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function normalizeOrigin(value: string | undefined) {

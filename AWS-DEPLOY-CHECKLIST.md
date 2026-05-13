@@ -27,6 +27,8 @@ PLATFORM_SECRET_ENCRYPTION_KEY=replace-with-separate-secret
 JWT_EXPIRES_IN=7d
 CORS_ORIGIN=https://vishu.shop,https://www.vishu.shop
 APP_BASE_URL=https://vishu.shop
+ADMIN_BASE_URL=https://vishu.shop:8443
+ADMIN_PORT=8443
 MAIL_FROM=noreply@vishu.shop
 UPLOAD_DIR=uploads
 
@@ -71,6 +73,11 @@ NEXT_PUBLIC_SITE_URL=https://vishu.shop
   - guest checkout account activation emails use it
 - `CORS_ORIGIN` must be exact and must match the real web origins.
   - cookie-authenticated write requests now also rely on trusted origin / referer checks
+- Admin access should use the dedicated admin origin:
+  - `https://vishu.shop:8443/admin/login`
+  - add `https://vishu.shop:8443` to trusted API origins through `ADMIN_BASE_URL`
+  - restrict AWS Security Group inbound port `8443` to your admin IP only
+  - keep normal `443` public for storefront/customer/vendor traffic
 - SMTP must be configured before relying on:
   - vendor verification
   - password reset
@@ -117,6 +124,9 @@ Recommended public routing:
 - `https://vishu.shop` -> Next.js web on port `3001`
 - `https://www.vishu.shop` -> redirect to `https://vishu.shop`
 - `https://api.vishu.shop` -> NestJS API on port `3000`
+- `https://vishu.shop:8443/admin/*` -> Next.js admin UI on port `3001`
+- `https://vishu.shop:8443/api/*` -> NestJS API on port `3000`
+- block `/admin*` and `/api/admin*` on the normal `https://vishu.shop` listener
 - `/media/*` -> API uploads path
 
 Also enable HTTPS before public use.

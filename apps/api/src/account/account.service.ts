@@ -22,9 +22,14 @@ import {
 } from '../common/security/stored-secrets.utils';
 import { DatabaseService } from '../database/database.service';
 import { MailService } from '../mail/mail.service';
-import { VendorAccessService } from '../vendor-access/vendor-access.service';
+import {
+  VendorAccessService,
+  type VendorTeamRole,
+} from '../vendor-access/vendor-access.service';
 import {
   ChangePasswordDto,
+  CreateReturnRequestDto,
+  CreateSupportTicketDto,
   CreateVendorTeamInviteDto,
   CreatePaymentMethodDto,
   UpdateAccountProfileDto,
@@ -72,6 +77,8 @@ export class AccountService {
     const result = await this.databaseService.query<{
       id: string;
       email: string;
+      first_name: string | null;
+      last_name: string | null;
       full_name: string | null;
       phone_number: string | null;
       role: string;
@@ -79,7 +86,7 @@ export class AccountService {
       created_at: Date;
       updated_at: Date;
     }>(
-      `SELECT TOP 1 id, email, full_name, phone_number, role, email_verified_at, created_at, updated_at
+      `SELECT TOP 1 id, email, first_name, last_name, full_name, phone_number, role, email_verified_at, created_at, updated_at
        FROM users
        WHERE id = $1`,
       [userId],
@@ -170,12 +177,16 @@ export class AccountService {
         ])
       : [{ rows: [] }];
 
-    const canViewFinance = vendorAccess?.access_role === 'shop_holder';
-    const canManageSettings = vendorAccess?.access_role === 'shop_holder';
+    const canViewFinance =
+      vendorAccess?.access_role === 'shop_holder' ||
+      vendorAccess?.access_role === 'manager';
+    const canManageSettings = canViewFinance;
 
     return {
       id: user.id,
       email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
       fullName: user.full_name,
       phoneNumber: user.phone_number,
       emailVerifiedAt: user.email_verified_at,
@@ -194,7 +205,7 @@ export class AccountService {
               accessRole: vendorAccess.access_role,
               isPrimaryOwner: vendorAccess.is_primary_owner,
               canManageSettings,
-              canManageTeam: vendorAccess.access_role === 'shop_holder',
+              canManageTeam: vendorAccess.access_role !== 'employee',
               canViewFinance,
               supportEmail: vendorDetails.rows[0].support_email,
               supportPhone: vendorDetails.rows[0].support_phone,
@@ -247,6 +258,10 @@ export class AccountService {
       claimableGuestOrders,
       orderTotals,
       pendingEmailChange,
+      favorites,
+      returnRequests,
+      supportTickets,
+      notifications,
     ] = await Promise.all([
       this.databaseService.query<{
         id: string;
@@ -349,6 +364,10 @@ export class AccountService {
         [userId],
       ),
       this.getPendingCustomerEmailChange(userId),
+      this.loadFavoriteProducts(userId),
+      this.loadReturnRequests(userId),
+      this.loadSupportTickets(userId),
+      this.loadCustomerNotifications(userId),
     ]);
 
     const user = profile.rows[0];
@@ -429,6 +448,455 @@ export class AccountService {
       guestOrderRecovery: {
         claimableCount: claimableGuestOrders.rows[0]?.claimable_count ?? 0,
       },
+      favorites: favorites.items,
+      returnRequests: returnRequests.items,
+      supportTickets: supportTickets.items,
+      notifications: notifications.items,
+    };
+  }
+
+  async getFavorites(userId: string) {
+    return this.loadFavoriteProducts(userId);
+  }
+
+  async addFavorite(userId: string, productId: string) {
+    const product = await this.databaseService.query<{ id: string }>(
+      `SELECT TOP 1 p.id
+       FROM products p
+       INNER JOIN vendors v ON v.id = p.vendor_id
+       WHERE p.id = $1
+         AND p.is_listed = 1
+         AND v.is_active = 1
+         AND v.is_verified = 1
+         AND ISNULL(v.admin_status, 'approved') = 'approved'`,
+      [productId],
+    );
+
+    if (!product.rows[0]) {
+      throw new NotFoundException('Product not found');
+    }
+
+    await this.databaseService.query(
+      `IF NOT EXISTS (
+         SELECT 1 FROM customer_favorites WHERE customer_id = $1 AND product_id = $2
+       )
+       INSERT INTO customer_favorites (customer_id, product_id)
+       VALUES ($1, $2)`,
+      [userId, productId],
+    );
+
+    return this.loadFavoriteProducts(userId);
+  }
+
+  async removeFavorite(userId: string, productId: string) {
+    await this.databaseService.query(
+      `DELETE FROM customer_favorites
+       WHERE customer_id = $1 AND product_id = $2`,
+      [userId, productId],
+    );
+
+    return this.loadFavoriteProducts(userId);
+  }
+
+  async getReturnRequests(userId: string) {
+    return this.loadReturnRequests(userId);
+  }
+
+  async createReturnRequest(userId: string, dto: CreateReturnRequestDto) {
+    const order = await this.databaseService.query<{
+      id: string;
+      status: string;
+    }>(
+      `SELECT TOP 1 id, status
+       FROM orders
+       WHERE id = $1 AND customer_id = $2`,
+      [dto.orderId, userId],
+    );
+
+    const orderRow = order.rows[0];
+    if (!orderRow) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (orderRow.status !== 'delivered') {
+      throw new BadRequestException(
+        'Return requests are available after delivery',
+      );
+    }
+
+    const normalizedItemId = dto.orderItemId?.trim() || null;
+    if (normalizedItemId) {
+      const item = await this.databaseService.query<{ id: string }>(
+        `SELECT TOP 1 id
+         FROM order_items
+         WHERE id = $1 AND order_id = $2`,
+        [normalizedItemId, dto.orderId],
+      );
+
+      if (!item.rows[0]) {
+        throw new NotFoundException('Order item not found');
+      }
+    }
+
+    await this.databaseService.query(
+      `INSERT INTO customer_return_requests (
+         customer_id, order_id, order_item_id, reason, note
+       )
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        userId,
+        dto.orderId,
+        normalizedItemId,
+        dto.reason.trim(),
+        dto.note?.trim() || null,
+      ],
+    );
+
+    await this.createCustomerNotification(userId, {
+      type: 'return_request',
+      title: 'Return request received',
+      body: 'Your return request is now waiting for review.',
+      actionUrl: '/account?section=returns',
+    });
+
+    return this.loadReturnRequests(userId);
+  }
+
+  async getSupportTickets(userId: string) {
+    return this.loadSupportTickets(userId);
+  }
+
+  async createSupportTicket(userId: string, dto: CreateSupportTicketDto) {
+    const normalizedOrderId = dto.orderId?.trim() || null;
+    if (normalizedOrderId) {
+      const order = await this.databaseService.query<{ id: string }>(
+        `SELECT TOP 1 id
+         FROM orders
+         WHERE id = $1 AND customer_id = $2`,
+        [normalizedOrderId, userId],
+      );
+
+      if (!order.rows[0]) {
+        throw new NotFoundException('Order not found');
+      }
+    }
+
+    await this.databaseService.query(
+      `INSERT INTO customer_support_tickets (
+         customer_id, order_id, subject, message
+       )
+       VALUES ($1, $2, $3, $4)`,
+      [
+        userId,
+        normalizedOrderId,
+        dto.subject.trim(),
+        dto.message.trim(),
+      ],
+    );
+
+    await this.createCustomerNotification(userId, {
+      type: 'support_ticket',
+      title: 'Support request opened',
+      body: 'We saved your support request and will follow it from your account.',
+      actionUrl: '/account?section=support',
+    });
+
+    return this.loadSupportTickets(userId);
+  }
+
+  async getNotifications(userId: string) {
+    return this.loadCustomerNotifications(userId);
+  }
+
+  async markNotificationRead(userId: string, id: string) {
+    await this.databaseService.query(
+      `UPDATE customer_notifications
+       SET read_at = COALESCE(read_at, SYSDATETIME())
+       WHERE id = $1 AND customer_id = $2`,
+      [id, userId],
+    );
+
+    return this.loadCustomerNotifications(userId);
+  }
+
+  private async loadFavoriteProducts(userId: string) {
+    const result = await this.databaseService.query<{
+      product_id: string;
+      created_at: Date;
+      id: string;
+      title: string;
+      description: string;
+      price: number | string;
+      stock: number;
+      is_listed: boolean;
+      department: string;
+      category: string;
+      color: string | null;
+      size: string | null;
+      product_code: string | null;
+      vendor_id: string;
+      shop_name: string;
+      logo_url: string | null;
+      product_created_at: Date;
+      image_url: string | null;
+      average_rating: number | string | null;
+      review_count: number;
+      vendor_average_rating: number | string | null;
+      vendor_review_count: number;
+    }>(
+      `SELECT
+         cf.product_id,
+         cf.created_at,
+         p.id,
+         p.title,
+         p.description,
+         p.price,
+         p.stock,
+         p.is_listed,
+         p.department,
+         p.category,
+         p.color,
+         p.size,
+         p.product_code,
+         v.id AS vendor_id,
+         v.shop_name,
+         v.logo_url,
+         p.created_at AS product_created_at,
+         pi.image_url,
+         prs.average_rating,
+         ISNULL(prs.review_count, 0) AS review_count,
+         vrs.average_rating AS vendor_average_rating,
+         ISNULL(vrs.review_count, 0) AS vendor_review_count
+       FROM customer_favorites cf
+       INNER JOIN products p ON p.id = cf.product_id
+       INNER JOIN vendors v ON v.id = p.vendor_id
+       OUTER APPLY (
+         SELECT TOP 1 image_url
+         FROM product_images
+         WHERE product_id = p.id
+         ORDER BY sort_order ASC, id ASC
+       ) pi
+       OUTER APPLY (
+         SELECT AVG(CAST(rating AS DECIMAL(10, 2))) AS average_rating, COUNT(*) AS review_count
+         FROM product_reviews
+         WHERE product_id = p.id
+       ) prs
+       OUTER APPLY (
+         SELECT AVG(CAST(rating AS DECIMAL(10, 2))) AS average_rating, COUNT(*) AS review_count
+         FROM vendor_reviews
+         WHERE vendor_id = v.id
+       ) vrs
+       WHERE cf.customer_id = $1
+         AND p.is_listed = 1
+         AND v.is_active = 1
+         AND v.is_verified = 1
+         AND ISNULL(v.admin_status, 'approved') = 'approved'
+       ORDER BY cf.created_at DESC`,
+      [userId],
+    );
+
+    return {
+      items: result.rows.map((row) => ({
+        productId: row.product_id,
+        createdAt: row.created_at,
+        product: {
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          price: Number(row.price),
+          stock: row.stock,
+          isListed: row.is_listed,
+          department: row.department,
+          category: row.category,
+          color: row.color,
+          size: row.size,
+          productCode: row.product_code,
+          ratingSummary: this.mapAccountRatingSummary(
+            row.average_rating,
+            row.review_count,
+          ),
+          vendor: {
+            id: row.vendor_id,
+            shopName: row.shop_name,
+            logoUrl: row.logo_url,
+            ratingSummary: this.mapAccountRatingSummary(
+              row.vendor_average_rating,
+              row.vendor_review_count,
+            ),
+          },
+          colors: [],
+          sizeVariants: [],
+          images: row.image_url ? [row.image_url] : [],
+          createdAt: row.product_created_at,
+        },
+      })),
+    };
+  }
+
+  private async loadReturnRequests(userId: string) {
+    const result = await this.databaseService.query<{
+      id: string;
+      order_id: string;
+      order_number: string | null;
+      order_item_id: string | null;
+      product_title: string | null;
+      reason: string;
+      note: string | null;
+      status: string;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT TOP 20
+         rr.id,
+         rr.order_id,
+         o.order_number,
+         rr.order_item_id,
+         p.title AS product_title,
+         rr.reason,
+         rr.note,
+         rr.status,
+         rr.created_at,
+         rr.updated_at
+       FROM customer_return_requests rr
+       INNER JOIN orders o ON o.id = rr.order_id
+       LEFT JOIN order_items oi ON oi.id = rr.order_item_id
+       LEFT JOIN products p ON p.id = oi.product_id
+       WHERE rr.customer_id = $1
+       ORDER BY rr.created_at DESC`,
+      [userId],
+    );
+
+    return {
+      items: result.rows.map((row) => ({
+        id: row.id,
+        orderId: row.order_id,
+        orderNumber: row.order_number ?? row.order_id,
+        orderItemId: row.order_item_id,
+        productTitle: row.product_title,
+        reason: row.reason,
+        note: row.note,
+        status: row.status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    };
+  }
+
+  private async loadSupportTickets(userId: string) {
+    const result = await this.databaseService.query<{
+      id: string;
+      order_id: string | null;
+      order_number: string | null;
+      subject: string;
+      message: string;
+      status: string;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT TOP 20
+         st.id,
+         st.order_id,
+         o.order_number,
+         st.subject,
+         st.message,
+         st.status,
+         st.created_at,
+         st.updated_at
+       FROM customer_support_tickets st
+       LEFT JOIN orders o ON o.id = st.order_id
+       WHERE st.customer_id = $1
+       ORDER BY st.created_at DESC`,
+      [userId],
+    );
+
+    return {
+      items: result.rows.map((row) => ({
+        id: row.id,
+        orderId: row.order_id,
+        orderNumber: row.order_number,
+        subject: row.subject,
+        message: row.message,
+        status: row.status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    };
+  }
+
+  private async loadCustomerNotifications(userId: string) {
+    const result = await this.databaseService.query<{
+      id: string;
+      notification_type: string;
+      title: string;
+      body: string;
+      action_url: string | null;
+      read_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT TOP 20
+         id,
+         notification_type,
+         title,
+         body,
+         action_url,
+         read_at,
+         created_at
+       FROM customer_notifications
+       WHERE customer_id = $1
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+
+    return {
+      items: result.rows.map((row) => ({
+        id: row.id,
+        type: row.notification_type,
+        title: row.title,
+        body: row.body,
+        actionUrl: row.action_url,
+        readAt: row.read_at,
+        createdAt: row.created_at,
+      })),
+    };
+  }
+
+  private async createCustomerNotification(
+    userId: string,
+    input: {
+      type: string;
+      title: string;
+      body: string;
+      actionUrl?: string | null;
+    },
+  ) {
+    await this.databaseService.query(
+      `INSERT INTO customer_notifications (
+         customer_id, notification_type, title, body, action_url
+       )
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        userId,
+        input.type,
+        input.title,
+        input.body,
+        input.actionUrl ?? null,
+      ],
+    );
+  }
+
+  private mapAccountRatingSummary(
+    average: number | string | null,
+    count: number,
+  ) {
+    const normalizedCount = Number(count ?? 0);
+    const normalizedAverage =
+      normalizedCount > 0 ? Number(Number(average ?? 0).toFixed(1)) : null;
+
+    return {
+      average: Number.isFinite(normalizedAverage ?? NaN)
+        ? normalizedAverage
+        : null,
+      count: normalizedCount,
     };
   }
 
@@ -743,10 +1211,12 @@ export class AccountService {
   ) {
     const currentResult = await this.databaseService.query<{
       email: string;
+      first_name: string | null;
+      last_name: string | null;
       full_name: string | null;
       role: 'admin' | 'vendor' | 'customer';
     }>(
-      `SELECT TOP 1 email, full_name, role
+      `SELECT TOP 1 email, first_name, last_name, full_name, role
        FROM users
        WHERE id = $1`,
       [userId],
@@ -794,8 +1264,46 @@ export class AccountService {
       values.push(normalizedEmail);
       updates.push(`email = $${values.length}`);
     }
-    if (dto.fullName !== undefined) {
-      values.push(dto.fullName.trim() || null);
+    const splitFullName =
+      dto.fullName !== undefined &&
+      dto.firstName === undefined &&
+      dto.lastName === undefined
+        ? this.splitFullName(dto.fullName)
+        : null;
+    const nextFirstName =
+      dto.firstName !== undefined
+        ? dto.firstName.trim()
+        : splitFullName
+          ? splitFullName.firstName
+          : currentUser.first_name;
+    const nextLastName =
+      dto.lastName !== undefined
+        ? dto.lastName.trim()
+        : splitFullName
+          ? splitFullName.lastName
+          : currentUser.last_name;
+    const nextFullName =
+      dto.firstName !== undefined || dto.lastName !== undefined
+        ? [nextFirstName, nextLastName]
+            .map((part) => part?.trim())
+            .filter(Boolean)
+            .join(' ') || null
+        : dto.fullName?.trim() || null;
+
+    if (dto.firstName !== undefined || splitFullName) {
+      values.push(nextFirstName);
+      updates.push(`first_name = $${values.length}`);
+    }
+    if (dto.lastName !== undefined || splitFullName) {
+      values.push(nextLastName);
+      updates.push(`last_name = $${values.length}`);
+    }
+    if (
+      dto.fullName !== undefined ||
+      dto.firstName !== undefined ||
+      dto.lastName !== undefined
+    ) {
+      values.push(nextFullName);
       updates.push(`full_name = $${values.length}`);
     }
     if (dto.phoneNumber !== undefined) {
@@ -996,7 +1504,7 @@ export class AccountService {
     dto: UpdateVendorBankDetailsDto,
   ) {
     const vendor =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
 
     await this.databaseService.query(
       `UPDATE vendors
@@ -1020,19 +1528,21 @@ export class AccountService {
     userId: string,
     dto: UpdateVendorProfileDto,
     logoImage?: Express.Multer.File,
+    bannerImage?: Express.Multer.File,
   ) {
     const vendorAccess =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
 
     const vendor = await this.databaseService.query<{
       id: string;
       logo_url: string | null;
-    }>('SELECT TOP 1 id, logo_url FROM vendors WHERE id = $1', [
+      banner_url: string | null;
+    }>('SELECT TOP 1 id, logo_url, banner_url FROM vendors WHERE id = $1', [
       vendorAccess.id,
     ]);
 
     if (!vendor.rows[0]) {
-      this.cleanupTemporaryFile(logoImage);
+      this.cleanupTemporaryFiles(logoImage, bannerImage);
       throw new NotFoundException('Vendor account not found');
     }
 
@@ -1043,7 +1553,7 @@ export class AccountService {
         [normalizedEmail, userId],
       );
       if (existing.rows[0]) {
-        this.cleanupTemporaryFile(logoImage);
+        this.cleanupTemporaryFiles(logoImage, bannerImage);
         throw new BadRequestException(
           'Support email is already in use by another account',
         );
@@ -1051,11 +1561,16 @@ export class AccountService {
     }
 
     let storedLogoUrl: string | null = null;
+    let storedBannerUrl: string | null = null;
     const currentLogoUrl = vendor.rows[0].logo_url;
+    const currentBannerUrl = vendor.rows[0].banner_url;
 
     try {
       storedLogoUrl = logoImage
-        ? this.storeVendorLogo(vendor.rows[0].id, logoImage)
+        ? this.storeVendorBrandingImage(vendor.rows[0].id, logoImage, 'logo')
+        : null;
+      storedBannerUrl = bannerImage
+        ? this.storeVendorBrandingImage(vendor.rows[0].id, bannerImage, 'banner')
         : null;
 
       await this.databaseService.query(
@@ -1079,7 +1594,7 @@ export class AccountService {
           dto.supportPhone?.trim() || null,
           dto.shopDescription?.trim() || null,
           storedLogoUrl ?? dto.logoUrl?.trim() ?? null,
-          dto.bannerUrl?.trim() || null,
+          storedBannerUrl ?? dto.bannerUrl?.trim() ?? null,
           dto.businessAddress?.trim() || null,
           dto.returnPolicy?.trim() || null,
           dto.businessHours?.trim() || null,
@@ -1091,14 +1606,19 @@ export class AccountService {
     } catch (error) {
       if (storedLogoUrl) {
         this.deleteStoredMedia(storedLogoUrl);
-      } else {
-        this.cleanupTemporaryFile(logoImage);
       }
+      if (storedBannerUrl) {
+        this.deleteStoredMedia(storedBannerUrl);
+      }
+      this.cleanupTemporaryFiles(logoImage, bannerImage);
       throw error;
     }
 
     if (storedLogoUrl && currentLogoUrl && currentLogoUrl !== storedLogoUrl) {
       this.deleteStoredMedia(currentLogoUrl);
+    }
+    if (storedBannerUrl && currentBannerUrl && currentBannerUrl !== storedBannerUrl) {
+      this.deleteStoredMedia(currentBannerUrl);
     }
 
     return this.getSettings(userId);
@@ -1106,7 +1626,7 @@ export class AccountService {
 
   async getVendorTeamAccess(userId: string) {
     const access =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
 
     const [members, invites] = await Promise.all([
       this.databaseService.query<{
@@ -1114,7 +1634,7 @@ export class AccountService {
         user_id: string;
         full_name: string | null;
         email: string;
-        role: 'shop_holder' | 'employee';
+        role: VendorTeamRole;
         status: 'pending' | 'active' | 'removed';
         joined_at: Date | null;
         updated_at: Date;
@@ -1140,7 +1660,11 @@ export class AccountService {
            AND tm.status <> 'removed'
          ORDER BY
            CASE WHEN v.user_id = tm.user_id THEN 0 ELSE 1 END,
-           CASE WHEN tm.role = 'shop_holder' THEN 0 ELSE 1 END,
+           CASE
+             WHEN tm.role = 'shop_holder' THEN 0
+             WHEN tm.role = 'manager' THEN 1
+             ELSE 2
+           END,
            u.email ASC`,
         [access.id],
       ),
@@ -1148,7 +1672,7 @@ export class AccountService {
         id: string;
         user_id: string | null;
         email: string;
-        role: 'shop_holder' | 'employee';
+        role: VendorTeamRole;
         note: string | null;
         status: 'pending' | 'accepted' | 'revoked' | 'expired';
         invited_at: Date;
@@ -1179,7 +1703,7 @@ export class AccountService {
     return {
       vendorId: access.id,
       currentUserRole: access.access_role,
-      canManageTeam: true,
+      canManageTeam: access.access_role !== 'employee',
       members: members.rows.map((member) => ({
         id: member.id,
         userId: member.user_id,
@@ -1208,9 +1732,11 @@ export class AccountService {
 
   async createVendorTeamInvite(userId: string, dto: CreateVendorTeamInviteDto) {
     const access =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
     const normalizedEmail = dto.email.trim().toLowerCase();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+
+    this.assertCanAssignVendorRole(access.access_role, dto.role);
 
     const delivery = await this.databaseService.withTransaction(
       async (client) => {
@@ -1396,7 +1922,7 @@ export class AccountService {
 
   async resendVendorTeamInvite(userId: string, inviteId: string) {
     const access =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
 
     const delivery = await this.databaseService.withTransaction(
@@ -1406,7 +1932,7 @@ export class AccountService {
           vendor_id: string;
           user_id: string | null;
           email: string;
-          role: 'shop_holder' | 'employee';
+          role: VendorTeamRole;
         }>(
           `SELECT TOP 1 id, vendor_id, user_id, email, role
          FROM vendor_team_invites
@@ -1420,6 +1946,8 @@ export class AccountService {
         if (!current) {
           throw new NotFoundException('Pending invite not found');
         }
+
+        this.assertCanManageVendorRole(access.access_role, current.role);
 
         let resetToken: string | null = null;
         if (current.user_id) {
@@ -1496,13 +2024,13 @@ export class AccountService {
     dto: UpdateVendorTeamMemberRoleDto,
   ) {
     const access =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
 
     await this.databaseService.withTransaction(async (client) => {
       const member = await client.query<{
         id: string;
         user_id: string;
-        role: 'shop_holder' | 'employee';
+        role: VendorTeamRole;
         status: 'pending' | 'active' | 'removed';
         is_primary_owner: boolean;
       }>(
@@ -1532,6 +2060,9 @@ export class AccountService {
           'The primary shop holder role cannot be changed',
         );
       }
+
+      this.assertCanManageVendorRole(access.access_role, current.role);
+      this.assertCanAssignVendorRole(access.access_role, dto.role);
 
       if (current.role === 'shop_holder' && dto.role !== 'shop_holder') {
         const activeHolderCount = await this.countActiveShopHolders(
@@ -1572,13 +2103,13 @@ export class AccountService {
 
   async removeVendorTeamMember(userId: string, memberId: string) {
     const access =
-      await this.vendorAccessService.requireShopHolderAccess(userId);
+      await this.vendorAccessService.requireManagerAccess(userId);
 
     await this.databaseService.withTransaction(async (client) => {
       const member = await client.query<{
         id: string;
         user_id: string;
-        role: 'shop_holder' | 'employee';
+        role: VendorTeamRole;
         status: 'pending' | 'active' | 'removed';
         is_primary_owner: boolean;
       }>(
@@ -1608,6 +2139,8 @@ export class AccountService {
           'The primary shop holder cannot be removed',
         );
       }
+
+      this.assertCanManageVendorRole(access.access_role, current.role);
 
       if (current.role === 'shop_holder') {
         const activeHolderCount = await this.countActiveShopHolders(
@@ -2072,7 +2605,11 @@ export class AccountService {
     }
   }
 
-  private storeVendorLogo(vendorId: string, file: Express.Multer.File) {
+  private storeVendorBrandingImage(
+    vendorId: string,
+    file: Express.Multer.File,
+    kind: 'logo' | 'banner',
+  ) {
     const targetDir = join(
       process.cwd(),
       'uploads',
@@ -2086,11 +2623,11 @@ export class AccountService {
     }
 
     const extension = getSafeImageExtensionForMimeType(file.mimetype);
-    const fileName = `logo-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
+    const fileName = `${kind}-${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
     const targetPath = join(targetDir, fileName);
 
     if (!existsSync(file.path)) {
-      throw new BadRequestException('Uploaded logo could not be processed');
+      throw new BadRequestException(`Uploaded ${kind} could not be processed`);
     }
 
     assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
@@ -2116,6 +2653,12 @@ export class AccountService {
     }
   }
 
+  private cleanupTemporaryFiles(...files: Array<Express.Multer.File | undefined>) {
+    for (const file of files) {
+      this.cleanupTemporaryFile(file);
+    }
+  }
+
   private async countActiveShopHolders(
     vendorId: string,
     client: {
@@ -2137,10 +2680,44 @@ export class AccountService {
     return Number(result.rows[0]?.holder_count ?? 0);
   }
 
+  private assertCanAssignVendorRole(
+    actorRole: VendorTeamRole,
+    targetRole: VendorTeamRole,
+  ) {
+    if (actorRole === 'shop_holder') {
+      return;
+    }
+
+    if (actorRole === 'manager' && targetRole === 'employee') {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Managers can only add or keep team members as Employees',
+    );
+  }
+
+  private assertCanManageVendorRole(
+    actorRole: VendorTeamRole,
+    targetRole: VendorTeamRole,
+  ) {
+    if (actorRole === 'shop_holder') {
+      return;
+    }
+
+    if (actorRole === 'manager' && targetRole === 'employee') {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Managers can only manage Employee team members',
+    );
+  }
+
   private async sendVendorTeamInviteEmail(payload: {
     email: string;
     shopName: string;
-    role: 'shop_holder' | 'employee';
+    role: VendorTeamRole;
     inviterName: string;
     resetToken: string | null;
   }) {
@@ -2154,5 +2731,18 @@ export class AccountService {
         : '/login',
       actionLabel: payload.resetToken ? 'Set up account' : 'Sign in',
     });
+  }
+
+  private splitFullName(value?: string | null) {
+    const normalized = value?.trim() || '';
+    if (!normalized) {
+      return { firstName: null, lastName: null };
+    }
+
+    const [firstName, ...rest] = normalized.split(/\s+/);
+    return {
+      firstName: firstName || null,
+      lastName: rest.join(' ') || null,
+    };
   }
 }

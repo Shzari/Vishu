@@ -64,8 +64,8 @@ function VendorVerifyPageContent() {
       <section className="auth-intro">
         <h1 className="hero-title">Verify your vendor account.</h1>
         <p className="hero-copy">
-          Finish email verification, then continue to login and wait for admin
-          approval if needed.
+          Finish email verification from your inbox, then continue to login and
+          manage your shop.
         </p>
       </section>
 

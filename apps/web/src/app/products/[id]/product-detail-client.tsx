@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { useCart } from "@/components/providers";
+import { useAuth, useCart } from "@/components/providers";
+import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { FavoriteToggleButton } from "@/components/favorite-toggle-button";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import {
@@ -20,8 +21,11 @@ export function ProductDetailClient() {
   const [product, setProduct] = useState<Product | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | undefined>();
+  const [selectedSizeId, setSelectedSizeId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
   const { addItem } = useCart();
+  const { currentRole, profile } = useAuth();
 
   useEffect(() => {
     async function loadProduct() {
@@ -32,6 +36,9 @@ export function ProductDetailClient() {
         ]);
         setProduct(data);
         setSelectedImage(data.images[0]);
+        setSelectedSizeId(
+          data.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "",
+        );
         setRelatedProducts(
           catalog
             .filter((entry) => entry.id !== data.id)
@@ -76,13 +83,49 @@ export function ProductDetailClient() {
   const departmentBrowseHref = isCatalogDepartmentVisible(product.department)
     ? `/?department=${encodeURIComponent(product.department)}`
     : null;
+  const productSizeOptions =
+    product.sizeOptions?.length
+      ? product.sizeOptions
+      : product.sizeVariants.map((variant) => ({
+          ...variant,
+          isAvailable: true,
+        }));
+  const selectedSize =
+    product.sizeVariants.find((entry) => entry.id === selectedSizeId) ??
+    product.sizeOptions?.find((entry) => entry.id === selectedSizeId) ??
+    null;
+  const selectedStock = selectedSize?.stock ?? product.stock;
+  const requiresSizeSelection = productSizeOptions.length > 0;
+  const canAddToCart =
+    product.stock > 0 && (!requiresSizeSelection || Boolean(selectedSize && selectedStock > 0));
+  const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
+
+  function addSelectedProductToCart() {
+    if (!product) return;
+
+    addItem(
+      {
+        productId: product.id,
+        vendorId: product.vendor?.id ?? null,
+        sizeId: selectedSize?.id ?? null,
+        title: product.title,
+        price: product.price,
+        image: product.images[0],
+        color: product.color ?? product.colors[0]?.name ?? null,
+        size: selectedSize?.label ?? product.size ?? null,
+        quantity: 1,
+        stock: selectedStock,
+      },
+      { openCart: false },
+    );
+    setCartNotice(`${product.title} added to cart.`);
+    window.setTimeout(() => setCartNotice(null), 2600);
+  }
 
   return (
     <div className="product-detail-shell stack">
+      {cartNotice ? <div className="cart-added-toast">{cartNotice}</div> : null}
       <div className="product-detail-top-links">
-        <Link className="table-link" href={categoryBrowseHref}>
-          Back to {formatCatalogLabel(product.category)}
-        </Link>
         <Link className="table-link" href="/shops">
           Browse shops
         </Link>
@@ -124,30 +167,72 @@ export function ProductDetailClient() {
           <h1 className="product-detail-title">{product.title}</h1>
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
           <div className="product-stock detail-stock">
-            {product.stock > 0 ? `In stock: ${product.stock}` : "Currently unavailable"}
+            {product.stock > 0
+              ? selectedSize
+                ? `Selected size stock: ${selectedStock}`
+                : `In stock: ${product.stock}`
+              : "Currently unavailable"}
           </div>
+          {productSizeOptions.length > 0 ? (
+            <div className="product-size-picker">
+              <span>Select size</span>
+              <div className="product-size-options">
+                {productSizeOptions.map((variant) => {
+                  const isUnavailable = !variant.isAvailable || variant.stock === 0;
+
+                  return (
+                    <button
+                      key={variant.id}
+                      type="button"
+                      className={[
+                        "product-size-option",
+                        selectedSizeId === variant.id ? "selected" : "",
+                        isUnavailable ? "unavailable" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      disabled={isUnavailable}
+                      onClick={() => setSelectedSizeId(variant.id)}
+                      aria-label={`${variant.label}${isUnavailable ? " sold out" : ` ${variant.stock} in stock`}`}
+                    >
+                      {formatProductAttributeLabel(variant.label)}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedSize ? (
+                <p className="muted">
+                  {selectedStock === 1
+                    ? "Only 1 left in this size."
+                    : `${selectedStock} available in this size.`}
+                </p>
+              ) : (
+                <p className="muted">Choose an available size before adding to cart.</p>
+              )}
+            </div>
+          ) : null}
           <p className="product-detail-copy">{product.description}</p>
 
           <div className="product-detail-actions">
             <button
               type="button"
               className="button"
-              onClick={() =>
-                addItem({
-                  productId: product.id,
-                  title: product.title,
-                  price: product.price,
-                  image: product.images[0],
-                  color: product.color ?? product.colors[0]?.name ?? null,
-                  size: product.size ?? product.sizeVariants[0]?.label ?? null,
-                  quantity: 1,
-                  stock: product.stock,
-                })
-              }
-              disabled={product.stock === 0}
+              onClick={addSelectedProductToCart}
+              disabled={!canAddToCart || isOwnVendorProduct}
             >
-              {product.stock === 0 ? "Sold Out" : "Add to Cart"}
+              {product.stock === 0
+                ? "Sold Out"
+                : isOwnVendorProduct
+                  ? "Your product"
+                : requiresSizeSelection && !selectedSize
+                  ? "Select Size"
+                  : "Add to Cart"}
             </button>
+            <FavoriteStarButton
+              product={product}
+              className="product-detail-favorite-button"
+              showLabel
+            />
             <Link className="button-secondary" href="/cart">
               Go to Cart
             </Link>

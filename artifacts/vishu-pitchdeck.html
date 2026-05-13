@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vishu Pitch Deck</title>
+  <style>
+    @page {
+      size: 13.333in 7.5in;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #111111;
+      color: #171717;
+      font-family: Manrope, Inter, Arial, sans-serif;
+    }
+
+    .deck {
+      width: 13.333in;
+      margin: 0 auto;
+      background: #ffffff;
+    }
+
+    .slide {
+      position: relative;
+      width: 13.333in;
+      height: 7.5in;
+      page-break-after: always;
+      overflow: hidden;
+      padding: 0.58in 0.68in;
+      background: #fffdf8;
+    }
+
+    .slide.dark {
+      background: #151515;
+      color: #ffffff;
+    }
+
+    .slide.split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 0.45in;
+      align-items: center;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.3in;
+      margin-bottom: 0.35in;
+      color: inherit;
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.12in;
+      font-weight: 900;
+      letter-spacing: 0;
+      font-size: 0.22in;
+    }
+
+    .logo-mark {
+      width: 0.42in;
+      height: 0.42in;
+      display: grid;
+      place-items: center;
+      border-radius: 0.11in;
+      background: #171717;
+      color: #ffffff;
+      font-weight: 900;
+    }
+
+    .dark .logo-mark {
+      background: #ffffff;
+      color: #171717;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      min-height: 0.32in;
+      padding: 0.06in 0.15in;
+      border-radius: 99px;
+      border: 1px solid rgba(23, 23, 23, 0.14);
+      background: rgba(255, 255, 255, 0.72);
+      color: #171717;
+      font-size: 0.13in;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .dark .tag {
+      border-color: rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      max-width: 8.3in;
+      font-size: 0.74in;
+      line-height: 0.93;
+      letter-spacing: 0;
+      font-weight: 900;
+    }
+
+    h2 {
+      max-width: 7.2in;
+      font-size: 0.5in;
+      line-height: 0.98;
+      letter-spacing: 0;
+      font-weight: 900;
+    }
+
+    h3 {
+      font-size: 0.21in;
+      line-height: 1.1;
+      font-weight: 900;
+    }
+
+    .lead {
+      max-width: 7.2in;
+      margin-top: 0.25in;
+      color: #4b5563;
+      font-size: 0.2in;
+      line-height: 1.45;
+      font-weight: 600;
+    }
+
+    .dark .lead {
+      color: #d4d4d8;
+    }
+
+    .muted {
+      color: #60646c;
+      font-size: 0.15in;
+      line-height: 1.42;
+      font-weight: 600;
+    }
+
+    .dark .muted {
+      color: #d4d4d8;
+    }
+
+    .hero-band {
+      position: absolute;
+      right: -0.2in;
+      bottom: -0.25in;
+      width: 6.5in;
+      height: 3.2in;
+      border-radius: 0.28in 0 0 0;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.1)),
+        linear-gradient(120deg, #f4f1e8, #ffffff 55%, #cfd6da);
+      border: 1px solid rgba(23, 23, 23, 0.08);
+    }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.14in;
+      width: 100%;
+    }
+
+    .photo-card {
+      min-height: 1.72in;
+      padding: 0.22in;
+      border-radius: 0.13in;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.46)),
+        linear-gradient(135deg, #f7f0dc, #d8e1e8);
+      border: 1px solid rgba(23, 23, 23, 0.08);
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 0.12in;
+      color: #171717;
+    }
+
+    .photo-card:nth-child(2) {
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.4)),
+        linear-gradient(135deg, #e7ebef, #fff7d9);
+    }
+
+    .photo-card:nth-child(3) {
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.4)),
+        linear-gradient(135deg, #efe2d6, #dce7de);
+    }
+
+    .photo-card:nth-child(4) {
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.34)),
+        linear-gradient(135deg, #dee6ef, #f7f1e5);
+    }
+
+    .number {
+      font-size: 0.46in;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.22in;
+      margin-top: 0.42in;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.24in;
+      margin-top: 0.34in;
+    }
+
+    .card {
+      min-height: 1.45in;
+      padding: 0.24in;
+      border-radius: 0.13in;
+      border: 1px solid rgba(23, 23, 23, 0.09);
+      background: #ffffff;
+      display: grid;
+      gap: 0.12in;
+      align-content: start;
+    }
+
+    .dark .card {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.16);
+      color: #ffffff;
+    }
+
+    .metric {
+      display: grid;
+      gap: 0.08in;
+      padding: 0.18in 0;
+      border-top: 1px solid rgba(23, 23, 23, 0.1);
+    }
+
+    .metric strong {
+      font-size: 0.34in;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.09in;
+      margin-top: 0.24in;
+    }
+
+    .pill {
+      display: inline-flex;
+      min-height: 0.32in;
+      align-items: center;
+      border-radius: 99px;
+      padding: 0.06in 0.14in;
+      background: #171717;
+      color: #ffffff;
+      font-size: 0.14in;
+      font-weight: 800;
+    }
+
+    .dark .pill {
+      background: #ffffff;
+      color: #171717;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.16in;
+      margin-top: 0.42in;
+    }
+
+    .step {
+      min-height: 1.45in;
+      padding: 0.2in;
+      border-radius: 0.13in;
+      background: #ffffff;
+      border: 1px solid rgba(23, 23, 23, 0.08);
+    }
+
+    .step span {
+      display: inline-grid;
+      place-items: center;
+      width: 0.34in;
+      height: 0.34in;
+      margin-bottom: 0.12in;
+      border-radius: 99px;
+      background: #171717;
+      color: #ffffff;
+      font-size: 0.13in;
+      font-weight: 900;
+    }
+
+    .footer {
+      position: absolute;
+      left: 0.68in;
+      right: 0.68in;
+      bottom: 0.35in;
+      display: flex;
+      justify-content: space-between;
+      color: #74777e;
+      font-size: 0.12in;
+      font-weight: 700;
+    }
+
+    .dark .footer {
+      color: #b8bbc2;
+    }
+
+    .quote {
+      margin-top: 0.34in;
+      padding-left: 0.22in;
+      border-left: 0.06in solid #171717;
+      max-width: 7.2in;
+      font-size: 0.28in;
+      line-height: 1.22;
+      font-weight: 900;
+    }
+
+    .mini-table {
+      display: grid;
+      gap: 0;
+      margin-top: 0.34in;
+      border: 1px solid rgba(23,23,23,0.1);
+      border-radius: 0.13in;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    .table-row {
+      display: grid;
+      grid-template-columns: 1.1fr 1.5fr 1.1fr;
+      gap: 0.12in;
+      padding: 0.16in 0.2in;
+      border-top: 1px solid rgba(23,23,23,0.08);
+      font-size: 0.145in;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .table-row:first-child {
+      border-top: 0;
+      background: #171717;
+      color: #ffffff;
+      font-size: 0.13in;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .callout {
+      margin-top: 0.38in;
+      padding: 0.28in;
+      border-radius: 0.14in;
+      background: #171717;
+      color: #ffffff;
+    }
+
+    .callout .lead {
+      margin-top: 0.12in;
+      color: #f4f4f5;
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide dark">
+      <div class="brand-row">
+        <div class="logo"><span class="logo-mark">V</span> Vishu</div>
+        <span class="tag">Marketplace pitch deck</span>
+      </div>
+      <h1>Local fashion marketplace built for customers and independent vendors.</h1>
+      <p class="lead">Vishu connects shoppers with curated products from approved vendors, while giving sellers a practical dashboard for catalog, inventory, orders, and earnings.</p>
+      <div class="pill-row">
+        <span class="pill">Customer storefront</span>
+        <span class="pill">Vendor workspace</span>
+        <span class="pill">Admin control center</span>
+        <span class="pill">Stripe checkout ready</span>
+      </div>
+      <div class="hero-band"></div>
+      <div class="footer"><span>April 2026</span><span>vishu.shop</span></div>
+    </section>
+
+    <section class="slide split">
+      <div>
+        <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Problem</span></div>
+        <h2>Buying and selling fashion online is still fragmented.</h2>
+        <p class="lead">Customers want trust, speed, and discovery. Vendors want sales without rebuilding the same tools every shop needs.</p>
+        <div class="quote">The opportunity is to make a marketplace that feels simple to shoppers and operationally useful to sellers.</div>
+      </div>
+      <div class="grid-2">
+        <div class="card"><h3>Customers</h3><p class="muted">Too many scattered pages, unclear product quality, hard checkout, and no central account experience.</p></div>
+        <div class="card"><h3>Vendors</h3><p class="muted">Small sellers need product uploads, stock controls, order handling, and payout visibility without technical setup.</p></div>
+        <div class="card"><h3>Admins</h3><p class="muted">Marketplaces need category governance, vendor approval, product visibility, and payments settings.</p></div>
+        <div class="card"><h3>Trust</h3><p class="muted">Both sides need cleaner verification, security, and predictable marketplace rules.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>02</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Solution</span></div>
+      <h2>A two-sided fashion platform with a ready storefront and seller operations.</h2>
+      <p class="lead">The current phase already covers the core marketplace loop: browse, purchase, manage account, add products, fulfill orders, and administer vendors.</p>
+      <div class="grid-3">
+        <div class="card"><h3>Storefront</h3><p class="muted">Browse products, shops, categories, favorites, cart, checkout, account, and order history.</p></div>
+        <div class="card"><h3>Vendor portal</h3><p class="muted">Add products, upload photos, choose brands/colors/sizes, manage inventory, process orders, and view earnings.</p></div>
+        <div class="card"><h3>Admin system</h3><p class="muted">Approve vendors, manage catalog values, review requests, configure payments, and protect visibility.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>03</span></div>
+    </section>
+
+    <section class="slide split dark">
+      <div>
+        <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">For shoppers</span></div>
+        <h2>Customer experience that is ready to sell products.</h2>
+        <p class="lead">Customers can discover products, save favorites, use cart and checkout, and manage their account from a clean marketplace interface.</p>
+      </div>
+      <div class="photo-grid">
+        <div class="photo-card"><strong>Product discovery</strong><span class="number">01</span></div>
+        <div class="photo-card"><strong>Favorites and cart</strong><span class="number">02</span></div>
+        <div class="photo-card"><strong>Stripe checkout</strong><span class="number">03</span></div>
+        <div class="photo-card"><strong>Account orders</strong><span class="number">04</span></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>04</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">For vendors</span></div>
+      <h2>A seller workspace that removes operational friction.</h2>
+      <div class="grid-3">
+        <div class="card"><h3>Product popup</h3><p class="muted">One Add Product button opens a complete popup for photos, brand, gender, category, colors, sizes, price, and stock.</p></div>
+        <div class="card"><h3>Variant-friendly</h3><p class="muted">A single model can include multiple colors and sizes, supporting the way fashion shops actually stock items.</p></div>
+        <div class="card"><h3>Orders</h3><p class="muted">Vendors can confirm, ship, deliver, and track order status from their dashboard.</p></div>
+        <div class="card"><h3>Inventory</h3><p class="muted">Low-stock visibility and stock controls help sellers keep listings accurate.</p></div>
+        <div class="card"><h3>Earnings</h3><p class="muted">Seller revenue and recent earnings are visible to the shop holder.</p></div>
+        <div class="card"><h3>Privacy</h3><p class="muted">Vendor screens avoid exposing other vendors and use customer first/last name instead of customer email.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>05</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Marketplace trust</span></div>
+      <h2>Admin governance keeps the marketplace clean.</h2>
+      <div class="mini-table">
+        <div class="table-row"><span>Area</span><span>Current capability</span><span>Why it matters</span></div>
+        <div class="table-row"><span>Vendor approval</span><span>Verified and active vendors can be approved before public visibility.</span><span>Protects marketplace quality.</span></div>
+        <div class="table-row"><span>Brands</span><span>Brands are real product brands, not vendor shop names.</span><span>Cleaner catalog and vendor privacy.</span></div>
+        <div class="table-row"><span>Catalog options</span><span>Vendors request missing brand/category/size/color values for admin review.</span><span>Stops messy duplicate data.</span></div>
+        <div class="table-row"><span>Security</span><span>Helmet headers, proxy-aware throttling, validated uploads, and web security headers.</span><span>Safer foundation for growth.</span></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>06</span></div>
+    </section>
+
+    <section class="slide split">
+      <div>
+        <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Revenue model</span></div>
+        <h2>Built for transaction revenue and vendor growth.</h2>
+        <p class="lead">The platform is positioned for marketplace commission, promotional placements, and future vendor tools.</p>
+      </div>
+      <div>
+        <div class="metric"><strong>Commission</strong><p class="muted">Take rate from completed marketplace orders.</p></div>
+        <div class="metric"><strong>Promotions</strong><p class="muted">Featured homepage banners, shop visibility, and seasonal campaigns.</p></div>
+        <div class="metric"><strong>Vendor tools</strong><p class="muted">Potential premium analytics, team seats, boosted listings, and fulfillment support.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>07</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Go to market</span></div>
+      <h2>Start narrow, prove demand, then scale supply.</h2>
+      <div class="timeline">
+        <div class="step"><span>1</span><h3>Curated launch</h3><p class="muted">Onboard selected vendors with clean product photos and stocked listings.</p></div>
+        <div class="step"><span>2</span><h3>Local campaigns</h3><p class="muted">Sell through social content, referral offers, and category drops.</p></div>
+        <div class="step"><span>3</span><h3>Vendor flywheel</h3><p class="muted">Use early sales proof to attract more shops and better inventory.</p></div>
+        <div class="step"><span>4</span><h3>Operational depth</h3><p class="muted">Expand returns, support tickets, notifications, payouts, and analytics.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>08</span></div>
+    </section>
+
+    <section class="slide dark">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Current phase</span></div>
+      <h2>What is ready now.</h2>
+      <div class="grid-3">
+        <div class="card"><h3>Live domain</h3><p class="muted">Caddy is running and serving the app at vishu.shop.</p></div>
+        <div class="card"><h3>Checkout</h3><p class="muted">Stripe hosted checkout flow is integrated for card payments.</p></div>
+        <div class="card"><h3>Accounts</h3><p class="muted">Customer and vendor auth, verification, account areas, and protected dashboards.</p></div>
+        <div class="card"><h3>Products</h3><p class="muted">Vendor product creation with images, catalog values, colors, sizes, inventory, and listing status.</p></div>
+        <div class="card"><h3>Orders</h3><p class="muted">Order creation, vendor order views, statuses, and admin order controls.</p></div>
+        <div class="card"><h3>Admin</h3><p class="muted">Vendor governance, payments settings, catalog structure, requests, customers, reports, and promotions.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>09</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">Next build priorities</span></div>
+      <h2>What comes next to become sales-ready at scale.</h2>
+      <div class="grid-2">
+        <div class="card"><h3>Returns and support</h3><p class="muted">Turn guided account shortcuts into full return requests, tickets, messages, and notifications.</p></div>
+        <div class="card"><h3>Vendor payouts</h3><p class="muted">Complete payout workflows, statements, and seller settlement exports.</p></div>
+        <div class="card"><h3>Product quality tooling</h3><p class="muted">Add photo guidelines, listing completeness scoring, and admin product review flows.</p></div>
+        <div class="card"><h3>Growth analytics</h3><p class="muted">Add conversion, category demand, vendor performance, and campaign reporting.</p></div>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>10</span></div>
+    </section>
+
+    <section class="slide dark">
+      <div class="brand-row"><div class="logo"><span class="logo-mark">V</span> Vishu</div><span class="tag">The ask</span></div>
+      <h2>Bring vendors, products, and early customers into one marketplace.</h2>
+      <p class="lead">The platform foundation is in place. The next move is commercial: onboard the right sellers, publish high-quality catalog inventory, and drive first repeat customer orders.</p>
+      <div class="callout">
+        <h3>Vishu is ready for pilot selling.</h3>
+        <p class="lead">Start with a curated group of vendors, focus on quality products, and use the current platform to validate customer demand.</p>
+      </div>
+      <div class="footer"><span>Vishu pitch deck</span><span>vishu.shop</span></div>
+    </section>
+  </main>
+</body>
+</html>

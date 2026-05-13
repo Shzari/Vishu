@@ -15,9 +15,9 @@ export default function VendorEarningsPage() {
           section="earnings"
           eyebrow="Restricted"
           title="Finance access is limited"
-          description="Only a Shop Holder can open earnings, payouts, and revenue performance."
+          description="Only a Shop Holder or Manager can open earnings, payouts, and revenue performance."
         >
-          <div className="message">Only a Shop Holder can view earnings.</div>
+          <div className="message">Only a Shop Holder or Manager can view earnings.</div>
         </VendorWorkspaceShell>
       </RequireRole>
     );

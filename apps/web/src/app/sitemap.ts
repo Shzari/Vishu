@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
 
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://vishu.shop").replace(/\/$/, "");
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
+const PUBLIC_API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
+const API_URL = PUBLIC_API_URL.startsWith("/") ? "http://localhost:3000" : PUBLIC_API_URL;
 
 async function fetchIds(path: string): Promise<string[]> {
   try {
@@ -24,6 +25,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/`, changeFrequency: "daily", priority: 1 },
     { url: `${SITE_URL}/shops`, changeFrequency: "daily", priority: 0.9 },
     { url: `${SITE_URL}/login`, changeFrequency: "monthly", priority: 0.3 },
+    { url: `${SITE_URL}/services`, changeFrequency: "monthly", priority: 0.4 },
+    { url: `${SITE_URL}/policy`, changeFrequency: "yearly", priority: 0.3 },
     { url: `${SITE_URL}/terms`, changeFrequency: "yearly", priority: 0.2 },
     { url: `${SITE_URL}/privacy`, changeFrequency: "yearly", priority: 0.2 },
     { url: `${SITE_URL}/contact`, changeFrequency: "yearly", priority: 0.2 },

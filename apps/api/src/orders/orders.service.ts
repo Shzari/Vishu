@@ -2,12 +2,14 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
+import Stripe from 'stripe';
 import {
-  COMMISSION_RATE,
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
@@ -16,6 +18,11 @@ import {
   generateOpaqueToken,
   hashOpaqueToken,
 } from '../common/security/security.utils';
+import {
+  isStoredSecretProtected,
+  protectStoredSecret,
+  unprotectStoredSecret,
+} from '../common/security/stored-secrets.utils';
 import { DatabaseService, QueryRunner } from '../database/database.service';
 import {
   CreateOrderDto,
@@ -38,6 +45,8 @@ interface OrderProductRow {
   stock: number;
   vendor_id: string;
   platform_fee: number | string;
+  platform_fee_mode: 'dynamic' | 'fixed' | null;
+  fee_free_until: Date | null;
   vendor_created_at: Date;
   category: string;
   color: string | null;
@@ -47,6 +56,22 @@ interface OrderProductRow {
   low_stock_threshold: number;
   shop_name: string;
   vendor_email: string;
+}
+
+interface VendorOrderFeeItemRow {
+  id: string;
+  unit_price: number | string;
+  quantity: number;
+  platform_fee: number | string | null;
+  platform_fee_mode: 'dynamic' | 'fixed' | null;
+  fee_free_until: Date | null;
+}
+
+interface OrderProductSizeRow {
+  product_id: string;
+  size_id: string;
+  size_label: string;
+  stock: number;
 }
 
 interface ShipmentFields {
@@ -110,12 +135,22 @@ interface OrderListRow {
   payment_status: PaymentStatus;
   cod_status_note: string | null;
   cod_updated_at: Date | null;
+  shipping_label: string | null;
+  shipping_full_name: string | null;
+  shipping_phone_number: string | null;
+  shipping_line1: string | null;
+  shipping_line2: string | null;
+  shipping_city: string | null;
+  shipping_state_region: string | null;
+  shipping_postal_code: string | null;
+  shipping_country: string | null;
   cancel_request_status: string;
   cancel_request_note: string | null;
   cancel_requested_at: Date | null;
   status: OrderStatus;
   created_at: Date;
   customer_email: string | null;
+  customer_name: string | null;
 }
 
 interface OrderDetailRow {
@@ -164,6 +199,8 @@ interface OrderCustomerItemRow {
   category: string;
   color: string | null;
   size: string | null;
+  selected_size_id: string | null;
+  selected_size_label: string | null;
 }
 
 interface OrderAdminItemRow extends OrderCustomerItemRow {
@@ -176,10 +213,13 @@ interface OrderAdminItemRow extends OrderCustomerItemRow {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly mailService: MailService,
     private readonly vendorAccessService: VendorAccessService,
+    private readonly configService: ConfigService,
   ) {}
 
   private readonly productRowGuard = (
@@ -201,11 +241,111 @@ export class OrdersService {
     return this.createOrderFromCheckout(null, dto);
   }
 
-  private async createOrderFromCheckout(
+  async getCheckoutPaymentSettings() {
+    const settings = await this.loadActiveStripeOrderPaymentContext(false);
+
+    return {
+      mode: settings.mode,
+      cashOnDeliveryEnabled: settings.cashOnDeliveryEnabled,
+      cardPaymentsEnabled: false,
+      guestCheckoutEnabled: settings.guestCheckoutEnabled,
+      activeStripePublishableKey: null,
+    };
+  }
+
+  async createStripeCheckoutSession(
     customerId: string | null,
     dto: CreateOrderDto,
   ) {
+    void customerId;
+    void dto;
+    throw new BadRequestException(
+      'Card payments are paused. Please use cash on delivery.',
+    );
+  }
+
+  async completeStripeCheckoutSession(
+    customerId: string | null,
+    sessionId: string,
+  ) {
+    const stored = await this.databaseService.query<{
+      id: string;
+      customer_id: string | null;
+      order_id: string | null;
+      checkout_payload_json: string;
+      status: string;
+    }>(
+      `SELECT TOP 1 id, customer_id, order_id, checkout_payload_json, status
+       FROM payment_checkout_sessions
+       WHERE stripe_session_id = $1`,
+      [sessionId],
+    );
+    const record = stored.rows[0];
+    if (!record) {
+      throw new NotFoundException('Stripe checkout session not found');
+    }
+    if (record.customer_id && customerId && record.customer_id !== customerId) {
+      throw new ForbiddenException('This checkout session belongs to another account');
+    }
+    if (record.customer_id && !customerId) {
+      throw new ForbiddenException('Sign in to complete this checkout session');
+    }
+    if (record.order_id) {
+      return record.customer_id
+        ? this.getCustomerOrderById(record.order_id, record.customer_id)
+        : this.getOrderSnapshotById(record.order_id);
+    }
+
+    const settings = await this.loadActiveStripeOrderPaymentContext(true);
+    const stripe = this.createStripeClient(settings.secretKey!);
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== 'paid') {
+      throw new BadRequestException('Stripe payment is not complete yet');
+    }
+
+    const dto = JSON.parse(record.checkout_payload_json) as CreateOrderDto;
+    const orderCustomerId = record.customer_id ?? customerId ?? null;
+    const placedOrder = await this.createOrderFromCheckout(orderCustomerId, dto, {
+      forceCardPayment: true,
+      stripeSessionId: session.id,
+      stripePaymentIntentId:
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : (session.payment_intent?.id ?? null),
+    });
+
+    await this.databaseService.query(
+      `UPDATE payment_checkout_sessions
+       SET order_id = $1,
+           stripe_payment_intent_id = $2,
+           status = 'completed',
+           completed_at = SYSDATETIME(),
+           updated_at = SYSDATETIME()
+       WHERE id = $3`,
+      [
+        placedOrder.id,
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : (session.payment_intent?.id ?? null),
+        record.id,
+      ],
+    );
+
+    return placedOrder;
+  }
+
+  private async createOrderFromCheckout(
+    customerId: string | null,
+    dto: CreateOrderDto,
+    options?: {
+      forceCardPayment?: boolean;
+      stripeSessionId?: string | null;
+      stripePaymentIntentId?: string | null;
+    },
+  ) {
     const lowStockAlerts: {
+      vendorId: string;
+      productId: string;
       email: string;
       shopName: string;
       productTitle: string;
@@ -241,13 +381,19 @@ export class OrdersService {
         const linkedCustomerId =
           customerId ?? guestCustomer?.customerId ?? null;
         const paymentMethod: PaymentMethod =
-          customerId && dto.paymentMethod === 'card'
+          options?.forceCardPayment || (customerId && dto.paymentMethod === 'card')
             ? 'card'
             : 'cash_on_delivery';
+        if (paymentMethod === 'card' && !options?.forceCardPayment) {
+          throw new BadRequestException(
+            'Card payments are paused. Please use cash on delivery.',
+          );
+        }
+
         const paymentStatus: PaymentStatus =
           paymentMethod === 'cash_on_delivery' ? 'cod_pending' : 'paid';
         const savedPaymentMethod =
-          customerId && paymentMethod === 'card'
+          customerId && paymentMethod === 'card' && !options?.forceCardPayment
             ? await this.loadCheckoutPaymentMethod(
                 client,
                 customerId,
@@ -258,13 +404,34 @@ export class OrdersService {
           client,
           dto.items.map((item) => item.productId),
         );
+        await this.assertBuyerCanPurchaseProducts(
+          client,
+          customerId,
+          products,
+        );
+        const sizeSelections = await this.loadProductSizeSelections(
+          client,
+          dto.items
+            .filter((item) => item.sizeId)
+            .map((item) => ({
+              productId: item.productId,
+              sizeId: item.sizeId as string,
+            })),
+        );
 
         const items = dto.items.map((item) => {
           const product = this.productRowGuard(
             products.get(item.productId),
             item.productId,
           );
-          if (product.stock < item.quantity) {
+          const sizeSelection = item.sizeId
+            ? sizeSelections.get(`${item.productId}:${item.sizeId}`)
+            : null;
+          if (item.sizeId && !sizeSelection) {
+            throw new BadRequestException('Selected size is not available for this product');
+          }
+          const availableStock = sizeSelection?.stock ?? product.stock;
+          if (availableStock < item.quantity) {
             throw new BadRequestException(
               `Insufficient stock for ${product.title}`,
             );
@@ -272,8 +439,8 @@ export class OrdersService {
 
           const unitPrice = Number(product.price);
           const gross = Number((unitPrice * item.quantity).toFixed(2));
-          const commissionAmount = Number((gross * COMMISSION_RATE).toFixed(2));
-          const vendorEarnings = Number((gross - commissionAmount).toFixed(2));
+          const commissionAmount = 0;
+          const vendorEarnings = gross;
 
           return {
             product,
@@ -282,46 +449,12 @@ export class OrdersService {
             commissionAmount,
             vendorEarnings,
             gross,
-          };
-        });
-
-        const vendorRemainingFee = new Map<string, number>();
-        const feeAdjustedItems = items.map((item) => {
-          if (!vendorRemainingFee.has(item.product.vendor_id)) {
-            const platformFee = this.resolveEffectiveVendorPlatformFee(
-              item.product.platform_fee,
-              item.product.vendor_created_at,
-            );
-            vendorRemainingFee.set(
-              item.product.vendor_id,
-              Number.isFinite(platformFee) && platformFee > 0 ? platformFee : 0,
-            );
-          }
-
-          const remainingFee =
-            vendorRemainingFee.get(item.product.vendor_id) ?? 0;
-          if (remainingFee <= 0) {
-            return item;
-          }
-
-          const appliedFee = Math.min(remainingFee, item.vendorEarnings);
-          vendorRemainingFee.set(
-            item.product.vendor_id,
-            Number((remainingFee - appliedFee).toFixed(2)),
-          );
-          return {
-            ...item,
-            commissionAmount: Number(
-              (item.commissionAmount + appliedFee).toFixed(2),
-            ),
-            vendorEarnings: Number(
-              (item.vendorEarnings - appliedFee).toFixed(2),
-            ),
+            sizeSelection,
           };
         });
 
         const totalPrice = Number(
-          feeAdjustedItems.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
+          items.reduce((sum, item) => sum + item.gross, 0).toFixed(2),
         );
         const order = await client.query<{ id: string; created_at: Date }>(
           `INSERT INTO orders (
@@ -331,10 +464,11 @@ export class OrdersService {
            shipping_postal_code, shipping_country,
            payment_method_id, payment_card_nickname, payment_cardholder_name,
            payment_card_brand, payment_card_last4,
+           stripe_checkout_session_id, stripe_payment_intent_id,
            payment_method, payment_status, status
          )
          OUTPUT INSERTED.id, INSERTED.created_at
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'pending')`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'pending')`,
           [
             linkedCustomerId,
             isGuestCheckout ? checkout.email : null,
@@ -357,6 +491,8 @@ export class OrdersService {
             savedPaymentMethod?.cardholder_name ?? null,
             savedPaymentMethod?.brand ?? null,
             savedPaymentMethod?.last4 ?? null,
+            options?.stripeSessionId ?? null,
+            options?.stripePaymentIntentId ?? null,
             paymentMethod,
             paymentStatus,
           ],
@@ -368,13 +504,13 @@ export class OrdersService {
           order.rows[0].created_at,
         );
 
-        for (const item of feeAdjustedItems) {
+        for (const item of items) {
           await client.query(
             `INSERT INTO order_items (
              order_id, product_id, vendor_id, quantity, unit_price,
-             commission_amount, vendor_earnings, status
+             commission_amount, vendor_earnings, selected_size_id, selected_size_label, status
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
             [
               order.rows[0].id,
               item.product.id,
@@ -383,6 +519,8 @@ export class OrdersService {
               item.unitPrice,
               item.commissionAmount,
               item.vendorEarnings,
+              item.sizeSelection?.size_id ?? null,
+              item.sizeSelection?.size_label ?? null,
             ],
           );
 
@@ -390,6 +528,16 @@ export class OrdersService {
             'UPDATE products SET stock = stock - $1, updated_at = SYSDATETIME() WHERE id = $2',
             [item.quantity, item.product.id],
           );
+          if (item.sizeSelection) {
+            await client.query(
+              `UPDATE product_sizes
+               SET stock = stock - $1,
+                   updated_at = SYSDATETIME()
+               WHERE product_id = $2
+                 AND size_id = $3`,
+              [item.quantity, item.product.id, item.sizeSelection.size_id],
+            );
+          }
 
           const nextStock = item.product.stock - item.quantity;
           if (
@@ -406,8 +554,18 @@ export class OrdersService {
             );
 
             lowStockAlerts.push({
+              vendorId: item.product.vendor_id,
+              productId: item.product.id,
               email: item.product.vendor_email,
               shopName: item.product.shop_name,
+              productTitle: item.product.title,
+              productCode: item.product.product_code,
+              stock: nextStock,
+              threshold: item.product.low_stock_threshold,
+            });
+            await this.createVendorLowStockNotification(client, {
+              vendorId: item.product.vendor_id,
+              productId: item.product.id,
               productTitle: item.product.title,
               productCode: item.product.product_code,
               stock: nextStock,
@@ -499,22 +657,58 @@ export class OrdersService {
           client,
           dto.items.map((item) => item.productId),
         );
+        await this.assertBuyerCanPurchaseProducts(
+          client,
+          customerId,
+          products,
+        );
+        const sizeSelections = await this.loadProductSizeSelections(
+          client,
+          dto.items
+            .filter((item) => item.sizeId)
+            .map((item) => ({
+              productId: item.productId,
+              sizeId: item.sizeId as string,
+            })),
+        );
 
         for (const item of dto.items) {
           const product = this.productRowGuard(
             products.get(item.productId),
             item.productId,
           );
-          if (product.stock < item.quantity) {
+          const sizeSelection = item.sizeId
+            ? sizeSelections.get(`${item.productId}:${item.sizeId}`)
+            : null;
+          if (item.sizeId && !sizeSelection) {
+            throw new BadRequestException(
+              'Selected size is not available for this product',
+            );
+          }
+          const availableStock = sizeSelection?.stock ?? product.stock;
+          if (availableStock < item.quantity) {
             throw new BadRequestException(
               `Insufficient stock for ${product.title}`,
             );
           }
 
           await client.query(
-            `INSERT INTO cart_items (cart_id, product_id, quantity, updated_at)
-             VALUES ($1, $2, $3, SYSDATETIME())`,
-            [cartId, item.productId, item.quantity],
+            `INSERT INTO cart_items (
+               cart_id,
+               product_id,
+               selected_size_id,
+               selected_size_label,
+               quantity,
+               updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, SYSDATETIME())`,
+            [
+              cartId,
+              item.productId,
+              sizeSelection?.size_id ?? null,
+              sizeSelection?.size_label ?? null,
+              item.quantity,
+            ],
           );
         }
       }
@@ -618,12 +812,27 @@ export class OrdersService {
          o.payment_status,
          o.cod_status_note,
          o.cod_updated_at,
+         o.shipping_label,
+         o.shipping_full_name,
+         o.shipping_phone_number,
+         o.shipping_line1,
+         o.shipping_line2,
+         o.shipping_city,
+         o.shipping_state_region,
+         o.shipping_postal_code,
+         o.shipping_country,
          o.cancel_request_status,
          o.cancel_request_note,
          o.cancel_requested_at,
          o.status,
          o.created_at,
-         COALESCE(u.email, o.guest_email) AS customer_email
+         COALESCE(u.email, o.guest_email) AS customer_email,
+         COALESCE(
+           NULLIF(LTRIM(RTRIM(CONCAT(ISNULL(u.first_name, ''), ' ', ISNULL(u.last_name, '')))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(u.full_name, ''))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(o.shipping_full_name, ''))), ''),
+           'Guest checkout'
+         ) AS customer_name
        FROM orders o
        LEFT JOIN users u ON u.id = o.customer_id
        INNER JOIN order_items oi ON oi.order_id = o.id
@@ -654,6 +863,62 @@ export class OrdersService {
     );
   }
 
+  async getVendorNotifications(userId: string) {
+    const vendor = await this.getVendorByUserId(userId);
+    const notifications = await this.databaseService.query<{
+      id: string;
+      notification_type: string;
+      title: string;
+      body: string;
+      action_url: string | null;
+      product_id: string | null;
+      metadata_json: string | null;
+      read_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT TOP 20
+         id,
+         notification_type,
+         title,
+         body,
+         action_url,
+         product_id,
+         metadata_json,
+         read_at,
+         created_at
+       FROM vendor_notifications
+       WHERE vendor_id = $1
+       ORDER BY CASE WHEN read_at IS NULL THEN 0 ELSE 1 END, created_at DESC`,
+      [vendor.id],
+    );
+
+    return notifications.rows.map((row) => ({
+      id: row.id,
+      type: row.notification_type,
+      title: row.title,
+      body: row.body,
+      actionUrl: row.action_url,
+      productId: row.product_id,
+      metadata: this.parseNotificationMetadata(row.metadata_json),
+      readAt: row.read_at,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async markVendorNotificationRead(userId: string, notificationId: string) {
+    const vendor = await this.getVendorByUserId(userId);
+    await this.databaseService.query(
+      `UPDATE vendor_notifications
+       SET read_at = COALESCE(read_at, SYSDATETIME()),
+           updated_at = SYSDATETIME()
+       WHERE id = $1
+         AND vendor_id = $2`,
+      [notificationId, vendor.id],
+    );
+
+    return { message: 'Notification marked as read.' };
+  }
+
   async getAllOrders(pagination?: PaginationInput | null) {
     const pagingClause = pagination
       ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
@@ -677,7 +942,13 @@ export class OrdersService {
          o.cancel_requested_at,
          o.status,
          o.created_at,
-         COALESCE(u.email, o.guest_email) AS customer_email
+         COALESCE(u.email, o.guest_email) AS customer_email,
+         COALESCE(
+           NULLIF(LTRIM(RTRIM(CONCAT(ISNULL(u.first_name, ''), ' ', ISNULL(u.last_name, '')))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(u.full_name, ''))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(o.shipping_full_name, ''))), ''),
+           'Guest checkout'
+         ) AS customer_name
        FROM orders o
        LEFT JOIN users u ON u.id = o.customer_id
        ORDER BY o.created_at DESC${pagingClause}`,
@@ -714,12 +985,37 @@ export class OrdersService {
     const ownership = await this.databaseService.query<{
       id: string;
       status: OrderStatus;
+      cancel_request_status: string;
+      unit_price: number | string;
+      quantity: number;
+      platform_fee: number | string | null;
+      platform_fee_mode: 'dynamic' | 'fixed' | null;
+      fee_free_until: Date | null;
+      vendor_created_at: Date;
     }>(
-      'SELECT id, status FROM order_items WHERE order_id = $1 AND vendor_id = $2',
+      `SELECT
+         oi.id,
+         oi.status,
+         oi.unit_price,
+         oi.quantity,
+         v.platform_fee,
+         v.platform_fee_mode,
+         v.fee_free_until,
+         o.cancel_request_status,
+         v.created_at AS vendor_created_at
+       FROM order_items oi
+       INNER JOIN orders o ON o.id = oi.order_id
+       INNER JOIN vendors v ON v.id = oi.vendor_id
+       WHERE oi.order_id = $1 AND oi.vendor_id = $2`,
       [orderId, vendor.id],
     );
     if (!ownership.rows.length) {
       throw new NotFoundException('Order not found');
+    }
+    if (ownership.rows[0].cancel_request_status === 'requested') {
+      throw new BadRequestException(
+        'This order has a customer cancellation request. Cancel the order instead of updating its status.',
+      );
     }
 
     this.assertVendorStatusTransition(
@@ -729,6 +1025,15 @@ export class OrdersService {
 
     await this.databaseService.withTransaction(async (client) => {
       const shipmentFields = this.getShipmentFields(dto.status, dto);
+
+      if (dto.status === 'confirmed') {
+        await this.applyVendorPlatformFeeOnConfirmation(
+          client,
+          ownership.rows,
+          ownership.rows[0].vendor_created_at,
+          ownership.rows[0].fee_free_until,
+        );
+      }
 
       await client.query(
         `UPDATE order_items
@@ -765,6 +1070,139 @@ export class OrdersService {
     return { message: 'Order status updated' };
   }
 
+  async cancelVendorOrderAfterCustomerRequest(
+    userId: string,
+    orderId: string,
+  ) {
+    const vendor = await this.getVendorByUserId(userId);
+    if (!vendor.is_active || !vendor.is_verified) {
+      throw new ForbiddenException('Vendor account is not active');
+    }
+
+    const orderLookup = await this.databaseService.query<{
+      id: string;
+      order_number: string | null;
+      status: OrderStatus;
+      payment_method: PaymentMethod;
+      cancel_request_status: string;
+      cancel_request_note: string | null;
+      customer_email: string | null;
+      customer_name: string | null;
+    }>(
+      `SELECT TOP 1
+         o.id,
+         o.order_number,
+         o.status,
+         o.payment_method,
+         o.cancel_request_status,
+         o.cancel_request_note,
+         COALESCE(u.email, o.guest_email) AS customer_email,
+         COALESCE(
+           NULLIF(LTRIM(RTRIM(CONCAT(ISNULL(u.first_name, ''), ' ', ISNULL(u.last_name, '')))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(u.full_name, ''))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(o.shipping_full_name, ''))), '')
+         ) AS customer_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.customer_id
+       INNER JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.id = $1 AND oi.vendor_id = $2`,
+      [orderId, vendor.id],
+    );
+
+    const order = orderLookup.rows[0];
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status !== 'pending') {
+      throw new BadRequestException(
+        'Only pending orders can be cancelled by the vendor',
+      );
+    }
+
+    if (order.cancel_request_status !== 'requested') {
+      throw new BadRequestException(
+        'The customer has not requested cancellation for this order',
+      );
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const items = await client.query<{
+        product_id: string;
+        selected_size_id: string | null;
+        quantity: number;
+      }>(
+        `SELECT product_id, selected_size_id, quantity
+         FROM order_items
+         WHERE order_id = $1`,
+        [orderId],
+      );
+
+      for (const item of items.rows) {
+        await client.query(
+          `UPDATE products
+           SET stock = stock + $1,
+               updated_at = SYSDATETIME()
+           WHERE id = $2`,
+          [item.quantity, item.product_id],
+        );
+        if (item.selected_size_id) {
+          await client.query(
+            `UPDATE product_sizes
+             SET stock = stock + $1,
+                 updated_at = SYSDATETIME()
+             WHERE product_id = $2
+               AND size_id = $3`,
+            [item.quantity, item.product_id, item.selected_size_id],
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE order_items
+         SET status = 'cancelled',
+             shipping_carrier = NULL,
+             tracking_number = NULL,
+             shipped_at = NULL,
+             updated_at = SYSDATETIME()
+         WHERE order_id = $1`,
+        [orderId],
+      );
+
+      await client.query(
+        `UPDATE orders
+         SET status = 'cancelled',
+             payment_status = CASE
+               WHEN payment_method = 'cash_on_delivery' THEN 'cod_refused'
+               ELSE payment_status
+             END,
+             cancel_request_status = 'approved',
+             updated_at = SYSDATETIME()
+         WHERE id = $1`,
+        [orderId],
+      );
+    });
+
+    if (order.customer_email) {
+      try {
+        await this.mailService.sendOrderCancelledEmail({
+          email: order.customer_email,
+          fullName: order.customer_name,
+          orderNumber: order.order_number ?? order.id,
+          cancelNote: order.cancel_request_note,
+        });
+      } catch (emailError) {
+        this.logger.warn(
+          `Order ${order.order_number ?? order.id} was cancelled, but customer cancellation email failed: ${
+            emailError instanceof Error ? emailError.message : String(emailError)
+          }`,
+        );
+      }
+    }
+
+    return { message: 'Order cancelled and customer notified.' };
+  }
+
   async requestCustomerCancel(
     customerId: string,
     orderId: string,
@@ -786,9 +1224,13 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    if (row.status !== 'pending') {
+    if (
+      row.status === 'delivered' ||
+      row.status === 'cancelled' ||
+      row.status === 'returned'
+    ) {
       throw new BadRequestException(
-        'Cancel requests are only available before the order is confirmed',
+        'Cancel requests are only available before the order is delivered',
       );
     }
 
@@ -840,6 +1282,11 @@ export class OrdersService {
         const products = await this.loadProductsForOrder(
           client,
           orderItems.rows.map((item) => item.product_id),
+        );
+        await this.assertBuyerCanPurchaseProducts(
+          client,
+          customerId,
+          products,
         );
         const currentCartRows = await client.query<{
           product_id: string;
@@ -1078,7 +1525,7 @@ export class OrdersService {
           title: item.title,
           category: item.category,
           color: item.color,
-          size: item.size,
+          size: item.selected_size_label ?? item.size,
           images: imageMap.get(item.product_id) ?? [],
         },
       })),
@@ -1114,6 +1561,19 @@ export class OrdersService {
       paymentStatus: order.payment_status,
       codStatusNote: order.cod_status_note,
       codUpdatedAt: order.cod_updated_at,
+      shippingAddress: order.shipping_line1
+        ? {
+            label: order.shipping_label,
+            fullName: order.shipping_full_name,
+            phoneNumber: order.shipping_phone_number,
+            line1: order.shipping_line1,
+            line2: order.shipping_line2,
+            city: order.shipping_city,
+            stateRegion: order.shipping_state_region,
+            postalCode: order.shipping_postal_code,
+            country: order.shipping_country,
+          }
+        : null,
       cancelRequest: {
         status: order.cancel_request_status,
         note: order.cancel_request_note,
@@ -1121,7 +1581,8 @@ export class OrdersService {
       },
       status: order.status,
       createdAt: order.created_at,
-      customerEmail: order.customer_email ?? 'Guest checkout',
+      customerEmail: order.customer_email,
+      customerName: order.customer_name ?? 'Guest checkout',
       items: (itemsByOrderId.get(order.id) ?? []).map((item) => ({
         id: item.id,
         quantity: item.quantity,
@@ -1139,7 +1600,7 @@ export class OrdersService {
           title: item.title,
           category: item.category,
           color: item.color,
-          size: item.size,
+          size: item.selected_size_label ?? item.size,
           productCode: item.product_code,
         },
       })),
@@ -1177,6 +1638,7 @@ export class OrdersService {
       status: order.status,
       createdAt: order.created_at,
       customerEmail: order.customer_email ?? 'Guest checkout',
+      customerName: order.customer_name ?? 'Guest checkout',
       items: (itemsByOrderId.get(order.id) ?? []).map((item) => ({
         id: item.id,
         quantity: item.quantity,
@@ -1194,7 +1656,7 @@ export class OrdersService {
           title: item.title,
           category: item.category,
           color: item.color,
-          size: item.size,
+          size: item.selected_size_label ?? item.size,
           productCode: item.product_code,
         },
         vendor: {
@@ -1225,7 +1687,9 @@ export class OrdersService {
          p.title,
          p.category,
          p.color,
-         p.size
+         p.size,
+         oi.selected_size_id,
+         oi.selected_size_label
        FROM order_items oi
        INNER JOIN products p ON p.id = oi.product_id
        WHERE oi.order_id IN (${clause})
@@ -1280,6 +1744,8 @@ export class OrdersService {
          p.category,
          p.color,
          p.size,
+         oi.selected_size_id,
+         oi.selected_size_label,
          p.product_code,
          ${vendorSelect}
        FROM order_items oi
@@ -1354,6 +1820,55 @@ export class OrdersService {
     );
 
     return orderNumber;
+  }
+
+  private async createVendorLowStockNotification(
+    client: QueryRunner,
+    payload: {
+      vendorId: string;
+      productId: string;
+      productTitle: string;
+      productCode: string | null;
+      stock: number;
+      threshold: number;
+    },
+  ) {
+    await client.query(
+      `INSERT INTO vendor_notifications (
+         vendor_id,
+         product_id,
+         notification_type,
+         title,
+         body,
+         action_url,
+         metadata_json
+       )
+       VALUES ($1, $2, 'low_stock', $3, $4, $5, $6)`,
+      [
+        payload.vendorId,
+        payload.productId,
+        `Low stock: ${payload.productTitle}`,
+        `${payload.productTitle} is at ${payload.stock} units, at or below your threshold of ${payload.threshold}.`,
+        '/vendor/products',
+        JSON.stringify({
+          productCode: payload.productCode,
+          stock: payload.stock,
+          threshold: payload.threshold,
+        }),
+      ],
+    );
+  }
+
+  private parseNotificationMetadata(value: string | null) {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
   }
 
   private normalizeCheckoutInput(
@@ -1634,6 +2149,16 @@ export class OrdersService {
       orderStatus = 'delivered';
     } else if (
       statuses.length &&
+      statuses.every((status) => status === 'cancelled')
+    ) {
+      orderStatus = 'cancelled';
+    } else if (
+      statuses.length &&
+      statuses.every((status) => status === 'returned')
+    ) {
+      orderStatus = 'returned';
+    } else if (
+      statuses.length &&
       statuses.every((status) => status === 'shipped' || status === 'delivered')
     ) {
       orderStatus = 'shipped';
@@ -1728,16 +2253,9 @@ export class OrdersService {
       };
     }
 
-    const trackingNumber = dto.trackingNumber?.trim();
-    if (!trackingNumber) {
-      throw new BadRequestException(
-        'Tracking number is required when marking an order as shipped',
-      );
-    }
-
     return {
       shippingCarrier: dto.shippingCarrier?.trim() || null,
-      trackingNumber,
+      trackingNumber: dto.trackingNumber?.trim() || null,
       shippedAt: new Date(),
     };
   }
@@ -1760,6 +2278,8 @@ export class OrdersService {
          p.stock,
          p.vendor_id,
          v.platform_fee,
+         v.platform_fee_mode,
+         v.fee_free_until,
          v.created_at AS vendor_created_at,
          p.category,
          p.color,
@@ -1778,6 +2298,38 @@ export class OrdersService {
     );
 
     return new Map(result.rows.map((row) => [row.id, row]));
+  }
+
+  private async loadProductSizeSelections(
+    client: QueryRunner,
+    selections: Array<{ productId: string; sizeId: string }>,
+  ) {
+    if (!selections.length) {
+      return new Map<string, OrderProductSizeRow>();
+    }
+
+    const productClause = this.buildGuidLiteralClause(
+      selections.map((selection) => selection.productId),
+    );
+    const sizeClause = this.buildGuidLiteralClause(
+      selections.map((selection) => selection.sizeId),
+    );
+    const result = await client.query<OrderProductSizeRow>(
+      `SELECT
+         ps.product_id,
+         ps.size_id,
+         s.label AS size_label,
+         ps.stock
+       FROM product_sizes ps
+       INNER JOIN sizes s ON s.id = ps.size_id
+       WHERE ps.product_id IN (${productClause})
+         AND ps.size_id IN (${sizeClause})
+         AND s.is_active = 1`,
+    );
+
+    return new Map(
+      result.rows.map((row) => [`${row.product_id}:${row.size_id}`, row]),
+    );
   }
 
   private async getImagesForProducts(productIds: string[]) {
@@ -1823,10 +2375,18 @@ export class OrdersService {
   private resolveEffectiveVendorPlatformFee(
     configuredFee: number | string | null | undefined,
     vendorCreatedAt: Date | string,
+    feeFreeUntil?: Date | string | null,
   ) {
     const fee = Number(configuredFee ?? 0);
     if (!Number.isFinite(fee) || fee <= 0) {
       return 0;
+    }
+
+    if (feeFreeUntil) {
+      const freeUntil = new Date(feeFreeUntil);
+      if (!Number.isNaN(freeUntil.getTime()) && new Date() < freeUntil) {
+        return 0;
+      }
     }
 
     const createdAt = new Date(vendorCreatedAt);
@@ -1842,6 +2402,101 @@ export class OrdersService {
     }
 
     return fee;
+  }
+
+  private calculateDynamicVendorPlatformFee(vendorSubtotal: number) {
+    if (!Number.isFinite(vendorSubtotal) || vendorSubtotal <= 0) {
+      return 0;
+    }
+
+    let fee: number;
+    if (vendorSubtotal <= 7) {
+      fee = 0.5;
+    } else if (vendorSubtotal <= 50) {
+      fee = 0.5 + ((vendorSubtotal - 7) / 43) * 1.5;
+    } else {
+      fee = 2 + vendorSubtotal * 0.02;
+    }
+
+    return Number(Math.min(fee, vendorSubtotal).toFixed(2));
+  }
+
+  private allocateFeeAcrossVendorItems(
+    items: VendorOrderFeeItemRow[],
+    fee: number,
+  ) {
+    const itemGrossCents = items.map((item) =>
+      Math.round(Number(item.unit_price) * item.quantity * 100),
+    );
+    const totalGrossCents = itemGrossCents.reduce((sum, gross) => sum + gross, 0);
+    const totalFeeCents = Math.min(
+      Math.round(fee * 100),
+      totalGrossCents,
+    );
+    const allocations = new Map<string, number>();
+
+    if (totalGrossCents <= 0 || totalFeeCents <= 0) {
+      items.forEach((item) => allocations.set(item.id, 0));
+      return allocations;
+    }
+
+    let allocatedCents = 0;
+    items.forEach((item, index) => {
+      const grossCents = itemGrossCents[index];
+      const isLast = index === items.length - 1;
+      const feeCents = isLast
+        ? totalFeeCents - allocatedCents
+        : Math.min(
+            grossCents,
+            Math.round((totalFeeCents * grossCents) / totalGrossCents),
+          );
+
+      allocations.set(item.id, Number((feeCents / 100).toFixed(2)));
+      allocatedCents += feeCents;
+    });
+
+    return allocations;
+  }
+
+  private async applyVendorPlatformFeeOnConfirmation(
+    client: QueryRunner,
+    items: VendorOrderFeeItemRow[],
+    vendorCreatedAt: Date | string,
+    feeFreeUntil?: Date | string | null,
+  ) {
+    const subtotal = Number(
+      items
+        .reduce(
+          (sum, item) => sum + Number(item.unit_price) * item.quantity,
+          0,
+        )
+        .toFixed(2),
+    );
+    const mode = items[0]?.platform_fee_mode ?? 'dynamic';
+    const fixedFee = Number(items[0]?.platform_fee ?? 0);
+    const dynamicFee =
+      mode === 'fixed' && Number.isFinite(fixedFee)
+        ? Math.min(Math.max(0, fixedFee), subtotal)
+        : this.calculateDynamicVendorPlatformFee(subtotal);
+    const effectiveFee = this.resolveEffectiveVendorPlatformFee(
+      dynamicFee,
+      vendorCreatedAt,
+      feeFreeUntil,
+    );
+    const feeByItem = this.allocateFeeAcrossVendorItems(items, effectiveFee);
+
+    for (const item of items) {
+      const gross = Number((Number(item.unit_price) * item.quantity).toFixed(2));
+      const itemFee = feeByItem.get(item.id) ?? 0;
+      await client.query(
+        `UPDATE order_items
+         SET commission_amount = $1,
+             vendor_earnings = $2,
+             updated_at = SYSDATETIME()
+         WHERE id = $3`,
+        [itemFee, Number((gross - itemFee).toFixed(2)), item.id],
+      );
+    }
   }
 
   private async ensureCartExists(customerId: string) {
@@ -1863,24 +2518,33 @@ export class OrdersService {
 
     const cart = await this.databaseService.query<{
       product_id: string | null;
+      selected_size_id: string | null;
+      selected_size_label: string | null;
       quantity: number | null;
       title: string | null;
       description: string | null;
       category: string | null;
       price: number | string | null;
       stock: number | null;
+      vendor_id: string | null;
     }>(
       `SELECT
          ci.product_id,
+         ci.selected_size_id,
+         ci.selected_size_label,
          ci.quantity,
          p.title,
          p.description,
          p.category,
          p.price,
-         p.stock
+         p.vendor_id,
+         COALESCE(ps.stock, p.stock) AS stock
        FROM carts c
        LEFT JOIN cart_items ci ON ci.cart_id = c.id
        LEFT JOIN products p ON p.id = ci.product_id
+       LEFT JOIN product_sizes ps
+         ON ps.product_id = ci.product_id
+        AND ps.size_id = ci.selected_size_id
        WHERE c.customer_id = $1
        ORDER BY ci.created_at ASC`,
       [customerId],
@@ -1905,6 +2569,9 @@ export class OrdersService {
         )
         .map((row) => ({
           productId: row.product_id as string,
+          vendorId: row.vendor_id,
+          sizeId: row.selected_size_id,
+          size: row.selected_size_label,
           quantity: row.quantity as number,
           product: {
             id: row.product_id as string,
@@ -1913,6 +2580,8 @@ export class OrdersService {
             category: row.category as string,
             price: Number(row.price ?? 0),
             stock: row.stock ?? 0,
+            selectedSizeId: row.selected_size_id,
+            selectedSizeLabel: row.selected_size_label,
             images: imageMap.get(row.product_id as string) ?? [],
           },
         })),
@@ -1921,6 +2590,34 @@ export class OrdersService {
 
   private buildGuidLiteralClause(values: string[]) {
     return values.map((value) => `'${this.assertGuid(value)}'`).join(', ');
+  }
+
+  private async assertBuyerCanPurchaseProducts(
+    client: QueryRunner,
+    customerId: string | null,
+    products: Map<string, OrderProductRow>,
+  ) {
+    if (!customerId || products.size === 0) {
+      return;
+    }
+
+    const vendor = await client.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE user_id = $1',
+      [customerId],
+    );
+    const buyerVendorId = vendor.rows[0]?.id;
+    if (!buyerVendorId) {
+      return;
+    }
+
+    const ownProduct = Array.from(products.values()).find(
+      (product) => product.vendor_id === buyerVendorId,
+    );
+    if (ownProduct) {
+      throw new ForbiddenException(
+        'You cannot add your own shop products to cart or checkout.',
+      );
+    }
   }
 
   private assertGuid(value: string) {
@@ -2011,5 +2708,92 @@ export class OrdersService {
     }
 
     return paymentMethod;
+  }
+
+  private async loadActiveStripeOrderPaymentContext(requireSecret: boolean) {
+    const result = await this.databaseService.query<{
+      payment_mode: 'test' | 'live';
+      cash_on_delivery_enabled: boolean;
+      card_payments_enabled: boolean;
+      guest_checkout_enabled: boolean;
+      stripe_test_publishable_key: string | null;
+      stripe_test_secret_key: string | null;
+      stripe_live_publishable_key: string | null;
+      stripe_live_secret_key: string | null;
+      app_base_url: string | null;
+    }>(
+      `SELECT TOP 1
+         payment_mode,
+         cash_on_delivery_enabled,
+         card_payments_enabled,
+         guest_checkout_enabled,
+         stripe_test_publishable_key,
+         stripe_test_secret_key,
+         stripe_live_publishable_key,
+         stripe_live_secret_key,
+         app_base_url
+       FROM platform_settings
+       WHERE id = 1`,
+    );
+
+    const row = result.rows[0];
+    const mode: 'test' | 'live' =
+      row?.payment_mode === 'live' ? 'live' : 'test';
+    const secretColumn =
+      mode === 'live' ? 'stripe_live_secret_key' : 'stripe_test_secret_key';
+    let storedSecret =
+      mode === 'live'
+        ? row?.stripe_live_secret_key
+        : row?.stripe_test_secret_key;
+
+    if (storedSecret && !isStoredSecretProtected(storedSecret)) {
+      const protectedSecret = protectStoredSecret(
+        storedSecret,
+        this.configService,
+      );
+      await this.databaseService.query(
+        `UPDATE platform_settings
+         SET ${secretColumn} = $1,
+             updated_at = SYSDATETIME()
+         WHERE id = 1`,
+        [protectedSecret],
+      );
+      storedSecret = protectedSecret;
+    }
+
+    const envSecretKey =
+      mode === 'live'
+        ? this.configService.get<string>('STRIPE_LIVE_SECRET_KEY')?.trim() ||
+          null
+        : this.configService.get<string>('STRIPE_TEST_SECRET_KEY')?.trim() ||
+          null;
+    const secretKey =
+      envSecretKey ?? unprotectStoredSecret(storedSecret, this.configService);
+
+    if (requireSecret && !secretKey) {
+      throw new BadRequestException(
+        'Stripe is not configured for the active payment mode.',
+      );
+    }
+
+    return {
+      mode,
+      secretKey,
+      cashOnDeliveryEnabled: row ? Boolean(row.cash_on_delivery_enabled) : true,
+      cardPaymentsEnabled: row ? Boolean(row.card_payments_enabled) : false,
+      guestCheckoutEnabled: row ? Boolean(row.guest_checkout_enabled) : true,
+      publishableKey:
+        mode === 'live'
+          ? row?.stripe_live_publishable_key?.trim() || null
+          : row?.stripe_test_publishable_key?.trim() || null,
+      appBaseUrl:
+        row?.app_base_url?.trim() ||
+        this.configService.get<string>('APP_BASE_URL')?.trim() ||
+        'http://localhost:3001',
+    };
+  }
+
+  private createStripeClient(secretKey: string) {
+    return new Stripe(secretKey);
   }
 }

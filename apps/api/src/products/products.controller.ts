@@ -21,7 +21,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import {
   buildSafeUploadedImageName,
   ensureTemporaryUploadDir,
-  isAllowedImageMimeType,
+  resolveAllowedImageMimeType,
 } from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import {
@@ -52,13 +52,18 @@ function productUploadInterceptor() {
       },
     }),
     fileFilter: (_req, file, callback) => {
-      if (!isAllowedImageMimeType(file.mimetype)) {
+      const mimeType = resolveAllowedImageMimeType(
+        file.mimetype,
+        file.originalname,
+      );
+      if (!mimeType) {
         callback(new Error('Only image uploads are allowed'), false);
         return;
       }
+      file.mimetype = mimeType;
       callback(null, true);
     },
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 30 * 1024 * 1024 },
   });
 }
 

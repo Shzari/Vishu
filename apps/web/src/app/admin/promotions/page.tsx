@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { apiRequest, assetUrl } from "@/lib/api";
@@ -128,6 +128,23 @@ export default function AdminPromotionsPage() {
   const [mobileImageFile, setMobileImageFile] = useState<File | null>(null);
   const [existingDesktopImageUrl, setExistingDesktopImageUrl] = useState<string | null>(null);
   const [existingMobileImageUrl, setExistingMobileImageUrl] = useState<string | null>(null);
+
+  function suppressAuthRefreshForFileDialog() {
+    if (typeof window === "undefined") return;
+    (window as Window & { __vishuSuppressAuthRefreshUntil?: number })
+      .__vishuSuppressAuthRefreshUntil = Date.now() + 15000;
+  }
+
+  function finishPromotionFileSelection(
+    event: ChangeEvent<HTMLInputElement>,
+    setter: (file: File | null) => void,
+  ) {
+    setter(event.target.files?.[0] ?? null);
+    if (typeof window !== "undefined") {
+      (window as Window & { __vishuSuppressAuthRefreshUntil?: number })
+        .__vishuSuppressAuthRefreshUntil = Date.now() + 1000;
+    }
+  }
 
   const loadPromotions = useCallback(async () => {
     if (!token) return;
@@ -415,16 +432,6 @@ export default function AdminPromotionsPage() {
     [promotions],
   );
 
-  if (!token || currentRole !== "admin") {
-    return (
-      <RequireRole requiredRole="admin">
-        <div className="message error">
-          Login with an admin account to manage promotions.
-        </div>
-      </RequireRole>
-    );
-  }
-
   return (
     <RequireRole requiredRole="admin">
       <div className="stack">
@@ -566,10 +573,10 @@ export default function AdminPromotionsPage() {
                     <label>Desktop banner image</label>
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        setDesktopImageFile(event.target.files?.[0] ?? null)
-                      }
+                      accept="image/*,.avif,.heic,.heif"
+                      onClick={suppressAuthRefreshForFileDialog}
+                      onPointerDown={suppressAuthRefreshForFileDialog}
+                      onChange={(event) => finishPromotionFileSelection(event, setDesktopImageFile)}
                     />
                     {desktopImageFile ? (
                       <span className="muted">{desktopImageFile.name}</span>
@@ -581,17 +588,17 @@ export default function AdminPromotionsPage() {
                     <label>Mobile banner image</label>
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        setMobileImageFile(event.target.files?.[0] ?? null)
-                      }
+                      accept="image/*,.avif,.heic,.heif"
+                      onClick={suppressAuthRefreshForFileDialog}
+                      onPointerDown={suppressAuthRefreshForFileDialog}
+                      onChange={(event) => finishPromotionFileSelection(event, setMobileImageFile)}
                     />
                     {mobileImageFile ? (
                       <span className="muted">{mobileImageFile.name}</span>
                     ) : existingMobileImageUrl ? (
                       <span className="muted">Current mobile banner stored.</span>
                     ) : (
-                      <span className="muted">Optional mobile-specific artwork.</span>
+                      <span className="muted">Optional. If blank, Vishu will create a mobile banner from the desktop image.</span>
                     )}
                   </div>
                 </div>
@@ -603,7 +610,7 @@ export default function AdminPromotionsPage() {
                       checked={clearMobileImage}
                       onChange={(event) => setClearMobileImage(event.target.checked)}
                     />
-                    <span>Remove current mobile image on save</span>
+                    <span>Regenerate mobile image from the desktop banner on save</span>
                   </label>
                 ) : null}
 

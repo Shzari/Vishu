@@ -70,7 +70,14 @@ export default function AdminCustomersPage() {
     return users
       .filter((entry) => entry.role === "customer")
       .filter((entry) => {
-        const matchesSearch = !term || entry.email.toLowerCase().includes(term);
+        const customerName = [entry.first_name, entry.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        const matchesSearch =
+          !term ||
+          entry.email.toLowerCase().includes(term) ||
+          customerName.toLowerCase().includes(term);
         const matchesStatus =
           statusFilter === "all" ||
           (statusFilter === "active" && entry.is_active) ||
@@ -103,7 +110,7 @@ export default function AdminCustomersPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by email"
+                placeholder="Search by name or email"
               />
             </div>
             <div className="field">
@@ -143,8 +150,12 @@ export default function AdminCustomersPage() {
                     <tr key={customer.id}>
                       <td>
                         <div className="admin-table-stack">
-                          <strong>{customer.email}</strong>
-                          <span className="muted">Customer account</span>
+                          <strong>
+                            {[customer.first_name, customer.last_name].filter(Boolean).join(" ") ||
+                              customer.full_name ||
+                              customer.email}
+                          </strong>
+                          <span className="muted">{customer.email}</span>
                         </div>
                       </td>
                       <td>

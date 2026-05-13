@@ -31,7 +31,13 @@ import {
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
-  @Roles('customer')
+  @Public()
+  @Get('checkout/payment-settings')
+  getCheckoutPaymentSettings() {
+    return this.ordersService.getCheckoutPaymentSettings();
+  }
+
+  @Roles('customer', 'vendor')
   @Post('orders')
   createOrder(
     @Req() req: { user: AuthenticatedUser },
@@ -40,19 +46,52 @@ export class OrdersController {
     return this.ordersService.createOrder(req.user.sub, dto);
   }
 
+  @Roles('customer', 'vendor')
+  @Post('orders/stripe-checkout')
+  createStripeCheckoutSession(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: CreateOrderDto,
+  ) {
+    return this.ordersService.createStripeCheckoutSession(req.user.sub, dto);
+  }
+
+  @Roles('customer', 'vendor')
+  @Post('orders/stripe-checkout/:sessionId/complete')
+  completeStripeCheckoutSession(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.ordersService.completeStripeCheckoutSession(
+      req.user.sub,
+      sessionId,
+    );
+  }
+
   @Public()
   @Post('orders/guest')
   createGuestOrder(@Body() dto: CreateOrderDto) {
     return this.ordersService.createGuestOrder(dto);
   }
 
-  @Roles('customer')
+  @Public()
+  @Post('orders/guest/stripe-checkout')
+  createGuestStripeCheckoutSession(@Body() dto: CreateOrderDto) {
+    return this.ordersService.createStripeCheckoutSession(null, dto);
+  }
+
+  @Public()
+  @Post('orders/guest/stripe-checkout/:sessionId/complete')
+  completeGuestStripeCheckoutSession(@Param('sessionId') sessionId: string) {
+    return this.ordersService.completeStripeCheckoutSession(null, sessionId);
+  }
+
+  @Roles('customer', 'vendor')
   @Get('cart/my')
   getMyCart(@Req() req: { user: AuthenticatedUser }) {
     return this.ordersService.getCustomerCart(req.user.sub);
   }
 
-  @Roles('customer')
+  @Roles('customer', 'vendor')
   @Post('cart/my')
   syncMyCart(
     @Req() req: { user: AuthenticatedUser },
@@ -61,7 +100,7 @@ export class OrdersController {
     return this.ordersService.syncCustomerCart(req.user.sub, dto);
   }
 
-  @Roles('customer')
+  @Roles('customer', 'vendor')
   @Get('orders/my')
   getMyOrders(
     @Req() req: { user: AuthenticatedUser },
@@ -73,7 +112,7 @@ export class OrdersController {
     );
   }
 
-  @Roles('customer')
+  @Roles('customer', 'vendor')
   @Patch('orders/:id/cancel-request')
   requestCancel(
     @Req() req: { user: AuthenticatedUser },
@@ -83,7 +122,7 @@ export class OrdersController {
     return this.ordersService.requestCustomerCancel(req.user.sub, id, dto);
   }
 
-  @Roles('customer')
+  @Roles('customer', 'vendor')
   @Post('orders/:id/reorder')
   reorder(@Req() req: { user: AuthenticatedUser }, @Param('id') id: string) {
     return this.ordersService.reorderCustomerOrder(req.user.sub, id);
@@ -102,6 +141,21 @@ export class OrdersController {
   }
 
   @Roles('vendor')
+  @Get('vendor/notifications')
+  getVendorNotifications(@Req() req: { user: AuthenticatedUser }) {
+    return this.ordersService.getVendorNotifications(req.user.sub);
+  }
+
+  @Roles('vendor')
+  @Patch('vendor/notifications/:id/read')
+  markVendorNotificationRead(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.ordersService.markVendorNotificationRead(req.user.sub, id);
+  }
+
+  @Roles('vendor')
   @Patch('vendor/orders/:id/status')
   updateVendorOrderStatus(
     @Req() req: { user: AuthenticatedUser },
@@ -109,5 +163,17 @@ export class OrdersController {
     @Body() dto: VendorOrderStatusDto,
   ) {
     return this.ordersService.updateVendorOrderStatus(req.user.sub, id, dto);
+  }
+
+  @Roles('vendor')
+  @Patch('vendor/orders/:id/cancel-request')
+  cancelVendorOrderAfterCustomerRequest(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.ordersService.cancelVendorOrderAfterCustomerRequest(
+      req.user.sub,
+      id,
+    );
   }
 }

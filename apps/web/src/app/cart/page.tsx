@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCart } from "@/components/providers";
+import { getCartItemKey, useCart } from "@/components/providers";
 import { assetUrl, formatCurrency } from "@/lib/api";
 
 export default function CartPage() {
@@ -37,7 +37,7 @@ export default function CartPage() {
         ) : (
           <div className="cart-page-list">
             {items.map((item) => (
-              <article key={item.productId} className="cart-page-item">
+              <article key={getCartItemKey(item)} className="cart-page-item">
                 <Link
                   href={`/products/${item.productId}`}
                   className="cart-page-item-media"
@@ -77,7 +77,7 @@ export default function CartPage() {
                       <button
                         type="button"
                         onClick={() =>
-                          updateItemQuantity(item.productId, item.quantity - 1)
+                          updateItemQuantity(getCartItemKey(item), item.quantity - 1)
                         }
                       >
                         -
@@ -86,7 +86,7 @@ export default function CartPage() {
                       <button
                         type="button"
                         onClick={() =>
-                          updateItemQuantity(item.productId, item.quantity + 1)
+                          updateItemQuantity(getCartItemKey(item), item.quantity + 1)
                         }
                       >
                         +
@@ -96,7 +96,7 @@ export default function CartPage() {
                     <button
                       type="button"
                       className="cart-page-remove"
-                      onClick={() => removeItem(item.productId)}
+                      onClick={() => removeItem(getCartItemKey(item))}
                     >
                       Remove
                     </button>

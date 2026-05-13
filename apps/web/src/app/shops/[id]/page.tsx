@@ -33,6 +33,8 @@ export default function ShopDetailPage() {
   const [shopReviewComment, setShopReviewComment] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [shopFiltersOpen, setShopFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,7 +83,7 @@ export default function ShopDetailPage() {
   }, [currentRole, params.id, token]);
 
   useEffect(() => {
-    if (!quickViewProduct) {
+    if (!quickViewProduct && !commentsOpen && !shopFiltersOpen) {
       return;
     }
 
@@ -89,15 +91,17 @@ export default function ShopDetailPage() {
       if (event.key === "Escape") {
         setQuickViewProduct(null);
         setSelectedQuickViewImage(undefined);
+        setCommentsOpen(false);
+        setShopFiltersOpen(false);
       }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [quickViewProduct]);
+  }, [commentsOpen, quickViewProduct, shopFiltersOpen]);
 
   useEffect(() => {
-    if (!quickViewProduct || typeof document === "undefined") {
+    if ((!quickViewProduct && !commentsOpen && !shopFiltersOpen) || typeof document === "undefined") {
       return;
     }
 
@@ -107,7 +111,7 @@ export default function ShopDetailPage() {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [quickViewProduct]);
+  }, [commentsOpen, quickViewProduct, shopFiltersOpen]);
 
   function openQuickView(product: Product) {
     setQuickViewProduct(product);
@@ -211,6 +215,13 @@ export default function ShopDetailPage() {
   return (
     <div className="shop-detail-page stack">
       <section className="shop-hero-panel">
+        {shop.bannerUrl ? (
+          <div
+            className="shop-hero-cover"
+            style={{ backgroundImage: `url(${assetUrl(shop.bannerUrl)})` }}
+            aria-label={`${shop.shopName} cover image`}
+          />
+        ) : null}
         <div className="shop-hero-brand">
           <div className="shop-hero-logo">
             {shop.logoUrl ? (
@@ -221,7 +232,16 @@ export default function ShopDetailPage() {
           </div>
           <div className="shop-hero-copy">
             <h1 className="storefront-title">{shop.shopName}</h1>
-            <RatingStars value={shop.ratingSummary.average} count={shop.ratingSummary.count} size="lg" />
+            <div className="shop-hero-rating-row">
+              <RatingStars value={shop.ratingSummary.average} count={shop.ratingSummary.count} size="lg" />
+              <button
+                type="button"
+                className="table-link shop-comments-link"
+                onClick={() => setCommentsOpen(true)}
+              >
+                Comments
+              </button>
+            </div>
             {shop.shopDescription ? <p className="storefront-copy">{shop.shopDescription}</p> : null}
             {shopCategories.length > 0 ? (
               <div className="shop-hero-chips">
@@ -244,89 +264,27 @@ export default function ShopDetailPage() {
         </div>
       </section>
 
-      <section className="form-card stack review-panel">
-        <div className="catalog-toolbar compact-toolbar">
-          <div>
-            <h2>Shop reviews</h2>
-            <p>Customers can rate the shop after they receive a delivered order from it.</p>
-          </div>
-        </div>
-
-        {currentRole === "customer" && shopReviewStatus?.canReview ? (
-          <div className="review-composer">
-            <div className="review-composer-head">
-              <div>
-                <strong>{shopReviewStatus.existingReview ? "Update your shop review" : "Rate this shop"}</strong>
-                <p className="muted">
-                  {shopReviewStatus.lastDeliveredAt
-                    ? `Delivered on ${new Date(shopReviewStatus.lastDeliveredAt).toLocaleDateString()}`
-                    : "Delivered purchases unlock shop reviews."}
-                </p>
-              </div>
-              <RatingStars
-                value={shopReviewRating}
-                size="lg"
-                interactive
-                showValue={false}
-                onChange={setShopReviewRating}
-              />
-            </div>
-            <div className="field">
-              <label>Review</label>
-              <textarea
-                rows={4}
-                placeholder="Describe the overall shop experience, communication, packaging, or delivery reliability."
-                value={shopReviewComment}
-                onChange={(event) => setShopReviewComment(event.target.value)}
-              />
-            </div>
-            <div className="inline-actions">
-              <button type="button" className="button" disabled={reviewSaving} onClick={() => void submitShopReview()}>
-                {reviewSaving ? "Saving..." : shopReviewStatus.existingReview ? "Update review" : "Publish review"}
-              </button>
-              {reviewMessage ? <span className="muted">{reviewMessage}</span> : null}
-            </div>
-          </div>
-        ) : currentRole === "customer" ? (
-          <div className="message">{shopReviewStatus?.reason ?? "Buy from this shop and receive the order to review it."}</div>
-        ) : (
-          <div className="message">Sign in as a customer to review shops after a delivered order.</div>
-        )}
-
-        {shop.recentReviews.length > 0 ? (
-          <div className="review-list">
-            {shop.recentReviews.map((review) => (
-              <article key={review.id} className="review-card">
-                <div className="review-card-head">
-                  <div>
-                    <strong>{review.customerName}</strong>
-                    <p className="muted">{new Date(review.updatedAt).toLocaleDateString()}</p>
-                  </div>
-                  <RatingStars value={review.rating} size="sm" showValue={false} />
-                </div>
-                <p>{review.comment || "Rated this shop without written feedback."}</p>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="empty">No shop reviews yet.</div>
-        )}
-      </section>
-
       <section className="catalog-main shop-products-panel" id="shop-products">
         <div className="catalog-toolbar shop-products-head">
           <div>
             <h2>Products</h2>
             <p>Browse the current collection from {shop.shopName}.</p>
           </div>
-          <div className="catalog-meta">
+          <div className="catalog-meta shop-products-actions">
+            <button
+              type="button"
+              className="category-results-control shop-mobile-filter-button"
+              onClick={() => setShopFiltersOpen(true)}
+            >
+              Filter
+            </button>
             <Link className="table-link" href="/shops">
               Back to all shops
             </Link>
           </div>
         </div>
 
-        <div className="shop-products-toolbar">
+        <div className="shop-products-toolbar shop-products-inline-filters">
           <div className="shop-filter-chips">
             {availableCategories.map((entry) => (
               <button
@@ -353,9 +311,9 @@ export default function ShopDetailPage() {
               <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
                 <option value="featured">Featured</option>
                 <option value="newest">Newest</option>
-                <option value="price-low">Price: low to high</option>
-                <option value="price-high">Price: high to low</option>
-                <option value="title">Title</option>
+                <option value="price-low">Price ↑</option>
+                <option value="price-high">Price ↓</option>
+                <option value="title">A-Z</option>
               </select>
             </label>
           </div>
@@ -408,31 +366,197 @@ export default function ShopDetailPage() {
                   <button
                     type="button"
                     className="button product-action-button"
-                    onClick={() =>
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const variant =
+                        product.sizeVariants.find((entry) => entry.stock > 0) ??
+                        product.sizeVariants[0] ??
+                        null;
                       addItem({
                         productId: product.id,
+                        sizeId: variant?.id ?? null,
                         title: product.title,
                         price: product.price,
                         image: product.images[0],
                         color: product.color ?? product.colors[0]?.name ?? null,
-                        size: product.size ?? product.sizeVariants[0]?.label ?? null,
+                        size: product.size ?? variant?.label ?? null,
                         quantity: 1,
-                        stock: product.stock,
-                      })
-                    }
+                        stock: variant?.stock ?? product.stock,
+                      });
+                    }}
                     disabled={product.stock === 0}
                   >
                     {product.stock === 0 ? "Sold out" : "Add to cart"}
                   </button>
                 </div>
                 <button type="button" className="product-inline-action" onClick={() => openQuickView(product)}>
-                  Quick view
+                  View
                 </button>
               </div>
             </article>
           ))}
         </div>
       </section>
+
+      {shopFiltersOpen ? (
+        <div className="category-results-sidebar-shell shop-filter-drawer-shell" onClick={() => setShopFiltersOpen(false)}>
+          <aside className="category-results-sidebar shop-filter-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="category-filter-drawer-head">
+              <strong>Filter</strong>
+              <button
+                type="button"
+                className="category-filter-drawer-close"
+                onClick={() => setShopFiltersOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <section className="category-filter-group">
+              <div className="category-filter-title">Category</div>
+              <div className="category-filter-links">
+                {availableCategories.map((entry) => (
+                  <button
+                    key={entry}
+                    type="button"
+                    className={
+                      selectedCategory === entry
+                        ? "category-filter-link shop-filter-link-button active"
+                        : "category-filter-link shop-filter-link-button"
+                    }
+                    onClick={() => {
+                      setSelectedCategory(entry);
+                      setShopFiltersOpen(false);
+                    }}
+                  >
+                    {entry === "all" ? "All products" : formatCatalogLabel(entry)}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="category-filter-group">
+              <div className="category-filter-title">Search</div>
+              <label className="field">
+                <span>Search products</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={`Search ${shop.shopName}`}
+                />
+              </label>
+            </section>
+
+            <section className="category-filter-group">
+              <div className="category-filter-title">Sort</div>
+              <label className="field">
+                <span>Sort products</span>
+                <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                  <option value="featured">Featured</option>
+                  <option value="newest">Newest</option>
+                  <option value="price-low">Price ↑</option>
+                  <option value="price-high">Price ↓</option>
+                  <option value="title">A-Z</option>
+                </select>
+              </label>
+            </section>
+
+            {(search.trim().length > 0 || selectedCategory !== "all" || sortBy !== "featured") ? (
+              <button
+                type="button"
+                className="button-secondary category-filter-reset"
+                onClick={() => {
+                  setSearch("");
+                  setSelectedCategory("all");
+                  setSortBy("featured");
+                  setShopFiltersOpen(false);
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </aside>
+        </div>
+      ) : null}
+
+      {commentsOpen ? (
+        <div className="review-modal-backdrop shop-comments-modal-backdrop" onClick={() => setCommentsOpen(false)}>
+          <div className="review-modal-card shop-comments-modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="review-modal-head">
+              <div>
+                <h2>Shop comments</h2>
+                <p>{shop.shopName}</p>
+              </div>
+              <button type="button" className="mini-cart-close" onClick={() => setCommentsOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            {currentRole === "customer" && shopReviewStatus?.canReview ? (
+              <div className="review-composer shop-review-composer">
+                <div className="review-composer-head">
+                  <div>
+                    <strong>{shopReviewStatus.existingReview ? "Update your shop review" : "Rate this shop"}</strong>
+                    <p className="muted">
+                      {shopReviewStatus.lastDeliveredAt
+                        ? `Delivered on ${new Date(shopReviewStatus.lastDeliveredAt).toLocaleDateString()}`
+                        : "Delivered purchases unlock shop reviews."}
+                    </p>
+                  </div>
+                  <RatingStars
+                    value={shopReviewRating}
+                    size="lg"
+                    interactive
+                    showValue={false}
+                    onChange={setShopReviewRating}
+                  />
+                </div>
+                <div className="field">
+                  <label>Review</label>
+                  <textarea
+                    rows={4}
+                    placeholder="Describe the overall shop experience, communication, packaging, or delivery reliability."
+                    value={shopReviewComment}
+                    onChange={(event) => setShopReviewComment(event.target.value)}
+                  />
+                </div>
+                <div className="inline-actions">
+                  <button type="button" className="button" disabled={reviewSaving} onClick={() => void submitShopReview()}>
+                    {reviewSaving ? "Saving..." : shopReviewStatus.existingReview ? "Update review" : "Publish review"}
+                  </button>
+                  {reviewMessage ? <span className="muted">{reviewMessage}</span> : null}
+                </div>
+              </div>
+            ) : currentRole === "customer" ? (
+              <div className="message">
+                {shopReviewStatus?.reason ?? "Buy from this shop and receive the order to review it."}
+              </div>
+            ) : (
+              <div className="message">Sign in as a customer to review shops after a delivered order.</div>
+            )}
+
+            {shop.recentReviews.length > 0 ? (
+              <div className="review-list">
+                {shop.recentReviews.map((review) => (
+                  <article key={review.id} className="review-card">
+                    <div className="review-card-head">
+                      <div>
+                        <strong>{review.customerName}</strong>
+                        <p className="muted">{new Date(review.updatedAt).toLocaleDateString()}</p>
+                      </div>
+                      <RatingStars value={review.rating} size="sm" showValue={false} />
+                    </div>
+                    <p>{review.comment || "Rated this shop without written feedback."}</p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty">No shop reviews yet.</div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {quickViewProduct ? (
         <div className="product-quick-view-overlay" onClick={closeQuickView}>
@@ -495,6 +619,7 @@ export default function ShopDetailPage() {
                     onClick={() =>
                       addItem({
                         productId: quickViewProduct.id,
+                        sizeId: quickViewProduct.sizeVariants[0]?.id ?? null,
                         title: quickViewProduct.title,
                         price: quickViewProduct.price,
                         image: quickViewProduct.images[0],

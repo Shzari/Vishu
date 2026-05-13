@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { PasswordField } from "@/components/password-field";
 import { useAuth, useBranding } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
 import type { SessionUser } from "@/lib/types";
@@ -15,6 +16,7 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const logoSrc = branding.logoDataUrl ?? "/vishu-tab-logo.png";
   const requestedNextPath = searchParams.get("next");
 
@@ -34,6 +36,7 @@ export default function AdminLoginPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSubmitting(true);
 
     try {
       const response = await apiRequest<{
@@ -50,14 +53,17 @@ export default function AdminLoginPage() {
         return;
       }
 
-      setSession(response.user);
-      router.push(getSafeAdminNextPath(requestedNextPath));
+      await setSession(response.user);
+      router.replace(getSafeAdminNextPath(requestedNextPath));
+      router.refresh();
     } catch (submitError) {
       setError(
         submitError instanceof Error
           ? submitError.message
           : "Admin login failed.",
       );
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -100,8 +106,7 @@ export default function AdminLoginPage() {
         </div>
         <div className="field">
           <label>Password</label>
-          <input
-            type="password"
+          <PasswordField
             autoComplete="current-password"
             placeholder="Enter your password"
             value={password}
@@ -109,7 +114,7 @@ export default function AdminLoginPage() {
           />
         </div>
         <button className="button admin-login-submit" type="submit">
-          Sign in
+          {submitting ? "Signing in..." : "Sign in"}
         </button>
         {error && <div className="message error">{error}</div>}
         <div className="admin-login-note">

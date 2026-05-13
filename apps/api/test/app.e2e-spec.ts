@@ -1101,8 +1101,8 @@ describe('Marketplace API (e2e)', () => {
       { title: 'Order Pants', stock: 6 },
       { title: 'Order Tee', stock: 8 },
     ]);
-    expect(orderItemCheck.recordset[0].commission_amount).toBe(6);
-    expect(orderItemCheck.recordset[0].vendor_earnings).toBe(54);
+    expect(orderItemCheck.recordset[0].commission_amount).toBe(1);
+    expect(orderItemCheck.recordset[0].vendor_earnings).toBe(59);
     expect(orderSnapshotCheck.recordset[0]).toEqual({
       shipping_label: 'Home',
       shipping_city: 'Prishtine',
@@ -1550,7 +1550,7 @@ describe('Marketplace API (e2e)', () => {
     expect(createResponse.body.productCode).toContain('-ONE-');
   });
 
-  it('returns item-level commission and vendor data to admins only', async () => {
+  it('returns item-level platform fee and vendor data to admins only', async () => {
     const pool = await createPool(DB_NAME);
     const adminPassword = 'adminsecret';
     const adminHash = await bcrypt.hash(adminPassword, 10);
@@ -1620,8 +1620,8 @@ describe('Marketplace API (e2e)', () => {
     expect(adminOrders.body[0].items[0].vendor.shopName).toBe(
       'Admin Visible Shop',
     );
-    expect(adminOrders.body[0].items[0].commission).toBe(10);
-    expect(adminOrders.body[0].items[0].vendorEarnings).toBe(90);
+    expect(adminOrders.body[0].items[0].commission).toBe(1);
+    expect(adminOrders.body[0].items[0].vendorEarnings).toBe(99);
 
     await request(app.getHttpServer())
       .get('/admin/orders')
@@ -2541,7 +2541,7 @@ describe('Marketplace API (e2e)', () => {
     expect(payouts.body[0].shopName).toBe('Payout Shop');
     expect(payouts.body[0].payableNow).toBe(0);
     expect(payouts.body[0].outstandingShippedBalance).toBe(0);
-    expect(payouts.body[0].totalCommission).toBe(10);
+    expect(payouts.body[0].totalCommission).toBe(1);
 
     const codCollected = await request(app.getHttpServer())
       .patch(`/admin/orders/${createdOrder.body.id}/cod`)
@@ -2638,11 +2638,7 @@ describe('Marketplace API (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/vendor/orders/${createdOrder.body.id}/status`)
       .set('Authorization', `Bearer ${vendorLogin.body.accessToken}`)
-      .send({
-        status: 'shipped',
-        shippingCarrier: 'DHL',
-        trackingNumber: 'TRACK-1234',
-      })
+      .send({ status: 'shipped' })
       .expect(200);
 
     await request(app.getHttpServer())
@@ -2658,9 +2654,7 @@ describe('Marketplace API (e2e)', () => {
 
     expect(vendorOrders.body[0].status).toBe('delivered');
     expect(vendorOrders.body[0].items[0].status).toBe('delivered');
-    expect(vendorOrders.body[0].items[0].shipment.trackingNumber).toBe(
-      'TRACK-1234',
-    );
+    expect(vendorOrders.body[0].items[0].shipment.trackingNumber).toBeNull();
 
     const customerOrders = await request(app.getHttpServer())
       .get('/orders/my')
@@ -2670,9 +2664,7 @@ describe('Marketplace API (e2e)', () => {
       )
       .expect(200);
 
-    expect(customerOrders.body[0].items[0].shipment.shippingCarrier).toBe(
-      'DHL',
-    );
+    expect(customerOrders.body[0].items[0].shipment.shippingCarrier).toBeNull();
     expect(customerOrders.body[0].fulfillment.placedAt).toBeTruthy();
     expect(customerOrders.body[0].fulfillment.confirmedAt).toBeTruthy();
     expect(customerOrders.body[0].fulfillment.shippedAt).toBeTruthy();

@@ -12,7 +12,9 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "pants",
     "jeans",
     "shorts",
+    "underwear",
     "suits",
+    "shoes",
     "sportswear",
     "accessories",
   ],
@@ -29,9 +31,11 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "jeans",
     "shorts",
     "leggings",
+    "underwear",
     "dresses",
     "skirts",
     "suits",
+    "shoes",
     "sportswear",
     "accessories",
   ],
@@ -42,15 +46,19 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "pants",
     "jeans",
     "sets",
+    "underwear",
     "schoolwear",
+    "shoes",
     "sportswear",
   ],
   babies: [
     "bodysuits",
     "rompers",
     "sets",
+    "underwear",
     "outerwear",
     "sleepwear",
+    "shoes",
     "blankets",
     "accessories",
   ],
@@ -63,11 +71,8 @@ export const PRODUCT_CATEGORIES: string[] = [
 export const PRODUCT_COLOR_OPTIONS = [
   "black",
   "white",
-  "ivory",
-  "cream",
   "beige",
   "brown",
-  "tan",
   "gray",
   "blue",
   "navy",
@@ -75,14 +80,61 @@ export const PRODUCT_COLOR_OPTIONS = [
   "orange",
   "yellow",
   "green",
-  "olive",
   "pink",
-  "purple",
-  "burgundy",
-  "gold",
-  "silver",
-  "multicolor",
+  "mixed-colors",
 ] as const;
+
+export const PRODUCT_BRAND_FILTER_OPTIONS = [
+  "Adidas",
+  "Nike",
+  "Puma",
+  "Reebok",
+  "New Balance",
+  "Converse",
+  "Vans",
+  "Zara",
+  "H&M",
+  "Mango",
+  "Bershka",
+  "Pull&Bear",
+  "Stradivarius",
+  "New Yorker",
+  "Springfield",
+  "Terranova",
+  "Reserved",
+  "Tommy Hilfiger",
+  "Calvin Klein",
+  "Levi's",
+  "Guess",
+  "Jack & Jones",
+  "Only",
+  "Vero Moda",
+  "Under Armour",
+  "Skechers",
+  "Geox",
+  "Benetton",
+  "Okaidi",
+  "OVS",
+  "LC Waikiki",
+  "Koton",
+  "Mavi",
+  "DeFacto",
+  "Colin's",
+  "LTB",
+  "D'S Damat",
+  "Kiğılı",
+  "Sarar",
+  "Network",
+  "Vakko",
+  "Ipekyol",
+  "Twist",
+  "Dagi",
+  "Flo",
+] as const;
+
+export function getCatalogBrandFilterOptions(): string[] {
+  return [...PRODUCT_BRAND_FILTER_OPTIONS];
+}
 
 export const PRODUCT_SIZE_OPTIONS = [
   "xs",
@@ -94,6 +146,112 @@ export const PRODUCT_SIZE_OPTIONS = [
   "xxxl",
   "one-size",
 ] as const;
+
+export const ADULT_SIZE_FILTER_OPTIONS = [
+  "XXS",
+  "XS",
+  "S",
+  "M",
+  "L",
+  "XL",
+  "XXL",
+  "3XL",
+  "One Size",
+] as const;
+
+export const KIDS_SIZE_FILTER_OPTIONS = [
+  "2Y",
+  "3Y",
+  "4Y",
+  "5Y",
+  "6Y",
+  "7Y",
+  "8Y",
+  "10Y",
+  "12Y",
+  "14Y",
+  "Kids XS",
+  "Kids S",
+  "Kids M",
+  "Kids L",
+  "Kids XL",
+] as const;
+
+export const BABY_SIZE_FILTER_OPTIONS = [
+  "NB",
+  "0-1M",
+  "0-3M",
+  "3-6M",
+  "6-9M",
+  "6-12M",
+  "9-12M",
+  "12-18M",
+  "18-24M",
+  "24-36M",
+] as const;
+
+export const SHOE_SIZE_FILTER_OPTIONS = [
+  "12",
+  "13",
+  "14",
+  "15",
+  "16",
+  "17",
+  "18",
+  "19",
+  "20",
+  "21",
+  "22",
+  "23",
+  "24",
+  "25",
+  "26",
+  "27",
+  "28",
+  "29",
+  "30",
+  "31",
+  "32",
+  "33",
+  "34",
+  "35",
+  "36",
+  "37",
+  "38",
+  "39",
+  "40",
+  "41",
+  "42",
+  "43",
+  "44",
+] as const;
+
+export function getCatalogSizeFilterOptions(
+  department?: string | null,
+  category?: string | null,
+): string[] {
+  const normalizedCategory = category?.trim().toLowerCase();
+
+  if (normalizedCategory === "shoes") {
+    return [...SHOE_SIZE_FILTER_OPTIONS];
+  }
+
+  if (department === "kids") {
+    return normalizedCategory === "all"
+      ? [...KIDS_SIZE_FILTER_OPTIONS, ...SHOE_SIZE_FILTER_OPTIONS]
+      : [...KIDS_SIZE_FILTER_OPTIONS];
+  }
+
+  if (department === "babies") {
+    return normalizedCategory === "all"
+      ? [...BABY_SIZE_FILTER_OPTIONS, ...SHOE_SIZE_FILTER_OPTIONS]
+      : [...BABY_SIZE_FILTER_OPTIONS];
+  }
+
+  return normalizedCategory === "all"
+    ? [...ADULT_SIZE_FILTER_OPTIONS, ...SHOE_SIZE_FILTER_OPTIONS]
+    : [...ADULT_SIZE_FILTER_OPTIONS];
+}
 
 export function getCatalogCategoriesForDepartment(
   department?: string | null,

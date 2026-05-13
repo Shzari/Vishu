@@ -236,9 +236,9 @@ export default function AdminReportsPage() {
                 <p>Vendor growth in the selected range.</p>
               </div>
               <div className="form-card admin-overview-card">
-                <span>Total commission</span>
+                <span>Total platform fees</span>
                 <strong>{formatCurrency(overview.commerce.totalCommission)}</strong>
-                <p>Platform commission accumulated across all orders.</p>
+                <p>Dynamic vendor fees accumulated from confirmed vendor orders.</p>
               </div>
             </section>
 
@@ -344,7 +344,7 @@ export default function AdminReportsPage() {
                       <tr>
                         <th>Vendor</th>
                         <th>Gross sales</th>
-                        <th>Commission</th>
+                        <th>Platform fee</th>
                         <th>Payable now</th>
                         <th>Paid out</th>
                         <th>Outstanding</th>

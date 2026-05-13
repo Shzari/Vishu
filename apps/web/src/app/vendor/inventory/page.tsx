@@ -1,5 +1,5 @@
-import { VendorWorkspace } from "@/components/vendor-workspace";
+import { redirect } from "next/navigation";
 
 export default function VendorInventoryPage() {
-  return <VendorWorkspace section="inventory" />;
+  redirect("/vendor/products");
 }

@@ -234,6 +234,8 @@ BEGIN
   CREATE TABLE dbo.users (
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     email NVARCHAR(255) NOT NULL UNIQUE,
+    first_name NVARCHAR(120) NULL,
+    last_name NVARCHAR(120) NULL,
     full_name NVARCHAR(255) NULL,
     phone_number NVARCHAR(40) NULL,
     order_updates_enabled BIT NOT NULL DEFAULT 1,
@@ -306,15 +308,33 @@ BEGIN
     shipping_notes NVARCHAR(1000) NULL,
     low_stock_threshold INT NOT NULL DEFAULT 5,
     platform_fee DECIMAL(10, 2) NOT NULL DEFAULT 1.00,
+    platform_fee_mode NVARCHAR(20) NOT NULL DEFAULT 'dynamic',
+    fee_free_until DATETIME2 NULL,
+    last_login_at DATETIME2 NULL,
+    last_activity_at DATETIME2 NULL,
+    inactivity_disabled_at DATETIME2 NULL,
+    reactivation_requested_at DATETIME2 NULL,
     bank_account_name NVARCHAR(255) NULL,
     bank_name NVARCHAR(255) NULL,
     bank_iban NVARCHAR(64) NULL,
     is_active BIT NOT NULL DEFAULT 0,
     is_verified BIT NOT NULL DEFAULT 0,
+    admin_status NVARCHAR(30) NOT NULL DEFAULT 'approved',
+    is_test BIT NOT NULL DEFAULT 0,
     approved_at DATETIME2 NULL,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF COL_LENGTH('dbo.vendors', 'admin_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD admin_status NVARCHAR(30) NOT NULL CONSTRAINT df_vendors_admin_status DEFAULT 'approved';
+END;
+
+IF COL_LENGTH('dbo.vendors', 'is_test') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD is_test BIT NOT NULL CONSTRAINT df_vendors_is_test DEFAULT 0;
 END;
 
 IF OBJECT_ID('dbo.vendor_team_members', 'U') IS NULL
@@ -323,7 +343,7 @@ BEGIN
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
     user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id),
-    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'employee')),
+    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'manager', 'employee')),
     status NVARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'removed')),
     invited_by_user_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
     joined_at DATETIME2 NULL,
@@ -339,7 +359,7 @@ BEGIN
     vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
     user_id UNIQUEIDENTIFIER NULL REFERENCES dbo.users(id),
     email NVARCHAR(255) NOT NULL,
-    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'employee')),
+    role NVARCHAR(20) NOT NULL CHECK (role IN ('shop_holder', 'manager', 'employee')),
     note NVARCHAR(500) NULL,
     token NVARCHAR(255) NOT NULL UNIQUE,
     status NVARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'revoked', 'expired')),
@@ -351,6 +371,62 @@ BEGIN
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF OBJECT_ID('dbo.vendor_team_members', 'U') IS NOT NULL
+BEGIN
+  DECLARE @vendorTeamMembersRoleCheck NVARCHAR(128);
+  SELECT TOP 1 @vendorTeamMembersRoleCheck = cc.name
+  FROM sys.check_constraints cc
+  WHERE cc.parent_object_id = OBJECT_ID('dbo.vendor_team_members')
+    AND cc.definition LIKE '%role%'
+    AND cc.definition LIKE '%shop_holder%'
+    AND cc.definition LIKE '%employee%';
+
+  IF @vendorTeamMembersRoleCheck IS NOT NULL
+  BEGIN
+    DECLARE @dropVendorTeamMembersRoleCheck NVARCHAR(MAX);
+    SET @dropVendorTeamMembersRoleCheck = N'ALTER TABLE dbo.vendor_team_members DROP CONSTRAINT ' + QUOTENAME(@vendorTeamMembersRoleCheck);
+    EXEC(@dropVendorTeamMembersRoleCheck);
+  END;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'ck_vendor_team_members_role'
+      AND parent_object_id = OBJECT_ID('dbo.vendor_team_members')
+  )
+    ALTER TABLE dbo.vendor_team_members
+      ADD CONSTRAINT ck_vendor_team_members_role
+      CHECK (role IN ('shop_holder', 'manager', 'employee'));
+END;
+
+IF OBJECT_ID('dbo.vendor_team_invites', 'U') IS NOT NULL
+BEGIN
+  DECLARE @vendorTeamInvitesRoleCheck NVARCHAR(128);
+  SELECT TOP 1 @vendorTeamInvitesRoleCheck = cc.name
+  FROM sys.check_constraints cc
+  WHERE cc.parent_object_id = OBJECT_ID('dbo.vendor_team_invites')
+    AND cc.definition LIKE '%role%'
+    AND cc.definition LIKE '%shop_holder%'
+    AND cc.definition LIKE '%employee%';
+
+  IF @vendorTeamInvitesRoleCheck IS NOT NULL
+  BEGIN
+    DECLARE @dropVendorTeamInvitesRoleCheck NVARCHAR(MAX);
+    SET @dropVendorTeamInvitesRoleCheck = N'ALTER TABLE dbo.vendor_team_invites DROP CONSTRAINT ' + QUOTENAME(@vendorTeamInvitesRoleCheck);
+    EXEC(@dropVendorTeamInvitesRoleCheck);
+  END;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'ck_vendor_team_invites_role'
+      AND parent_object_id = OBJECT_ID('dbo.vendor_team_invites')
+  )
+    ALTER TABLE dbo.vendor_team_invites
+      ADD CONSTRAINT ck_vendor_team_invites_role
+      CHECK (role IN ('shop_holder', 'manager', 'employee'));
 END;
 
 IF NOT EXISTS (
@@ -451,6 +527,11 @@ BEGIN
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF COL_LENGTH('dbo.colors', 'updated_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.colors ADD updated_at DATETIME2 NOT NULL CONSTRAINT df_colors_updated_at DEFAULT SYSDATETIME();
 END;
 
 IF OBJECT_ID('dbo.sizes', 'U') IS NULL
@@ -764,11 +845,30 @@ WHERE NOT EXISTS (
   SELECT 1 FROM dbo.gender_groups gg WHERE gg.name = seed.name
 );
 
+UPDATE dbo.size_types
+SET sort_order = 30,
+    is_active = 1,
+    updated_at = SYSDATETIME()
+WHERE name = 'EU';
+
 INSERT INTO dbo.size_types (name, is_active, sort_order)
-SELECT 'Apparel', 1, 0
+SELECT seed.name, 1, seed.sort_order
+FROM (
+  VALUES
+    ('Babies', 10),
+    ('Kids', 20),
+    ('EU', 30),
+    ('Shoe EU', 40)
+  ) AS seed(name, sort_order)
 WHERE NOT EXISTS (
-  SELECT 1 FROM dbo.size_types st WHERE st.name = 'Apparel'
+  SELECT 1 FROM dbo.size_types st WHERE st.name = seed.name
 );
+
+UPDATE dbo.size_types
+SET is_active = 0,
+    sort_order = 999,
+    updated_at = SYSDATETIME()
+WHERE name = 'Apparel';
 
 INSERT INTO dbo.categories (name, is_active, sort_order)
 SELECT DISTINCT source.name, 1, 0
@@ -784,6 +884,19 @@ FROM (
 ) AS source
 WHERE NOT EXISTS (
   SELECT 1 FROM dbo.categories c WHERE c.name = source.name
+);
+
+INSERT INTO dbo.categories (name, is_active, sort_order)
+SELECT seed.name, 1, seed.sort_order
+FROM (
+  VALUES
+    ('underwear', 130),
+    ('Shoes', 140)
+) AS seed(name, sort_order)
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.categories c
+  WHERE LOWER(LTRIM(RTRIM(c.name))) = LOWER(LTRIM(RTRIM(seed.name)))
 );
 
 INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
@@ -810,36 +923,214 @@ WHERE NOT EXISTS (
     AND sc.name = source.name
 );
 
-INSERT INTO dbo.brands (name, is_active, sort_order)
-SELECT DISTINCT source.name, 1, 0
+INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
+SELECT c.id, seed.name, 1, seed.sort_order
 FROM (
-  SELECT value AS name
+  VALUES
+    ('underwear', 'underwear', 0),
+    ('Shoes', 'Shoes', 0)
+) AS seed(category_name, name, sort_order)
+INNER JOIN dbo.categories c
+  ON LOWER(LTRIM(RTRIM(c.name))) = LOWER(LTRIM(RTRIM(seed.category_name)))
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.subcategories sc
+  WHERE sc.category_id = c.id
+    AND LOWER(LTRIM(RTRIM(sc.name))) = LOWER(LTRIM(RTRIM(seed.name)))
+);
+
+INSERT INTO dbo.brands (name, is_active, sort_order)
+SELECT source.name, 1, MIN(source.sort_order)
+FROM (
+  SELECT value AS name, sort_order
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'brand'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION ALL
+  SELECT name, sort_order
+  FROM (VALUES
+    ('Nike', 10),
+    ('Puma', 20),
+    ('Adidas', 30),
+    ('Hugo Boss', 40),
+    ('Lacoste', 50)
+  ) AS default_brands(name, sort_order)
+) AS source
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.brands b WHERE b.name = source.name
+)
+GROUP BY source.name;
+
+;WITH allowed_brand_names AS (
+  SELECT LOWER(LTRIM(RTRIM(value))) AS name
   FROM dbo.catalog_master_values
   WHERE option_type = 'brand'
     AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
   UNION
-  SELECT shop_name
-  FROM dbo.vendors
-  WHERE NULLIF(LTRIM(RTRIM(shop_name)), '') IS NOT NULL
-) AS source
+  SELECT LOWER(LTRIM(RTRIM(name)))
+  FROM (VALUES
+    ('Nike'),
+    ('Puma'),
+    ('Adidas'),
+    ('Hugo Boss'),
+    ('Lacoste')
+  ) AS default_brands(name)
+),
+vendor_named_brands AS (
+  SELECT b.id
+  FROM dbo.brands b
+  INNER JOIN dbo.vendors v
+    ON LOWER(LTRIM(RTRIM(b.name))) = LOWER(LTRIM(RTRIM(v.shop_name)))
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM allowed_brand_names allowed
+    WHERE allowed.name = LOWER(LTRIM(RTRIM(b.name)))
+  )
+)
+UPDATE p
+SET brand_id = NULL
+FROM dbo.products p
+INNER JOIN vendor_named_brands vnb ON vnb.id = p.brand_id;
+
+;WITH allowed_brand_names AS (
+  SELECT LOWER(LTRIM(RTRIM(value))) AS name
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'brand'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION
+  SELECT LOWER(LTRIM(RTRIM(name)))
+  FROM (VALUES
+    ('Nike'),
+    ('Puma'),
+    ('Adidas'),
+    ('Hugo Boss'),
+    ('Lacoste')
+  ) AS default_brands(name)
+)
+DELETE b
+FROM dbo.brands b
+INNER JOIN dbo.vendors v
+  ON LOWER(LTRIM(RTRIM(b.name))) = LOWER(LTRIM(RTRIM(v.shop_name)))
 WHERE NOT EXISTS (
-  SELECT 1 FROM dbo.brands b WHERE b.name = source.name
-);
+    SELECT 1
+    FROM allowed_brand_names allowed
+    WHERE allowed.name = LOWER(LTRIM(RTRIM(b.name)))
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.products p
+    WHERE p.brand_id = b.id
+  );
 
 INSERT INTO dbo.colors (name, is_active, sort_order)
-SELECT DISTINCT source.name, 1, 0
+SELECT source.name, 1, MIN(source.sort_order)
 FROM (
-  SELECT value AS name
+  SELECT value AS name, sort_order
+  FROM dbo.catalog_master_values
+  WHERE option_type = 'color'
+    AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
+  UNION ALL
+  SELECT name, sort_order
+  FROM (VALUES
+    ('Black', 10),
+    ('White', 20),
+    ('Gray', 30),
+    ('Blue', 40),
+    ('Navy', 50),
+    ('Red', 60),
+    ('Pink', 70),
+    ('Green', 80),
+    ('Yellow', 90),
+    ('Orange', 100),
+    ('Brown', 110),
+    ('Beige', 120),
+    ('Mixed Colors', 130)
+  ) AS default_colors(name, sort_order)
+) AS source
+WHERE NOT EXISTS (
+  SELECT 1 FROM dbo.colors c WHERE LOWER(LTRIM(RTRIM(c.name))) = LOWER(LTRIM(RTRIM(source.name)))
+)
+GROUP BY source.name;
+
+;WITH color_sort_order AS (
+  SELECT LOWER(LTRIM(RTRIM(name))) AS name, sort_order
+  FROM (VALUES
+    ('Black', 10),
+    ('White', 20),
+    ('Gray', 30),
+    ('Blue', 40),
+    ('Navy', 50),
+    ('Red', 60),
+    ('Pink', 70),
+    ('Green', 80),
+    ('Yellow', 90),
+    ('Orange', 100),
+    ('Brown', 110),
+    ('Beige', 120),
+    ('Mixed Colors', 130)
+  ) AS default_colors(name, sort_order)
+)
+UPDATE c
+SET sort_order = color_sort_order.sort_order,
+    is_active = 1
+FROM dbo.colors c
+INNER JOIN color_sort_order
+  ON color_sort_order.name = LOWER(LTRIM(RTRIM(c.name)));
+
+;WITH color_display_names AS (
+  SELECT LOWER(LTRIM(RTRIM(name))) AS name, display_name
+  FROM (VALUES
+    ('Black', 'Black'),
+    ('White', 'White'),
+    ('Gray', 'Gray'),
+    ('Blue', 'Blue'),
+    ('Navy', 'Navy'),
+    ('Red', 'Red'),
+    ('Pink', 'Pink'),
+    ('Green', 'Green'),
+    ('Yellow', 'Yellow'),
+    ('Orange', 'Orange'),
+    ('Brown', 'Brown'),
+    ('Beige', 'Beige'),
+    ('Mixed Colors', 'Mixed Colors')
+  ) AS default_colors(name, display_name)
+)
+UPDATE c
+SET name = color_display_names.display_name
+FROM dbo.colors c
+INNER JOIN color_display_names
+  ON color_display_names.name = LOWER(LTRIM(RTRIM(c.name)));
+
+;WITH allowed_color_names AS (
+  SELECT LOWER(LTRIM(RTRIM(value))) AS name
   FROM dbo.catalog_master_values
   WHERE option_type = 'color'
     AND NULLIF(LTRIM(RTRIM(value)), '') IS NOT NULL
   UNION
-  SELECT color
-  FROM dbo.products
-  WHERE NULLIF(LTRIM(RTRIM(color)), '') IS NOT NULL
-) AS source
+  SELECT LOWER(LTRIM(RTRIM(name)))
+  FROM (VALUES
+    ('Black'),
+    ('White'),
+    ('Gray'),
+    ('Blue'),
+    ('Navy'),
+    ('Red'),
+    ('Pink'),
+    ('Green'),
+    ('Yellow'),
+    ('Orange'),
+    ('Brown'),
+    ('Beige'),
+    ('Mixed Colors')
+  ) AS default_colors(name)
+)
+UPDATE c
+SET is_active = 0
+FROM dbo.colors c
 WHERE NOT EXISTS (
-  SELECT 1 FROM dbo.colors c WHERE c.name = source.name
+  SELECT 1
+  FROM allowed_color_names allowed
+  WHERE allowed.name = LOWER(LTRIM(RTRIM(c.name)))
 );
 
 IF EXISTS (SELECT 1 FROM dbo.colors WHERE name = 'hiri')
@@ -889,13 +1180,480 @@ FROM (
   FROM dbo.products
   WHERE NULLIF(LTRIM(RTRIM(size)), '') IS NOT NULL
 ) AS source
-INNER JOIN dbo.size_types st ON st.name = 'Apparel'
+INNER JOIN dbo.size_types st
+  ON st.name = CASE
+    WHEN TRY_CONVERT(INT, LTRIM(RTRIM(source.label))) IS NOT NULL THEN 'Shoe EU'
+    ELSE 'EU'
+  END
 WHERE NOT EXISTS (
   SELECT 1
   FROM dbo.sizes s
   WHERE s.size_type_id = st.id
     AND s.label = source.label
 );
+
+;WITH predefined_sizes AS (
+  SELECT size_type_name, label, sort_order
+  FROM (VALUES
+    ('Babies', 'NB', 10),
+    ('Babies', '0-1M', 20),
+    ('Babies', '0-3M', 30),
+    ('Babies', '3-6M', 40),
+    ('Babies', '6-9M', 50),
+    ('Babies', '6-12M', 60),
+    ('Babies', '9-12M', 70),
+    ('Babies', '12-18M', 80),
+    ('Babies', '18-24M', 90),
+    ('Babies', '24-36M', 100),
+    ('Kids', '2Y', 10),
+    ('Kids', '3Y', 20),
+    ('Kids', '4Y', 30),
+    ('Kids', '5Y', 40),
+    ('Kids', '6Y', 50),
+    ('Kids', '7Y', 60),
+    ('Kids', '8Y', 70),
+    ('Kids', '10Y', 80),
+    ('Kids', '12Y', 90),
+    ('Kids', '14Y', 100),
+    ('Kids', 'Kids XS', 110),
+    ('Kids', 'Kids S', 120),
+    ('Kids', 'Kids M', 130),
+    ('Kids', 'Kids L', 140),
+    ('Kids', 'Kids XL', 150),
+    ('EU', 'XXS', 10),
+    ('EU', 'XS', 20),
+    ('EU', 'S', 30),
+    ('EU', 'M', 40),
+    ('EU', 'L', 50),
+    ('EU', 'XL', 60),
+    ('EU', 'XXL', 70),
+    ('EU', '3XL', 80),
+    ('EU', 'One Size', 90),
+    ('Shoe EU', '20', 200),
+    ('Shoe EU', '21', 210),
+    ('Shoe EU', '22', 220),
+    ('Shoe EU', '23', 230),
+    ('Shoe EU', '24', 240),
+    ('Shoe EU', '25', 250),
+    ('Shoe EU', '26', 260),
+    ('Shoe EU', '27', 270),
+    ('Shoe EU', '28', 280),
+    ('Shoe EU', '29', 290),
+    ('Shoe EU', '30', 300),
+    ('Shoe EU', '31', 310),
+    ('Shoe EU', '32', 320),
+    ('Shoe EU', '33', 330),
+    ('Shoe EU', '34', 340),
+    ('Shoe EU', '35', 350),
+    ('Shoe EU', '36', 360),
+    ('Shoe EU', '37', 370),
+    ('Shoe EU', '38', 380),
+    ('Shoe EU', '39', 390),
+    ('Shoe EU', '40', 400),
+    ('Shoe EU', '41', 410),
+    ('Shoe EU', '42', 420),
+    ('Shoe EU', '43', 430),
+    ('Shoe EU', '44', 440)
+  ) AS seed(size_type_name, label, sort_order)
+)
+INSERT INTO dbo.sizes (size_type_id, label, is_active, sort_order)
+SELECT st.id, predefined_sizes.label, 1, predefined_sizes.sort_order
+FROM predefined_sizes
+INNER JOIN dbo.size_types st ON st.name = predefined_sizes.size_type_name
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM dbo.sizes s
+  WHERE s.size_type_id = st.id
+    AND LOWER(LTRIM(RTRIM(s.label))) = LOWER(LTRIM(RTRIM(predefined_sizes.label)))
+);
+
+;WITH predefined_sizes AS (
+  SELECT size_type_name, label, sort_order
+  FROM (VALUES
+    ('Babies', 'NB', 10),
+    ('Babies', '0-1M', 20),
+    ('Babies', '0-3M', 30),
+    ('Babies', '3-6M', 40),
+    ('Babies', '6-9M', 50),
+    ('Babies', '6-12M', 60),
+    ('Babies', '9-12M', 70),
+    ('Babies', '12-18M', 80),
+    ('Babies', '18-24M', 90),
+    ('Babies', '24-36M', 100),
+    ('Kids', '2Y', 10),
+    ('Kids', '3Y', 20),
+    ('Kids', '4Y', 30),
+    ('Kids', '5Y', 40),
+    ('Kids', '6Y', 50),
+    ('Kids', '7Y', 60),
+    ('Kids', '8Y', 70),
+    ('Kids', '10Y', 80),
+    ('Kids', '12Y', 90),
+    ('Kids', '14Y', 100),
+    ('Kids', 'Kids XS', 110),
+    ('Kids', 'Kids S', 120),
+    ('Kids', 'Kids M', 130),
+    ('Kids', 'Kids L', 140),
+    ('Kids', 'Kids XL', 150),
+    ('EU', 'XXS', 10),
+    ('EU', 'XS', 20),
+    ('EU', 'S', 30),
+    ('EU', 'M', 40),
+    ('EU', 'L', 50),
+    ('EU', 'XL', 60),
+    ('EU', 'XXL', 70),
+    ('EU', '3XL', 80),
+    ('EU', 'One Size', 90),
+    ('Shoe EU', '20', 200),
+    ('Shoe EU', '21', 210),
+    ('Shoe EU', '22', 220),
+    ('Shoe EU', '23', 230),
+    ('Shoe EU', '24', 240),
+    ('Shoe EU', '25', 250),
+    ('Shoe EU', '26', 260),
+    ('Shoe EU', '27', 270),
+    ('Shoe EU', '28', 280),
+    ('Shoe EU', '29', 290),
+    ('Shoe EU', '30', 300),
+    ('Shoe EU', '31', 310),
+    ('Shoe EU', '32', 320),
+    ('Shoe EU', '33', 330),
+    ('Shoe EU', '34', 340),
+    ('Shoe EU', '35', 350),
+    ('Shoe EU', '36', 360),
+    ('Shoe EU', '37', 370),
+    ('Shoe EU', '38', 380),
+    ('Shoe EU', '39', 390),
+    ('Shoe EU', '40', 400),
+    ('Shoe EU', '41', 410),
+    ('Shoe EU', '42', 420),
+    ('Shoe EU', '43', 430),
+    ('Shoe EU', '44', 440)
+  ) AS seed(size_type_name, label, sort_order)
+)
+UPDATE s
+SET label = predefined_sizes.label,
+    sort_order = predefined_sizes.sort_order,
+    is_active = 1,
+    updated_at = SYSDATETIME()
+FROM dbo.sizes s
+INNER JOIN dbo.size_types st ON st.id = s.size_type_id
+INNER JOIN predefined_sizes
+  ON predefined_sizes.size_type_name = st.name
+ AND LOWER(LTRIM(RTRIM(predefined_sizes.label))) = LOWER(LTRIM(RTRIM(s.label)));
+
+DECLARE @euSizeTypeId UNIQUEIDENTIFIER;
+DECLARE @canonicalOneSizeId UNIQUEIDENTIFIER;
+DECLARE @legacyOneSizeId UNIQUEIDENTIFIER;
+
+SELECT @euSizeTypeId = id
+FROM dbo.size_types
+WHERE name = 'EU';
+
+IF @euSizeTypeId IS NOT NULL
+BEGIN
+  SELECT TOP 1 @canonicalOneSizeId = id
+  FROM dbo.sizes
+  WHERE size_type_id = @euSizeTypeId
+    AND label = 'One Size'
+  ORDER BY sort_order ASC, id ASC;
+
+  SELECT TOP 1 @legacyOneSizeId = id
+  FROM dbo.sizes
+  WHERE size_type_id = @euSizeTypeId
+    AND LOWER(LTRIM(RTRIM(label))) = 'one-size'
+  ORDER BY sort_order ASC, id ASC;
+
+  IF @legacyOneSizeId IS NOT NULL AND @canonicalOneSizeId IS NULL
+  BEGIN
+    UPDATE dbo.sizes
+    SET label = 'One Size',
+        sort_order = 90,
+        is_active = 1,
+        updated_at = SYSDATETIME()
+    WHERE id = @legacyOneSizeId;
+  END;
+
+  IF @legacyOneSizeId IS NOT NULL
+     AND @canonicalOneSizeId IS NOT NULL
+     AND @legacyOneSizeId <> @canonicalOneSizeId
+  BEGIN
+    UPDATE ps
+    SET size_id = @canonicalOneSizeId,
+        updated_at = SYSDATETIME()
+    FROM dbo.product_sizes ps
+    WHERE ps.size_id = @legacyOneSizeId
+      AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.product_sizes existing
+        WHERE existing.product_id = ps.product_id
+          AND existing.size_id = @canonicalOneSizeId
+      );
+
+    DELETE FROM dbo.product_sizes
+    WHERE size_id = @legacyOneSizeId;
+
+    UPDATE dbo.sizes
+    SET is_active = 0,
+        updated_at = SYSDATETIME()
+    WHERE id = @legacyOneSizeId;
+  END;
+END;
+
+DECLARE @legacyApparelSizeTypeId UNIQUEIDENTIFIER;
+DECLARE @shoeEuSizeTypeId UNIQUEIDENTIFIER;
+
+SELECT @legacyApparelSizeTypeId = id
+FROM dbo.size_types
+WHERE name = 'Apparel';
+
+SELECT @shoeEuSizeTypeId = id
+FROM dbo.size_types
+WHERE name = 'Shoe EU';
+
+IF @euSizeTypeId IS NOT NULL AND @shoeEuSizeTypeId IS NOT NULL
+BEGIN
+  ;WITH eu_numeric_sizes AS (
+    SELECT s.id AS old_size_id, target.id AS new_size_id
+    FROM dbo.sizes s
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = @shoeEuSizeTypeId
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(s.label)))
+    WHERE s.size_type_id = @euSizeTypeId
+      AND TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+  )
+  DELETE ps
+  FROM dbo.product_sizes ps
+  INNER JOIN eu_numeric_sizes mapped
+    ON mapped.old_size_id = ps.size_id
+  WHERE EXISTS (
+    SELECT 1
+    FROM dbo.product_sizes existing
+    WHERE existing.product_id = ps.product_id
+      AND existing.size_id = mapped.new_size_id
+  );
+
+  ;WITH eu_numeric_sizes AS (
+    SELECT s.id AS old_size_id, target.id AS new_size_id
+    FROM dbo.sizes s
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = @shoeEuSizeTypeId
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(s.label)))
+    WHERE s.size_type_id = @euSizeTypeId
+      AND TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+  )
+  UPDATE ps
+  SET size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.product_sizes ps
+  INNER JOIN eu_numeric_sizes mapped
+    ON mapped.old_size_id = ps.size_id;
+
+  ;WITH eu_numeric_sizes AS (
+    SELECT s.id AS old_size_id, target.id AS new_size_id
+    FROM dbo.sizes s
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = @shoeEuSizeTypeId
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(s.label)))
+    WHERE s.size_type_id = @euSizeTypeId
+      AND TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+  )
+  UPDATE ci
+  SET selected_size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.cart_items ci
+  INNER JOIN eu_numeric_sizes mapped
+    ON mapped.old_size_id = ci.selected_size_id;
+
+  ;WITH eu_numeric_sizes AS (
+    SELECT s.id AS old_size_id, target.id AS new_size_id
+    FROM dbo.sizes s
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = @shoeEuSizeTypeId
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(s.label)))
+    WHERE s.size_type_id = @euSizeTypeId
+      AND TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+  )
+  UPDATE oi
+  SET selected_size_id = mapped.new_size_id
+  FROM dbo.order_items oi
+  INNER JOIN eu_numeric_sizes mapped
+    ON mapped.old_size_id = oi.selected_size_id;
+
+  DELETE s
+  FROM dbo.sizes s
+  WHERE s.size_type_id = @euSizeTypeId
+    AND TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.product_sizes ps
+      WHERE ps.size_id = s.id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.cart_items ci
+      WHERE ci.selected_size_id = s.id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.order_items oi
+      WHERE oi.selected_size_id = s.id
+    );
+END;
+
+IF @legacyApparelSizeTypeId IS NOT NULL AND @euSizeTypeId IS NOT NULL
+BEGIN
+  UPDATE dbo.vendor_requests
+  SET size_type_id = @euSizeTypeId,
+      updated_at = SYSDATETIME()
+  WHERE size_type_id = @legacyApparelSizeTypeId;
+
+  ;WITH legacy_sizes AS (
+    SELECT
+      s.id AS old_size_id,
+      CASE
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+          THEN COALESCE(@shoeEuSizeTypeId, @euSizeTypeId)
+        ELSE @euSizeTypeId
+      END AS target_size_type_id,
+      CASE
+        WHEN LOWER(LTRIM(RTRIM(s.label))) IN ('one-size', 'one size') THEN 'One Size'
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL THEN LTRIM(RTRIM(s.label))
+        ELSE UPPER(LTRIM(RTRIM(s.label)))
+      END AS target_label
+    FROM dbo.sizes s
+    WHERE s.size_type_id = @legacyApparelSizeTypeId
+  ),
+  mapped_sizes AS (
+    SELECT legacy_sizes.old_size_id, target.id AS new_size_id
+    FROM legacy_sizes
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = legacy_sizes.target_size_type_id
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(legacy_sizes.target_label)))
+  )
+  DELETE ps
+  FROM dbo.product_sizes ps
+  INNER JOIN mapped_sizes mapped
+    ON mapped.old_size_id = ps.size_id
+  WHERE EXISTS (
+    SELECT 1
+    FROM dbo.product_sizes existing
+    WHERE existing.product_id = ps.product_id
+      AND existing.size_id = mapped.new_size_id
+  );
+
+  ;WITH legacy_sizes AS (
+    SELECT
+      s.id AS old_size_id,
+      CASE
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+          THEN COALESCE(@shoeEuSizeTypeId, @euSizeTypeId)
+        ELSE @euSizeTypeId
+      END AS target_size_type_id,
+      CASE
+        WHEN LOWER(LTRIM(RTRIM(s.label))) IN ('one-size', 'one size') THEN 'One Size'
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL THEN LTRIM(RTRIM(s.label))
+        ELSE UPPER(LTRIM(RTRIM(s.label)))
+      END AS target_label
+    FROM dbo.sizes s
+    WHERE s.size_type_id = @legacyApparelSizeTypeId
+  ),
+  mapped_sizes AS (
+    SELECT legacy_sizes.old_size_id, target.id AS new_size_id
+    FROM legacy_sizes
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = legacy_sizes.target_size_type_id
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(legacy_sizes.target_label)))
+  )
+  UPDATE ps
+  SET size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.product_sizes ps
+  INNER JOIN mapped_sizes mapped
+    ON mapped.old_size_id = ps.size_id;
+
+  ;WITH legacy_sizes AS (
+    SELECT
+      s.id AS old_size_id,
+      CASE
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+          THEN COALESCE(@shoeEuSizeTypeId, @euSizeTypeId)
+        ELSE @euSizeTypeId
+      END AS target_size_type_id,
+      CASE
+        WHEN LOWER(LTRIM(RTRIM(s.label))) IN ('one-size', 'one size') THEN 'One Size'
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL THEN LTRIM(RTRIM(s.label))
+        ELSE UPPER(LTRIM(RTRIM(s.label)))
+      END AS target_label
+    FROM dbo.sizes s
+    WHERE s.size_type_id = @legacyApparelSizeTypeId
+  ),
+  mapped_sizes AS (
+    SELECT legacy_sizes.old_size_id, target.id AS new_size_id
+    FROM legacy_sizes
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = legacy_sizes.target_size_type_id
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(legacy_sizes.target_label)))
+  )
+  UPDATE ci
+  SET selected_size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.cart_items ci
+  INNER JOIN mapped_sizes mapped
+    ON mapped.old_size_id = ci.selected_size_id;
+
+  ;WITH legacy_sizes AS (
+    SELECT
+      s.id AS old_size_id,
+      CASE
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL
+          THEN COALESCE(@shoeEuSizeTypeId, @euSizeTypeId)
+        ELSE @euSizeTypeId
+      END AS target_size_type_id,
+      CASE
+        WHEN LOWER(LTRIM(RTRIM(s.label))) IN ('one-size', 'one size') THEN 'One Size'
+        WHEN TRY_CONVERT(INT, LTRIM(RTRIM(s.label))) IS NOT NULL THEN LTRIM(RTRIM(s.label))
+        ELSE UPPER(LTRIM(RTRIM(s.label)))
+      END AS target_label
+    FROM dbo.sizes s
+    WHERE s.size_type_id = @legacyApparelSizeTypeId
+  ),
+  mapped_sizes AS (
+    SELECT legacy_sizes.old_size_id, target.id AS new_size_id
+    FROM legacy_sizes
+    INNER JOIN dbo.sizes target
+      ON target.size_type_id = legacy_sizes.target_size_type_id
+     AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(legacy_sizes.target_label)))
+  )
+  UPDATE oi
+  SET selected_size_id = mapped.new_size_id
+  FROM dbo.order_items oi
+  INNER JOIN mapped_sizes mapped
+    ON mapped.old_size_id = oi.selected_size_id;
+
+  DELETE s
+  FROM dbo.sizes s
+  WHERE s.size_type_id = @legacyApparelSizeTypeId
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.product_sizes ps
+      WHERE ps.size_id = s.id
+    );
+
+  DELETE st
+  FROM dbo.size_types st
+  WHERE st.id = @legacyApparelSizeTypeId
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.sizes s
+      WHERE s.size_type_id = st.id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.vendor_requests vr
+      WHERE vr.size_type_id = st.id
+    );
+END;
 
 UPDATE dbo.categories
 SET is_active = 0,
@@ -963,7 +1721,7 @@ LEFT JOIN dbo.subcategories subcategories
  AND subcategories.name = legacy.parent_value
 LEFT JOIN dbo.size_types size_types
   ON legacy.request_type = 'size'
- AND size_types.name = 'Apparel'
+ AND size_types.name = 'EU'
 WHERE NOT EXISTS (
   SELECT 1
   FROM dbo.vendor_requests vr
@@ -1003,13 +1761,6 @@ WHERE p.subcategory_id IS NULL
   AND p.category_id IS NOT NULL
   AND NULLIF(LTRIM(RTRIM(p.category)), '') IS NOT NULL;
 
-UPDATE p
-SET brand_id = b.id
-FROM dbo.products p
-INNER JOIN dbo.vendors v ON v.id = p.vendor_id
-INNER JOIN dbo.brands b ON b.name = v.shop_name
-WHERE p.brand_id IS NULL;
-
 INSERT INTO dbo.product_colors (product_id, color_id, sort_order)
 SELECT p.id, c.id, 0
 FROM dbo.products p
@@ -1025,7 +1776,7 @@ WHERE NULLIF(LTRIM(RTRIM(p.color)), '') IS NOT NULL
 INSERT INTO dbo.product_sizes (product_id, size_id, stock, sku)
 SELECT p.id, s.id, p.stock, p.product_code
 FROM dbo.products p
-INNER JOIN dbo.size_types st ON st.name = 'Apparel'
+INNER JOIN dbo.size_types st ON st.name = 'EU'
 INNER JOIN dbo.sizes s
   ON s.size_type_id = st.id
  AND s.label = p.size
@@ -1368,6 +2119,31 @@ BEGIN
   );
 END;
 
+IF OBJECT_ID('dbo.customer_registration_verifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_registration_verifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    code_hash NVARCHAR(255) NOT NULL,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_login_otps', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_login_otps (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    code_hash NVARCHAR(255) NOT NULL,
+    expires_at DATETIME2 NOT NULL,
+    used_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
 IF OBJECT_ID('dbo.password_resets', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.password_resets (
@@ -1496,11 +2272,114 @@ BEGIN
     id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     cart_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.carts(id) ON DELETE CASCADE,
     product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id),
+    selected_size_id UNIQUEIDENTIFIER NULL REFERENCES dbo.sizes(id),
+    selected_size_label NVARCHAR(80) NULL,
     quantity INT NOT NULL CHECK (quantity > 0),
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
-    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
-    CONSTRAINT uq_cart_items_cart_product UNIQUE (cart_id, product_id)
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
   );
+END;
+
+IF COL_LENGTH('dbo.cart_items', 'selected_size_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.cart_items ADD selected_size_id UNIQUEIDENTIFIER NULL REFERENCES dbo.sizes(id);
+END;
+
+IF COL_LENGTH('dbo.cart_items', 'selected_size_label') IS NULL
+BEGIN
+  ALTER TABLE dbo.cart_items ADD selected_size_label NVARCHAR(80) NULL;
+END;
+
+IF EXISTS (
+  SELECT 1
+  FROM sys.key_constraints
+  WHERE name = 'uq_cart_items_cart_product'
+    AND parent_object_id = OBJECT_ID('dbo.cart_items')
+)
+BEGIN
+  ALTER TABLE dbo.cart_items DROP CONSTRAINT uq_cart_items_cart_product;
+END;
+
+IF OBJECT_ID('dbo.customer_favorites', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_favorites (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    CONSTRAINT uq_customer_favorites_customer_product UNIQUE (customer_id, product_id)
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_return_requests', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_return_requests (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    order_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.orders(id),
+    order_item_id UNIQUEIDENTIFIER NULL REFERENCES dbo.order_items(id),
+    reason NVARCHAR(120) NOT NULL,
+    note NVARCHAR(1000) NULL,
+    status NVARCHAR(30) NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'reviewing', 'approved', 'rejected', 'received', 'refunded', 'closed')),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_support_tickets', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_support_tickets (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    order_id UNIQUEIDENTIFIER NULL REFERENCES dbo.orders(id),
+    subject NVARCHAR(160) NOT NULL,
+    message NVARCHAR(1500) NOT NULL,
+    status NVARCHAR(30) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'waiting', 'resolved', 'closed')),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.customer_notifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.customer_notifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    customer_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.users(id) ON DELETE CASCADE,
+    notification_type NVARCHAR(40) NOT NULL,
+    title NVARCHAR(255) NOT NULL,
+    body NVARCHAR(1000) NOT NULL,
+    action_url NVARCHAR(500) NULL,
+    read_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.vendor_notifications', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_notifications (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    product_id UNIQUEIDENTIFIER NULL,
+    notification_type NVARCHAR(40) NOT NULL,
+    title NVARCHAR(160) NOT NULL,
+    body NVARCHAR(1000) NOT NULL,
+    action_url NVARCHAR(500) NULL,
+    metadata_json NVARCHAR(MAX) NULL,
+    read_at DATETIME2 NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.indexes
+  WHERE name = 'ix_vendor_notifications_vendor_unread'
+    AND object_id = OBJECT_ID('dbo.vendor_notifications')
+)
+BEGIN
+  CREATE INDEX ix_vendor_notifications_vendor_unread
+    ON dbo.vendor_notifications (vendor_id, read_at, created_at DESC);
 END;
 
 IF COL_LENGTH('dbo.users', 'phone_number') IS NULL
@@ -1512,6 +2391,47 @@ IF COL_LENGTH('dbo.users', 'full_name') IS NULL
 BEGIN
   ALTER TABLE dbo.users ADD full_name NVARCHAR(255) NULL;
 END;
+
+IF COL_LENGTH('dbo.users', 'first_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD first_name NVARCHAR(120) NULL;
+END;
+
+IF COL_LENGTH('dbo.users', 'last_name') IS NULL
+BEGIN
+  ALTER TABLE dbo.users ADD last_name NVARCHAR(120) NULL;
+END;
+
+EXEC sp_executesql N'
+  UPDATE dbo.users
+  SET first_name = CASE
+        WHEN NULLIF(LTRIM(RTRIM(ISNULL(first_name, ''''))), '''') IS NULL
+          THEN NULLIF(LTRIM(RTRIM(
+            CASE
+              WHEN CHARINDEX('' '', LTRIM(RTRIM(ISNULL(full_name, '''')))) > 0
+                THEN LEFT(LTRIM(RTRIM(full_name)), CHARINDEX('' '', LTRIM(RTRIM(full_name))) - 1)
+              ELSE LTRIM(RTRIM(ISNULL(full_name, '''')))
+            END
+          )), '''')
+        ELSE first_name
+      END,
+      last_name = CASE
+        WHEN NULLIF(LTRIM(RTRIM(ISNULL(last_name, ''''))), '''') IS NULL
+          THEN NULLIF(LTRIM(RTRIM(
+            CASE
+              WHEN CHARINDEX('' '', LTRIM(RTRIM(ISNULL(full_name, '''')))) > 0
+                THEN SUBSTRING(LTRIM(RTRIM(full_name)), CHARINDEX('' '', LTRIM(RTRIM(full_name))) + 1, 255)
+              ELSE ''''
+            END
+          )), '''')
+        ELSE last_name
+      END
+  WHERE full_name IS NOT NULL
+    AND (
+      NULLIF(LTRIM(RTRIM(ISNULL(first_name, ''''))), '''') IS NULL
+      OR NULLIF(LTRIM(RTRIM(ISNULL(last_name, ''''))), '''') IS NULL
+    );
+';
 
 IF COL_LENGTH('dbo.users', 'order_updates_enabled') IS NULL
 BEGIN
@@ -1668,6 +2588,53 @@ BEGIN
   ALTER TABLE dbo.vendors ADD platform_fee DECIMAL(10, 2) NOT NULL CONSTRAINT df_vendors_platform_fee DEFAULT 1.00;
 END;
 
+IF COL_LENGTH('dbo.vendors', 'platform_fee_mode') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD platform_fee_mode NVARCHAR(20) NOT NULL CONSTRAINT df_vendors_platform_fee_mode DEFAULT 'dynamic';
+END;
+
+IF COL_LENGTH('dbo.vendors', 'fee_free_until') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD fee_free_until DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'last_login_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD last_login_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'last_activity_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD last_activity_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'inactivity_disabled_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD inactivity_disabled_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'reactivation_requested_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD reactivation_requested_at DATETIME2 NULL;
+END;
+
+EXEC sp_executesql N'
+  UPDATE dbo.vendors
+  SET last_activity_at = COALESCE(last_activity_at, last_login_at, updated_at, created_at)
+  WHERE last_activity_at IS NULL;
+';
+
+EXEC sp_executesql N'
+  UPDATE dbo.vendors
+  SET is_active = 0,
+      is_verified = 0,
+      admin_status = ''under_review'',
+      inactivity_disabled_at = COALESCE(inactivity_disabled_at, SYSDATETIME()),
+      updated_at = SYSDATETIME()
+  WHERE is_active = 1
+    AND COALESCE(last_activity_at, last_login_at, updated_at, created_at) < DATEADD(MONTH, -6, SYSDATETIME());
+';
+
 IF COL_LENGTH('dbo.vendors', 'bank_name') IS NULL
 BEGIN
   ALTER TABLE dbo.vendors ADD bank_name NVARCHAR(255) NULL;
@@ -1725,8 +2692,15 @@ SET product_code = CONCAT(
     WHEN ''dresses'' THEN ''DRS''
     WHEN ''skirt'' THEN ''SKT''
     WHEN ''skirts'' THEN ''SKT''
+    WHEN ''underwear'' THEN ''UND''
+    WHEN ''underclothes'' THEN ''UND''
+    WHEN ''undergarment'' THEN ''UND''
+    WHEN ''undergarments'' THEN ''UND''
+    WHEN ''lingerie'' THEN ''UND''
     WHEN ''suit'' THEN ''SUT''
     WHEN ''suits'' THEN ''SUT''
+    WHEN ''shoe'' THEN ''SHO''
+    WHEN ''shoes'' THEN ''SHO''
     ELSE
       CASE
         WHEN LEN(REPLACE(REPLACE(REPLACE(ISNULL(NULLIF(p.category, ''''), ''''), '' '', ''''), ''-'', ''''), ''_'', '''')) = 0 THEN ''GEN''
@@ -1822,6 +2796,16 @@ BEGIN
   ALTER TABLE dbo.order_items ADD updated_at DATETIME2 NOT NULL CONSTRAINT df_order_items_updated_at DEFAULT SYSDATETIME();
 END;
 
+IF COL_LENGTH('dbo.order_items', 'selected_size_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD selected_size_id UNIQUEIDENTIFIER NULL REFERENCES dbo.sizes(id);
+END;
+
+IF COL_LENGTH('dbo.order_items', 'selected_size_label') IS NULL
+BEGIN
+  ALTER TABLE dbo.order_items ADD selected_size_label NVARCHAR(80) NULL;
+END;
+
 EXEC sp_executesql N'
 ;WITH ordered_orders AS (
   SELECT
@@ -1884,7 +2868,7 @@ BEGIN
 END;
 ALTER TABLE dbo.orders
 ADD CONSTRAINT ck_orders_status
-CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered'));
+CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'returned'));
 
 DECLARE @orderItemsStatusConstraint NVARCHAR(128);
 DECLARE @orderItemsStatusSql NVARCHAR(MAX);
@@ -1899,7 +2883,7 @@ BEGIN
 END;
 ALTER TABLE dbo.order_items
 ADD CONSTRAINT ck_order_items_status
-CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered'));
+CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'returned'));
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_products_vendor_id' AND object_id = OBJECT_ID('dbo.products'))
 BEGIN

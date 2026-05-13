@@ -5,6 +5,7 @@ import { useState } from "react";
 import { RequireRole } from "@/components/require-role";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
+import { getPasswordPolicyError, passwordPolicyText } from "@/lib/password-policy";
 
 export default function ChangePasswordPage() {
   const { token } = useAuth();
@@ -29,6 +30,12 @@ export default function ChangePasswordPage() {
 
     if (newPassword !== confirmPassword) {
       setError("The new password confirmation does not match.");
+      return;
+    }
+
+    const passwordError = getPasswordPolicyError(newPassword);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -93,6 +100,7 @@ export default function ChangePasswordPage() {
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                 />
+                <span className="muted">{passwordPolicyText}</span>
               </div>
               <div className="field">
                 <label>Confirm new password</label>

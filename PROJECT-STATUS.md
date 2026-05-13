@@ -1,6 +1,6 @@
 # Vishu Project Status
 
-Last updated: 2026-04-27
+Last updated: 2026-04-29
 
 This file is the handoff reference for any account or agent continuing work on this repo.
 
@@ -11,6 +11,9 @@ This file is the handoff reference for any account or agent continuing work on t
 - Main local URLs:
   - web: `http://localhost:3001`
   - api: `http://localhost:3000`
+- Admin routing:
+  - admin login uses port `8443`: `https://vishu.shop:8443/admin/login`
+  - main-domain admin paths are intentionally hidden with `404`
 - Current DB structure reference:
   - `DATABASE-STRUCTURE.md`
 - Current AWS deploy reference:
@@ -21,6 +24,8 @@ This file is the handoff reference for any account or agent continuing work on t
   - latest confirmed pushed `main` commit from this workspace: `4ba4911`
 - Local runtime note:
   - local web is pointed back to `localhost` for API calls
+  - admin API calls must use port `8443`: `https://vishu.shop:8443/api/admin/*`
+  - keep `ADMIN_BASE_URL=https://vishu.shop:8443` and `ADMIN_PORT=8443`
   - old Tailscale local API target should no longer be used for daily local development
   - if the design suddenly disappears on localhost, check whether the running web process is stale and serving an old CSS chunk
   - if the CSS chunk referenced in page HTML does not match the files under `apps/web/.next/static/chunks`, restart the local web server cleanly
@@ -49,6 +54,27 @@ This file is the handoff reference for any account or agent continuing work on t
   - `Reviews` is backed by delivered-order review gating that already exists
   - `Returns` is currently a guided shortcut layer over delivered orders and support, not a dedicated return-request workflow yet
   - `Support` is currently a shortcut layer into contact, orders, and claim-orders, not a ticketing system yet
+- Customer signup verification now uses a 6-digit OTP flow
+  - new customer registrations redirect to `/verify?email=...`
+  - vendor verification still uses email links
+  - signup responses no longer block on SMTP timeouts before returning
+- Identity profile shape now has first and last name fields
+  - `users.first_name` and `users.last_name` are canonical for new registration/profile work
+  - `full_name` is still maintained for older UI/API compatibility
+- Password policy is shared across registration, reset, admin-created users, and account password changes
+  - minimum 6 characters
+  - requires uppercase, lowercase, and a number
+  - rejects simple sequences such as `123`, `abc`, and `password`
+- Stripe hosted checkout is now the active card-payment direction
+  - checkout loads public payment settings from `/checkout/payment-settings`
+  - customer and guest card checkouts create Stripe sessions before redirecting
+  - successful return to `/checkout?payment=success&session_id=...` completes the session into an order
+  - `payment_checkout_sessions` stores session payload, Stripe IDs, status, and linked order
+- Vendor economics and fees
+  - vendor platform fee is a fixed `1.00` euro fee per order
+  - percentage commission has been removed from order math
+  - admin Vendor Fees includes a monthly economic panel for card sales, COD sales, card fees collected, COD fees owed, and per-vendor monthly history
+  - monthly reporting resets by selected month while preserving all historical order data
 
 ## Biggest Current Gaps
 

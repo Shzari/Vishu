@@ -164,12 +164,17 @@ export default function AdminUserDetailPage() {
     );
   }
 
+  const displayName =
+    [detail.firstName, detail.lastName].filter(Boolean).join(" ") ||
+    detail.fullName ||
+    detail.email;
+
   return (
     <RequireRole requiredRole="admin">
       <div className="stack">
       <section className="panel hero-panel">
         <span className="chip">User detail</span>
-        <h1 className="hero-title">{detail.email}</h1>
+        <h1 className="hero-title">{displayName}</h1>
         <p className="hero-copy">
           Review account status, contact data, recent purchases, current cart contents, and linked vendor information from one admin page.
         </p>
@@ -185,6 +190,16 @@ export default function AdminUserDetailPage() {
       <section className="split">
         <div className="form-card stack">
           <h2 className="section-title">Contact & Account</h2>
+          <div className="form-grid two">
+            <div className="field">
+              <label>First name</label>
+              <input value={detail.firstName ?? ""} readOnly />
+            </div>
+            <div className="field">
+              <label>Last name</label>
+              <input value={detail.lastName ?? ""} readOnly />
+            </div>
+          </div>
           <div className="field">
             <label>Email</label>
             <input value={email} onChange={(event) => setEmail(event.target.value)} />

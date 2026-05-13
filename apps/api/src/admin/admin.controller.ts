@@ -20,7 +20,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import {
   buildSafeUploadedImageName,
   ensureTemporaryUploadDir,
-  isAllowedImageMimeType,
+  resolveAllowedImageMimeType,
 } from '../common/security/security.utils';
 import { AuthenticatedUser } from '../common/types';
 import {
@@ -67,11 +67,16 @@ function promotionUploadInterceptor() {
         },
       }),
       fileFilter: (_req, file, callback) => {
-        if (!isAllowedImageMimeType(file.mimetype)) {
+        const mimeType = resolveAllowedImageMimeType(
+          file.mimetype,
+          file.originalname,
+        );
+        if (!mimeType) {
           callback(new Error('Only image uploads are allowed'), false);
           return;
         }
 
+        file.mimetype = mimeType;
         callback(null, true);
       },
       limits: { fileSize: 8 * 1024 * 1024 },
@@ -456,6 +461,16 @@ export class AdminController {
     return this.adminService.getVendorFeeHistory(id);
   }
 
+  @Get('vendor-economics')
+  getVendorEconomics(@Query('month') month?: string) {
+    return this.adminService.getVendorEconomics(month);
+  }
+
+  @Get('vendor-economics/:id/history')
+  getVendorEconomicsHistory(@Param('id') id: string) {
+    return this.adminService.getVendorEconomicsHistory(id);
+  }
+
   @Post('payouts')
   recordVendorPayout(
     @Req() req: { user: AuthenticatedUser },
@@ -494,7 +509,7 @@ export class AdminController {
     @Param('id') id: string,
     @Body() dto: UpdateVendorPlatformFeeDto,
   ) {
-    return this.adminService.updateVendorPlatformFee(id, dto.platformFee);
+    return this.adminService.updateVendorPlatformFee(id, dto);
   }
 
   @Get('vendors/:id/orders')

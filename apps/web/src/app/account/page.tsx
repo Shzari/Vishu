@@ -14,7 +14,16 @@ import {
   formatProductAttributeLabel,
   getCatalogDepartmentDisplayLabel,
 } from "@/lib/catalog";
-import type { AccountSettingsProfile, CustomerAccount, CustomerAddress, CustomerOrder } from "@/lib/types";
+import { getPasswordPolicyError, passwordPolicyText } from "@/lib/password-policy";
+import type {
+  AccountSettingsProfile,
+  CustomerAccount,
+  CustomerAddress,
+  CustomerNotification,
+  CustomerOrder,
+  CustomerReturnRequest,
+  CustomerSupportTicket,
+} from "@/lib/types";
 
 type AccountSectionId =
   | "overview"
@@ -22,6 +31,7 @@ type AccountSectionId =
   | "returns"
   | "reviews"
   | "favorites"
+  | "notifications"
   | "addresses"
   | "payments"
   | "support"
@@ -80,6 +90,7 @@ const accountSections: {
   { id: "returns", label: "Returns", description: "Manage product returns and exchanges" },
   { id: "reviews", label: "Reviews", description: "Rate delivered products and revisit feedback" },
   { id: "favorites", label: "Favorites", description: "Saved products you want to revisit" },
+  { id: "notifications", label: "Notifications", description: "Order and account updates" },
   { id: "addresses", label: "Addresses", description: "Manage saved delivery destinations" },
   { id: "payments", label: "Payments", description: "Stripe-managed cards and defaults" },
   { id: "support", label: "Support", description: "Get help with orders, delivery, and account questions" },
@@ -94,6 +105,20 @@ function formatDate(value?: string | null, options?: Intl.DateTimeFormatOptions)
   return new Date(value).toLocaleDateString("en-GB", options);
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "Not available";
+  }
+
+  return new Date(value).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatOrderStatusLabel(status?: string | null) {
   if (!status) {
     return "Unknown";
@@ -104,6 +129,99 @@ function formatOrderStatusLabel(status?: string | null) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatPayment(order: CustomerOrder) {
+  if (order.paymentMethod === "cash_on_delivery") {
+    if (order.paymentStatus === "cod_collected") {
+      return "COD collected";
+    }
+    if (order.paymentStatus === "cod_refused") {
+      return "COD refused";
+    }
+    return "COD on delivery";
+  }
+
+  return order.paymentStatus === "paid" ? "Card paid" : "Card payment";
+}
+
+function canRequestOrderCancel(order: CustomerOrder) {
+  return (
+    order.cancelRequest?.status !== "requested" &&
+    !["delivered", "cancelled", "returned"].includes(order.status)
+  );
+}
+
+function getOrderControlCopy(order: CustomerOrder) {
+  if (order.cancelRequest?.status === "requested") {
+    return "Your cancellation request is waiting for the vendor. The order stays active until they cancel it or continue fulfillment.";
+  }
+
+  if (canRequestOrderCancel(order)) {
+    if (order.status === "confirmed") {
+      return "The vendor confirmed this order. You can still request cancellation until it is delivered.";
+    }
+
+    if (order.status === "shipped") {
+      return "This order is on the way. You can still request cancellation until it is marked delivered.";
+    }
+
+    return "You can request cancellation until the order is delivered.";
+  }
+
+  if (order.status === "delivered") {
+    return "Choose the delivered product you want to return.";
+  }
+
+  return "This order cannot be cancelled or returned from this panel right now.";
+}
+
+function getOrderUnits(order: CustomerOrder) {
+  return order.items.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function getOrderTimeline(order: CustomerOrder) {
+  return [
+    {
+      key: "placed",
+      label: "Placed",
+      date: order.fulfillment?.placedAt ?? order.createdAt,
+      complete: true,
+    },
+    {
+      key: "confirmed",
+      label: "Preparing",
+      date: order.fulfillment?.confirmedAt,
+      complete: ["confirmed", "shipped", "delivered"].includes(order.status),
+    },
+    {
+      key: "shipped",
+      label: "Shipped",
+      date: order.fulfillment?.shippedAt,
+      complete: ["shipped", "delivered"].includes(order.status),
+    },
+    {
+      key: "delivered",
+      label: "Delivered",
+      date: order.fulfillment?.deliveredAt,
+      complete: order.status === "delivered",
+    },
+  ];
+}
+
+function getDeliveryLine(order: CustomerOrder) {
+  if (!order.shippingAddress) {
+    return "Delivery address not saved";
+  }
+
+  return [
+    order.shippingAddress.line1,
+    order.shippingAddress.line2,
+    order.shippingAddress.city,
+    order.shippingAddress.country,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function getEmailVerificationStatus(account: CustomerAccount | null) {
@@ -174,7 +292,6 @@ export default function AccountPage() {
   const [addressModal, setAddressModal] = useState<AddressModalState>(null);
   const [addressForm, setAddressForm] = useState<AddressFormState>(createEmptyAddressForm(null));
   const [addressSaving, setAddressSaving] = useState(false);
-  const [paymentRedirecting, setPaymentRedirecting] = useState(false);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [emailPreferences, setEmailPreferences] = useState({
     orderUpdatesEnabled: true,
@@ -198,8 +315,24 @@ export default function AccountPage() {
     confirmPassword: "",
   });
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [returnForm, setReturnForm] = useState({
+    orderId: "",
+    orderItemId: "",
+    reason: "",
+    note: "",
+  });
+  const [returnSaving, setReturnSaving] = useState(false);
+  const [supportForm, setSupportForm] = useState({
+    orderId: "",
+    subject: "",
+    message: "",
+  });
+  const [supportSaving, setSupportSaving] = useState(false);
+  const [expandedAccountOrderId, setExpandedAccountOrderId] = useState<string | null>(null);
+  const [returnItemByOrder, setReturnItemByOrder] = useState<Record<string, string>>({});
 
   const paymentQueryState = searchParams.get("payments");
+  const sectionQueryState = searchParams.get("section");
 
   const loadAccount = useCallback(async () => {
     if (!token || currentRole !== "customer") {
@@ -234,14 +367,24 @@ export default function AccountPage() {
   }, [loadAccount]);
 
   useEffect(() => {
+    if (!sectionQueryState) {
+      return;
+    }
+
+    if (accountSections.some((entry) => entry.id === sectionQueryState)) {
+      setSection(sectionQueryState as AccountSectionId);
+    }
+  }, [sectionQueryState]);
+
+  useEffect(() => {
     if (!account) {
       return;
     }
 
     const splitName = splitFullName(account.profile.fullName || "");
     setProfileForm({
-      firstName: splitName.firstName,
-      lastName: splitName.lastName,
+      firstName: account.profile.firstName || splitName.firstName,
+      lastName: account.profile.lastName || splitName.lastName,
       email: account.profile.pendingEmail || account.profile.email || "",
       phoneNumber: account.profile.phoneNumber || "",
     });
@@ -267,9 +410,13 @@ export default function AccountPage() {
     router.replace(pathname, { scroll: false });
   }, [loadAccount, pathname, paymentQueryState, router]);
 
-  const recentOrders = account?.recentOrders ?? [];
-  const savedAddresses = account?.addresses ?? [];
-  const savedPaymentMethods = account?.paymentMethods ?? [];
+  const recentOrders = useMemo(() => account?.recentOrders ?? [], [account?.recentOrders]);
+  const savedAddresses = useMemo(() => account?.addresses ?? [], [account?.addresses]);
+  const savedPaymentMethods = useMemo(() => account?.paymentMethods ?? [], [account?.paymentMethods]);
+  const returnRequests = useMemo(() => account?.returnRequests ?? [], [account?.returnRequests]);
+  const supportTickets = useMemo(() => account?.supportTickets ?? [], [account?.supportTickets]);
+  const notifications = useMemo(() => account?.notifications ?? [], [account?.notifications]);
+  const unreadNotifications = notifications.filter((entry) => !entry.readAt);
   const activeOrders = useMemo(
     () => orders.filter((order) => order.status === "pending" || order.status === "confirmed" || order.status === "shipped"),
     [orders],
@@ -278,6 +425,16 @@ export default function AccountPage() {
     () => orders.filter((order) => order.status === "delivered"),
     [orders],
   );
+  useEffect(() => {
+    if (!deliveredOrders.length || returnForm.orderId) {
+      return;
+    }
+
+    setReturnForm((current) => ({
+      ...current,
+      orderId: deliveredOrders[0].id,
+    }));
+  }, [deliveredOrders, returnForm.orderId]);
   const reviewCandidates = useMemo(
     () =>
       deliveredOrders.flatMap((order) =>
@@ -287,7 +444,6 @@ export default function AccountPage() {
             orderId: order.id,
             orderNumber: order.orderNumber,
             deliveredAt: order.fulfillment?.deliveredAt ?? order.createdAt,
-            trackingNumber: item.shipment?.trackingNumber ?? null,
             item,
           })),
       ),
@@ -334,20 +490,6 @@ export default function AccountPage() {
     [savedPaymentMethods],
   );
   const latestOrder = orders[0] ?? null;
-  const latestTrackedItem = useMemo(
-    () =>
-      orders
-        .flatMap((order) =>
-          order.items
-            .filter((item) => item.shipment?.trackingNumber)
-            .map((item) => ({
-              orderNumber: order.orderNumber,
-              status: order.status,
-              trackingNumber: item.shipment?.trackingNumber ?? null,
-            })),
-        )[0] ?? null,
-    [orders],
-  );
   const sectionCounts = useMemo<Record<AccountSectionId, string>>(
     () => ({
       overview: "Home",
@@ -355,9 +497,10 @@ export default function AccountPage() {
       returns: String(deliveredOrders.length),
       reviews: String(reviewCandidates.length),
       favorites: String(favoriteProducts.length),
+      notifications: unreadNotifications.length ? String(unreadNotifications.length) : "Read",
       addresses: String(savedAddresses.length),
       payments: String(savedPaymentMethods.length),
-      support: account?.guestOrderRecovery.claimableCount ? "Alert" : "Help",
+      support: supportTickets.length ? String(supportTickets.length) : account?.guestOrderRecovery.claimableCount ? "Alert" : "Help",
       settings: account?.profile.pendingEmail ? "Alert" : "Profile",
     }),
     [
@@ -366,6 +509,8 @@ export default function AccountPage() {
       account?.guestOrderRecovery.claimableCount,
       deliveredOrders.length,
       favoriteProducts.length,
+      supportTickets.length,
+      unreadNotifications.length,
       reviewCandidates.length,
       savedAddresses.length,
       savedPaymentMethods.length,
@@ -389,6 +534,166 @@ export default function AccountPage() {
   function closeAddressModal() {
     setAddressModal(null);
     setAddressForm(createEmptyAddressForm(account));
+  }
+
+  async function submitReturnRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    try {
+      setReturnSaving(true);
+      setError(null);
+      const response = await apiRequest<{ items: CustomerReturnRequest[] }>(
+        "/account/returns",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            orderId: returnForm.orderId,
+            orderItemId: returnForm.orderItemId || undefined,
+            reason: returnForm.reason,
+            note: returnForm.note || undefined,
+          }),
+        },
+        token,
+      );
+      setAccount((current) =>
+        current ? { ...current, returnRequests: response.items } : current,
+      );
+      setReturnForm((current) => ({
+        orderId: current.orderId,
+        orderItemId: "",
+        reason: "",
+        note: "",
+      }));
+      setMessage("Return request saved for review.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Return request failed.");
+    } finally {
+      setReturnSaving(false);
+    }
+  }
+
+  async function submitSupportTicket(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    try {
+      setSupportSaving(true);
+      setError(null);
+      const response = await apiRequest<{ items: CustomerSupportTicket[] }>(
+        "/account/support",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            orderId: supportForm.orderId || undefined,
+            subject: supportForm.subject,
+            message: supportForm.message,
+          }),
+        },
+        token,
+      );
+      setAccount((current) =>
+        current ? { ...current, supportTickets: response.items } : current,
+      );
+      setSupportForm({ orderId: "", subject: "", message: "" });
+      setMessage("Support request opened.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Support request failed.");
+    } finally {
+      setSupportSaving(false);
+    }
+  }
+
+  async function markNotificationRead(notification: CustomerNotification) {
+    if (!token || notification.readAt) {
+      return;
+    }
+
+    try {
+      const response = await apiRequest<{ items: CustomerNotification[] }>(
+        `/account/notifications/${notification.id}/read`,
+        { method: "PATCH" },
+        token,
+      );
+      setAccount((current) =>
+        current ? { ...current, notifications: response.items } : current,
+      );
+    } catch {
+      // Notification read state can be retried on the next account refresh.
+    }
+  }
+
+  async function requestOrderCancel(order: CustomerOrder) {
+    if (!token || order.status !== "pending") {
+      return;
+    }
+
+    try {
+      setActiveAction(`cancel-order-${order.id}`);
+      setError(null);
+      const nextOrder = await apiRequest<CustomerOrder>(
+        `/orders/${order.id}/cancel-request`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            note: `Cancel requested from My Account for order ${order.orderNumber}.`,
+          }),
+        },
+        token,
+      );
+      setOrders((current) =>
+        current.map((entry) => (entry.id === order.id ? nextOrder : entry)),
+      );
+      setMessage("Cancel request sent.");
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Cancel request failed.");
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function requestReturnForOrder(order: CustomerOrder) {
+    if (!token || order.status !== "delivered") {
+      return;
+    }
+
+    const returnableItems = order.items.filter((item) => item.status === "delivered");
+    const selectedItemId = returnItemByOrder[order.id] || returnableItems[0]?.id;
+    const selectedItem = returnableItems.find((item) => item.id === selectedItemId);
+    if (!selectedItem) {
+      setError("Please choose a delivered product to return.");
+      return;
+    }
+
+    try {
+      setActiveAction(`return-order-${order.id}`);
+      setError(null);
+      const response = await apiRequest<{ items: CustomerReturnRequest[] }>(
+        "/account/returns",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            orderId: order.id,
+            orderItemId: selectedItem.id,
+            reason: "Customer requested return from order details",
+            note: `Return requested for ${selectedItem.product.title} in order ${order.orderNumber}.`,
+          }),
+        },
+        token,
+      );
+      setAccount((current) =>
+        current ? { ...current, returnRequests: response.items } : current,
+      );
+      setMessage("Return request saved for review.");
+    } catch (returnError) {
+      setError(returnError instanceof Error ? returnError.message : "Return request failed.");
+    } finally {
+      setActiveAction(null);
+    }
   }
 
   async function submitAddress(event: React.FormEvent<HTMLFormElement>) {
@@ -507,26 +812,6 @@ export default function AccountPage() {
     }
   }
 
-  async function startStripePaymentMethodSetup() {
-    if (!token) {
-      return;
-    }
-
-    try {
-      setPaymentRedirecting(true);
-      setError(null);
-      const session = await apiRequest<{ sessionId: string; url: string }>(
-        "/account/payment-methods/setup-session",
-        { method: "POST" },
-        token,
-      );
-      window.location.assign(session.url);
-    } catch (setupError) {
-      setError(setupError instanceof Error ? setupError.message : "Could not start Stripe card setup.");
-      setPaymentRedirecting(false);
-    }
-  }
-
   async function makePaymentMethodDefault(paymentMethodId: string) {
     if (!token) {
       return;
@@ -628,6 +913,8 @@ export default function AccountPage() {
         {
           method: "PATCH",
           body: JSON.stringify({
+            firstName: profileForm.firstName.trim(),
+            lastName: profileForm.lastName.trim(),
             fullName: normalizedFullName,
             email: normalizedEmail,
             phoneNumber: profileForm.phoneNumber.trim() || undefined,
@@ -756,6 +1043,12 @@ export default function AccountPage() {
       return;
     }
 
+    const passwordError = getPasswordPolicyError(passwordForm.newPassword);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     try {
       setPasswordSaving(true);
       setError(null);
@@ -828,10 +1121,10 @@ export default function AccountPage() {
               {latestOrder ? `Order ${latestOrder.orderNumber}` : "No order activity yet"}
             </div>
             <div className="account-hero-aside-detail">
-              {latestTrackedItem?.trackingNumber ? `Tracking ${latestTrackedItem.trackingNumber}` : latestOrder ? `${formatOrderStatusLabel(latestOrder.status)} order ready to review in detail` : (
+              {latestOrder ? `${formatOrderStatusLabel(latestOrder.status)} order ready to review in detail` : (
                 primaryAddress
                 ? `${primaryAddress.label} • ${primaryAddress.city}, ${primaryAddress.country}`
-                : "Place your first order to start tracking delivery and review activity here."
+                : "Place your first order to start delivery and review activity here."
               )}
             </div>
             <div className="account-hero-mini-grid">
@@ -997,11 +1290,11 @@ export default function AccountPage() {
               Open full orders
             </Link>
           </div>
-          {recentOrders.length === 0 ? (
+          {orders.length === 0 ? (
             <div className="empty">No orders yet.</div>
           ) : (
             <div className="account-order-list">
-              {recentOrders.slice(0, 5).map((order) => (
+              {orders.slice(0, 5).map((order) => (
                 <div key={order.id} className="account-order-row">
                   <div className="account-order-main">
                     <strong>Order {order.orderNumber}</strong>
@@ -1010,9 +1303,16 @@ export default function AccountPage() {
                   <div className="account-order-meta">
                     <StatusBadge status={order.status} />
                     <strong>{formatCurrency(order.totalPrice)}</strong>
-                    <Link href="/orders" className="button-ghost">
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => {
+                        setExpandedAccountOrderId(order.id);
+                        setSection("orders");
+                      }}
+                    >
                       View details
-                    </Link>
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1024,6 +1324,179 @@ export default function AccountPage() {
   }
 
   function renderOrdersSection() {
+    function renderInlineOrderDetails(order: CustomerOrder) {
+      const timeline = getOrderTimeline(order);
+      const returnableItems = order.items.filter((item) => item.status === "delivered");
+      const selectedReturnItemId = returnItemByOrder[order.id] || returnableItems[0]?.id || "";
+
+      return (
+        <div className="customer-order-details account-inline-order-details">
+          <div className="customer-order-detail-head">
+            <div>
+              <span className="customer-order-number">Order detail</span>
+              <h2>{order.orderNumber}</h2>
+            </div>
+            <div className="chip-row customer-order-detail-status">
+              <StatusBadge status={order.status} />
+              <span className="chip">{formatPayment(order)}</span>
+            </div>
+          </div>
+
+          <div className="customer-order-quick-grid">
+            <div>
+              <span>Total items</span>
+              <strong>
+                {getOrderUnits(order)} unit{getOrderUnits(order) === 1 ? "" : "s"}
+              </strong>
+            </div>
+            <div>
+              <span>Delivery city</span>
+              <strong>{order.shippingAddress?.city || "Not set"}</strong>
+            </div>
+            <div>
+              <span>Payment</span>
+              <strong>{formatPayment(order)}</strong>
+            </div>
+            <div>
+              <span>Total paid</span>
+              <strong>{formatCurrency(order.totalPrice)}</strong>
+            </div>
+          </div>
+
+          <div className="customer-order-timeline" aria-label="Order progress">
+            {timeline.map((entry) => (
+              <div
+                key={entry.key}
+                className={
+                  entry.complete
+                    ? "customer-order-timeline-step is-complete"
+                    : "customer-order-timeline-step"
+                }
+              >
+                <span className="customer-order-timeline-dot" aria-hidden="true" />
+                <strong>{entry.label}</strong>
+                <span>{entry.date ? formatDateTime(entry.date) : "Waiting"}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="customer-order-summary-grid">
+            <div className="customer-order-summary-card">
+              <span>Delivery address</span>
+              <strong>{order.shippingAddress?.fullName || "Customer"}</strong>
+              <p>{getDeliveryLine(order)}</p>
+              {order.shippingAddress?.phoneNumber ? <p>{order.shippingAddress.phoneNumber}</p> : null}
+            </div>
+            <div className="customer-order-summary-card">
+              <span>Payment</span>
+              <strong>{formatPayment(order)}</strong>
+              <p>
+                {order.paymentCard?.last4
+                  ? `${order.paymentCard.brand || "Card"} ending ${order.paymentCard.last4}`
+                  : order.paymentMethod === "cash_on_delivery"
+                    ? "Cash is collected when the order is delivered."
+                    : "Payment details are attached to this order."}
+              </p>
+                {order.codStatusNote ? <p>{order.codStatusNote}</p> : null}
+            </div>
+            <div className="customer-order-summary-card">
+              <span>Order controls</span>
+              <strong>Available action</strong>
+              <p>{getOrderControlCopy(order)}</p>
+              {order.cancelRequest?.status === "requested" ? (
+                <p>Cancel requested {formatDateTime(order.cancelRequest.requestedAt)}</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="account-order-action-panel account-order-action-panel-simple">
+            {canRequestOrderCancel(order) ? (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => void requestOrderCancel(order)}
+                disabled={activeAction !== null}
+              >
+                {activeAction === `cancel-order-${order.id}` ? "Sending..." : "Request cancel"}
+              </button>
+            ) : null}
+            {order.status === "delivered" && returnableItems.length > 0 ? (
+              <label className="field account-order-return-field">
+                <span>Product to return</span>
+                <select
+                  value={selectedReturnItemId}
+                  onChange={(event) =>
+                    setReturnItemByOrder((current) => ({
+                      ...current,
+                      [order.id]: event.target.value,
+                    }))
+                  }
+                >
+                  {returnableItems.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.product.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {order.status === "delivered" && returnableItems.length > 0 ? (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => void requestReturnForOrder(order)}
+                disabled={activeAction !== null}
+              >
+                {activeAction === `return-order-${order.id}` ? "Saving..." : "Request return"}
+              </button>
+            ) : null}
+            {order.status !== "pending" && order.status !== "delivered" ? (
+              <span className="muted">No customer action is available for this order status.</span>
+            ) : null}
+          </div>
+
+          <div className="customer-order-items-head">
+            <div>
+              <span className="customer-order-number">Items</span>
+              <strong>
+                {order.items.length} product{order.items.length === 1 ? "" : "s"} in this order
+              </strong>
+            </div>
+          </div>
+
+          <div className="customer-order-items">
+            {order.items.map((item) => (
+              <div key={item.id} className="customer-order-item">
+                <Link href={`/products/${item.product.id}`} className="customer-order-item-media">
+                  <div className="product-thumb customer-order-product-thumb">
+                    <div className="product-media-shell">
+                      <ProductMedia
+                        title={item.product.title}
+                        image={assetUrl(item.product.images[0])}
+                        subtitle={item.product.category}
+                      />
+                    </div>
+                  </div>
+                </Link>
+                <div className="customer-order-item-content">
+                  <Link href={`/products/${item.product.id}`} className="product-title-link customer-order-item-title">
+                    {item.product.title}
+                  </Link>
+                  <span className="muted customer-order-item-copy">{item.product.category}</span>
+                </div>
+                <div className="customer-order-item-side">
+                  <strong className="customer-order-item-total">
+                    {item.quantity} x {formatCurrency(item.unitPrice)}
+                  </strong>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <section className="account-section">
         <div className="account-section-head">
@@ -1041,40 +1514,52 @@ export default function AccountPage() {
         </div>
 
         <article className="account-section-card">
-          {recentOrders.length === 0 ? (
+          {orders.length === 0 ? (
             <div className="empty">You have not placed any orders yet.</div>
           ) : (
             <div className="account-order-list account-order-list-full">
-              {recentOrders.map((order) => (
-                <div key={order.id} className="account-order-row account-order-row-full">
-                  <div className="account-order-main">
-                    <span className="account-order-label">Order number</span>
-                    <strong>{order.orderNumber}</strong>
-                  </div>
-                  <div className="account-order-main">
-                    <span className="account-order-label">Date</span>
-                    <strong>
-                      {formatDate(order.createdAt, {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </strong>
-                  </div>
-                  <div className="account-order-main">
-                    <span className="account-order-label">Status</span>
-                    <StatusBadge status={order.status} />
-                  </div>
-                  <div className="account-order-main">
-                    <span className="account-order-label">Total</span>
-                    <strong>{formatCurrency(order.totalPrice)}</strong>
-                  </div>
-                  <div className="account-order-actions">
-                    <Link href="/orders" className="button-ghost">
-                      View details
-                    </Link>
-                  </div>
-                </div>
+              {orders.map((order) => (
+                <article key={order.id} className="account-inline-order-card">
+                  <button
+                    type="button"
+                    className="account-order-row account-order-row-full account-order-row-button"
+                    aria-expanded={expandedAccountOrderId === order.id}
+                    onClick={() =>
+                      setExpandedAccountOrderId((current) =>
+                        current === order.id ? null : order.id,
+                      )
+                    }
+                  >
+                    <div className="account-order-main">
+                      <span className="account-order-label">Order number</span>
+                      <strong>{order.orderNumber}</strong>
+                    </div>
+                    <div className="account-order-main">
+                      <span className="account-order-label">Date</span>
+                      <strong>
+                        {formatDate(order.createdAt, {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </strong>
+                    </div>
+                    <div className="account-order-main">
+                      <span className="account-order-label">Status</span>
+                      <StatusBadge status={order.status} />
+                    </div>
+                    <div className="account-order-main">
+                      <span className="account-order-label">Total</span>
+                      <strong>{formatCurrency(order.totalPrice)}</strong>
+                    </div>
+                    <div className="account-order-actions">
+                      <span className="button-ghost account-order-expand-action">
+                        {expandedAccountOrderId === order.id ? "Hide details" : "View details"}
+                      </span>
+                    </div>
+                  </button>
+                  {expandedAccountOrderId === order.id ? renderInlineOrderDetails(order) : null}
+                </article>
               ))}
             </div>
           )}
@@ -1101,6 +1586,112 @@ export default function AccountPage() {
         </div>
 
         <article className="account-section-card">
+          <form className="account-form compact-account-form" onSubmit={submitReturnRequest}>
+            <div className="account-subsection-head">
+              <div>
+                <h2>Start a return request</h2>
+                <p>Pick a delivered order and tell us what needs review.</p>
+              </div>
+            </div>
+            <div className="account-form-grid">
+              <label className="field">
+                <span>Delivered order</span>
+                <select
+                  value={returnForm.orderId}
+                  onChange={(event) =>
+                    setReturnForm((current) => ({
+                      ...current,
+                      orderId: event.target.value,
+                      orderItemId: "",
+                    }))
+                  }
+                  required
+                >
+                  <option value="">Select order</option>
+                  {deliveredOrders.map((order) => (
+                    <option key={order.id} value={order.id}>
+                      {order.orderNumber} - {formatCurrency(order.totalPrice)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Item</span>
+                <select
+                  value={returnForm.orderItemId}
+                  onChange={(event) =>
+                    setReturnForm((current) => ({ ...current, orderItemId: event.target.value }))
+                  }
+                >
+                  <option value="">Whole order</option>
+                  {deliveredOrders
+                    .find((order) => order.id === returnForm.orderId)
+                    ?.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.product.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Reason</span>
+                <input
+                  value={returnForm.reason}
+                  onChange={(event) =>
+                    setReturnForm((current) => ({ ...current, reason: event.target.value }))
+                  }
+                  required
+                  maxLength={120}
+                />
+              </label>
+              <label className="field account-field-wide">
+                <span>Details</span>
+                <textarea
+                  value={returnForm.note}
+                  onChange={(event) =>
+                    setReturnForm((current) => ({ ...current, note: event.target.value }))
+                  }
+                  maxLength={1000}
+                  rows={3}
+                />
+              </label>
+            </div>
+            <div className="account-card-actions">
+              <button type="submit" className="button" disabled={returnSaving || !deliveredOrders.length}>
+                {returnSaving ? "Sending..." : "Request return"}
+              </button>
+            </div>
+          </form>
+        </article>
+
+        <article className="account-section-card">
+          <div className="account-subsection-head">
+            <div>
+              <h2>Recent return requests</h2>
+              <p>Status updates stay here for quick follow-up.</p>
+            </div>
+          </div>
+          {returnRequests.length === 0 ? (
+            <div className="empty">No return requests have been opened yet.</div>
+          ) : (
+            <div className="account-order-list">
+              {returnRequests.map((request) => (
+                <div key={request.id} className="account-order-row">
+                  <div className="account-order-main">
+                    <strong>Order {request.orderNumber}</strong>
+                    <span>{request.productTitle || request.reason}</span>
+                  </div>
+                  <div className="account-order-meta">
+                    <StatusBadge status={request.status} />
+                    <span>{formatDate(request.createdAt)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+
+        <article className="account-section-card">
           {deliveredOrders.length === 0 ? (
             <div className="empty">No delivered orders yet. Returns will appear here after delivery.</div>
           ) : (
@@ -1120,12 +1711,65 @@ export default function AccountPage() {
                   </div>
                   <div className="account-order-meta">
                     <strong>{order.items.length} item{order.items.length === 1 ? "" : "s"}</strong>
-                    <Link href="/orders" className="button-ghost">
+                    <Link href={`/orders?order=${order.id}`} className="button-ghost">
                       Review order
                     </Link>
                     <Link href="/contact" className="button-ghost">
                       Contact support
                     </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+    );
+  }
+
+  function renderNotificationsSection() {
+    return (
+      <section className="account-section">
+        <div className="account-section-head">
+          <div>
+            <span className="account-section-eyebrow">Notifications</span>
+            <h1 className="account-section-title">Recent customer updates</h1>
+            <p className="account-section-copy">
+              Account actions, return requests, and support updates appear here.
+            </p>
+          </div>
+          <span className="chip">{unreadNotifications.length} unread</span>
+        </div>
+
+        <article className="account-section-card">
+          {notifications.length === 0 ? (
+            <div className="empty">No customer notifications yet.</div>
+          ) : (
+            <div className="account-order-list">
+              {notifications.map((notification) => (
+                <div key={notification.id} className="account-order-row">
+                  <div className="account-order-main">
+                    <strong>{notification.title}</strong>
+                    <span>{notification.body}</span>
+                  </div>
+                  <div className="account-order-meta">
+                    <span>{formatDate(notification.createdAt)}</span>
+                    {notification.actionUrl ? (
+                      <Link href={notification.actionUrl} className="button-ghost">
+                        Open
+                      </Link>
+                    ) : null}
+                    {!notification.readAt ? (
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => void markNotificationRead(notification)}
+                      >
+                        Mark read
+                      </button>
+                    ) : (
+                      <span>Read</span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1176,7 +1820,7 @@ export default function AccountPage() {
                     <Link href={`/products/${entry.item.product.id}`} className="button-ghost">
                       Rate product
                     </Link>
-                    <Link href="/orders" className="button-ghost">
+                    <Link href={`/orders?order=${entry.orderId}`} className="button-ghost">
                       Open order
                     </Link>
                   </div>
@@ -1274,6 +1918,87 @@ export default function AccountPage() {
             </div>
           </article>
         </div>
+
+        <div className="account-overview-detail-grid">
+          <article className="account-section-card account-curation-card">
+            <form className="account-form compact-account-form" onSubmit={submitSupportTicket}>
+              <div className="account-subsection-head">
+                <div>
+                  <h2>Open support request</h2>
+                  <p>Save the issue to this account so it is easy to follow up.</p>
+                </div>
+              </div>
+              <div className="account-form-grid">
+                <label className="field">
+                  <span>Related order</span>
+                  <select
+                    value={supportForm.orderId}
+                    onChange={(event) =>
+                      setSupportForm((current) => ({ ...current, orderId: event.target.value }))
+                    }
+                  >
+                    <option value="">No specific order</option>
+                    {orders.slice(0, 12).map((order) => (
+                      <option key={order.id} value={order.id}>
+                        {order.orderNumber}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Subject</span>
+                  <input
+                    value={supportForm.subject}
+                    onChange={(event) =>
+                      setSupportForm((current) => ({ ...current, subject: event.target.value }))
+                    }
+                    required
+                    maxLength={160}
+                  />
+                </label>
+                <label className="field account-field-wide">
+                  <span>Message</span>
+                  <textarea
+                    value={supportForm.message}
+                    onChange={(event) =>
+                      setSupportForm((current) => ({ ...current, message: event.target.value }))
+                    }
+                    required
+                    maxLength={1500}
+                    rows={4}
+                  />
+                </label>
+              </div>
+              <div className="account-card-actions">
+                <button type="submit" className="button" disabled={supportSaving}>
+                  {supportSaving ? "Opening..." : "Open request"}
+                </button>
+              </div>
+            </form>
+          </article>
+
+          <article className="account-section-card account-curation-card account-curation-card-soft">
+            <div className="account-subsection-head">
+              <div>
+                <h2>Recent requests</h2>
+                <p>Support history connected to this customer account.</p>
+              </div>
+            </div>
+            {supportTickets.length === 0 ? (
+              <div className="empty">No support requests have been opened yet.</div>
+            ) : (
+              <div className="account-curation-list">
+                {supportTickets.slice(0, 6).map((ticket) => (
+                  <div key={ticket.id} className="account-curation-row">
+                    <span>{ticket.orderNumber ? `Order ${ticket.orderNumber}` : formatDate(ticket.createdAt)}</span>
+                    <strong>{ticket.subject}</strong>
+                    <StatusBadge status={ticket.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
       </section>
     );
   }
@@ -1350,7 +2075,7 @@ export default function AccountPage() {
                       className="product-action-button product-action-button-secondary"
                       href={`/products/${product.id}`}
                     >
-                      Open product
+                      View
                     </Link>
                   </div>
                 </div>
@@ -1527,7 +2252,7 @@ export default function AccountPage() {
             <form className="account-stack-form" onSubmit={saveProfileDetails}>
               <div className="account-form-grid">
                 <div className="field">
-                  <label>Name</label>
+                  <label>First name</label>
                   <input
                     value={profileForm.firstName}
                     onChange={(event) =>
@@ -1536,11 +2261,11 @@ export default function AccountPage() {
                         firstName: event.target.value,
                       }))
                     }
-                    placeholder="Name"
+                    placeholder="First name"
                   />
                 </div>
                 <div className="field">
-                  <label>Surname</label>
+                  <label>Last name</label>
                   <input
                     value={profileForm.lastName}
                     onChange={(event) =>
@@ -1549,7 +2274,7 @@ export default function AccountPage() {
                         lastName: event.target.value,
                       }))
                     }
-                    placeholder="Surname"
+                    placeholder="Last name"
                   />
                 </div>
                 <div className="field account-form-grid-span-2">
@@ -1693,6 +2418,7 @@ export default function AccountPage() {
                     }))
                   }
                 />
+                <span className="muted">{passwordPolicyText}</span>
               </div>
               <div className="field">
                 <label>Confirm new password</label>
@@ -1744,6 +2470,10 @@ export default function AccountPage() {
 
     if (section === "favorites") {
       return renderFavoritesSection();
+    }
+
+    if (section === "notifications") {
+      return renderNotificationsSection();
     }
 
     if (section === "addresses") {

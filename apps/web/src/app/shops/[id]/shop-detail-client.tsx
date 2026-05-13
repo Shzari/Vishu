@@ -250,10 +250,10 @@ export function ShopDetailClient() {
                 <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
                   <option value="featured">Featured</option>
                   <option value="newest">Newest</option>
-                  <option value="price-low">Price: low to high</option>
-                  <option value="price-high">Price: high to low</option>
-                  <option value="stock-high">Stock: high to low</option>
-                  <option value="title">Title</option>
+                  <option value="price-low">Price ↑</option>
+                  <option value="price-high">Price ↓</option>
+                  <option value="stock-high">Stock ↓</option>
+                  <option value="title">A-Z</option>
                 </select>
               </label>
             </div>
@@ -339,26 +339,33 @@ export function ShopDetailClient() {
                       className="button-ghost product-action-link"
                       onClick={() => openQuickView(product)}
                     >
-                      Quick view
+                      View
                     </button>
                     <button
                       type="button"
                       className="button product-action-button"
-                      onClick={() =>
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const variant =
+                          product.sizeVariants.find((entry) => entry.stock > 0) ??
+                          product.sizeVariants[0] ??
+                          null;
                         addItem({
                           productId: product.id,
+                          sizeId: variant?.id ?? null,
                           title: product.title,
                           price: product.price,
                           image: product.images[0],
                           color: product.color ?? product.colors[0]?.name ?? null,
                           size:
                             product.size ??
-                            product.sizeVariants[0]?.label ??
+                            variant?.label ??
                             null,
                           quantity: 1,
-                          stock: product.stock,
-                        })
-                      }
+                          stock: variant?.stock ?? product.stock,
+                        });
+                      }}
                       disabled={product.stock === 0}
                     >
                       {product.stock === 0 ? "Sold out" : "Add to cart"}
@@ -423,6 +430,7 @@ export function ShopDetailClient() {
                     onClick={() =>
                       addItem({
                         productId: quickViewProduct.id,
+                        sizeId: quickViewProduct.sizeVariants[0]?.id ?? null,
                         title: quickViewProduct.title,
                         price: quickViewProduct.price,
                         image: quickViewProduct.images[0],

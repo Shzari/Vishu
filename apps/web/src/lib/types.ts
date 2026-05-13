@@ -1,5 +1,5 @@
 export type UserRole = "admin" | "vendor" | "customer";
-export type VendorAccessRole = "shop_holder" | "employee";
+export type VendorAccessRole = "shop_holder" | "manager" | "employee";
 
 export interface SessionUser {
   sub: string;
@@ -51,6 +51,8 @@ export interface AdminPromotionSettings {
 export interface ProfileResponse {
   id: string;
   email: string;
+  firstName?: string | null;
+  lastName?: string | null;
   fullName?: string | null;
   phoneNumber?: string | null;
   emailVerifiedAt?: string | null;
@@ -112,6 +114,14 @@ export interface Product {
     stock: number;
     sizeTypeId: string;
     sizeTypeName: string;
+  }[];
+  sizeOptions?: {
+    id: string;
+    label: string;
+    stock: number;
+    sizeTypeId: string;
+    sizeTypeName: string;
+    isAvailable: boolean;
   }[];
   productCode?: string | null;
   ratingSummary: RatingSummary;
@@ -175,6 +185,8 @@ export interface PublicVendorDetail {
 
 export interface CartItem {
   productId: string;
+  vendorId?: string | null;
+  sizeId?: string | null;
   title: string;
   price: number;
   image?: string;
@@ -247,12 +259,22 @@ export interface CustomerOrder {
 export interface AdminUserRow {
   id: string;
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
+  phone_number?: string | null;
   role: string;
   is_active: boolean;
   created_at: string;
   vendor_id: string | null;
   shop_name: string | null;
   platform_fee?: number | null;
+  platform_fee_mode?: "dynamic" | "fixed" | null;
+  fee_free_until?: string | null;
+  last_login_at?: string | null;
+  last_activity_at?: string | null;
+  inactivity_disabled_at?: string | null;
+  reactivation_requested_at?: string | null;
   effective_platform_fee?: number | null;
   fee_grace_ends_at?: string | null;
   vendor_active: boolean | null;
@@ -449,6 +471,9 @@ export interface AdminOverview {
 export interface AdminUserDetail {
   id: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
   phoneNumber: string | null;
   role: string;
   isActive: boolean;
@@ -702,6 +727,12 @@ export interface AdminVendorDetail {
   id: string;
   shopName: string;
   platformFee: number;
+  platformFeeMode: "dynamic" | "fixed";
+  feeFreeUntil: string | null;
+  lastLoginAt: string | null;
+  lastActivityAt: string | null;
+  inactivityDisabledAt: string | null;
+  reactivationRequestedAt: string | null;
   effectivePlatformFee: number;
   feeGraceEndsAt: string | null;
   isActive: boolean;
@@ -712,6 +743,8 @@ export interface AdminVendorDetail {
   user: {
     id: string;
     email: string;
+    phoneNumber: string | null;
+    supportPhone: string | null;
     isActive: boolean;
   };
   metrics: {
@@ -799,6 +832,8 @@ export interface CustomerAccount {
   profile: {
     id: string;
     email: string;
+    firstName: string | null;
+    lastName: string | null;
     fullName: string | null;
     phoneNumber: string | null;
     emailVerifiedAt: string | null;
@@ -840,11 +875,57 @@ export interface CustomerAccount {
   guestOrderRecovery: {
     claimableCount: number;
   };
+  favorites?: CustomerFavorite[];
+  returnRequests?: CustomerReturnRequest[];
+  supportTickets?: CustomerSupportTicket[];
+  notifications?: CustomerNotification[];
+}
+
+export interface CustomerFavorite {
+  productId: string;
+  createdAt: string;
+  product: Product;
+}
+
+export interface CustomerReturnRequest {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  orderItemId: string | null;
+  productTitle: string | null;
+  reason: string;
+  note: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerSupportTicket {
+  id: string;
+  orderId: string | null;
+  orderNumber: string | null;
+  subject: string;
+  message: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  actionUrl: string | null;
+  readAt: string | null;
+  createdAt: string;
 }
 
 export interface AccountSettingsProfile {
   id: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
   fullName: string | null;
   phoneNumber: string | null;
   emailVerifiedAt?: string | null;
@@ -963,4 +1044,38 @@ export interface AdminVendorFeeHistoryEntry {
   paidAmount: number;
   owedAmount: number;
   settlementStatus: "collected_online" | "owed_cod" | "voided";
+}
+
+export interface AdminVendorEconomicsRow {
+  vendorId: string;
+  shopName: string;
+  vendorEmail: string;
+  cardGrossSales: number;
+  cashOnDeliveryGrossSales: number;
+  cashOnDeliveryCollectedGrossSales: number;
+  cashOnDeliveryPendingGrossSales: number;
+  cardFeeCollected: number;
+  cashOnDeliveryFeeOwed: number;
+  cashOnDeliveryFeeVoided: number;
+  totalGrossSales: number;
+  totalFee: number;
+  cardOrderCount: number;
+  cashOnDeliveryOrderCount: number;
+  totalOrderCount: number;
+  freeOrderCount: number;
+  isFeeGraceActive: boolean;
+  feeGraceEndsAt: string | null;
+  lastOrderAt: string | null;
+}
+
+export interface AdminVendorEconomicsResponse {
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  rows: AdminVendorEconomicsRow[];
+}
+
+export interface AdminVendorEconomicsHistoryEntry
+  extends Omit<AdminVendorEconomicsRow, "vendorId" | "shopName" | "vendorEmail"> {
+  month: string;
 }

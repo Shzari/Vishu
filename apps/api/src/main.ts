@@ -1,7 +1,9 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { mkdirSync } from 'fs';
+import type { NextFunction, Request, Response } from 'express';
+import { existsSync, mkdirSync, statSync } from 'fs';
+import { join, normalize, sep } from 'path';
 import {
   CSRF_HEADER_NAME,
   CSRF_HEADER_VALUE,
@@ -20,7 +22,51 @@ async function bootstrap() {
   mkdirSync('./uploads', { recursive: true });
 
   const app = await NestFactory.create(AppModule);
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  const express = app.getHttpAdapter().getInstance();
+  express.disable('x-powered-by');
+  express.set('trust proxy', 1);
+  const uploadRoot = join(process.cwd(), 'uploads');
+  const sendMediaNotFound = (res: Response) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
+    res.status(404).json({
+      message: 'Media file not found',
+      error: 'Not Found',
+      statusCode: 404,
+    });
+  };
+  express.use('/media', (req: Request, res: Response, next: NextFunction) => {
+    let decodedPath = '/';
+    try {
+      decodedPath = decodeURIComponent(req.path || '/');
+    } catch {
+      sendMediaNotFound(res);
+      return;
+    }
+    const relativePath = decodedPath.replace(/^[/\\]+/, '');
+    const targetPath = normalize(join(uploadRoot, relativePath));
+    const normalizedRoot = normalize(uploadRoot);
+    const isInsideUploadRoot =
+      targetPath === normalizedRoot ||
+      targetPath.startsWith(`${normalizedRoot}${sep}`);
+
+    if (
+      !relativePath ||
+      !isInsideUploadRoot ||
+      !existsSync(targetPath) ||
+      !statSync(targetPath).isFile()
+    ) {
+      sendMediaNotFound(res);
+      return;
+    }
+
+    next();
+  });
   getJwtSecret();
   const configService = app.get(ConfigService);
   const allowedOrigins = resolveAllowedBrowserOrigins(configService);
@@ -40,6 +86,21 @@ async function bootstrap() {
   app.use((req, res, next) => {
     const hasBearerToken = req.headers.authorization?.startsWith('Bearer ');
     const hasCookieSession = hasAuthCookie(req.headers.cookie);
+
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains; preload',
+      );
+    }
+
     const requiresCsrfProtection =
       !isSafeHttpMethod(req.method) && hasCookieSession && !hasBearerToken;
 
@@ -60,13 +121,6 @@ async function bootstrap() {
       }
     }
 
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader(
-      'Permissions-Policy',
-      'camera=(), microphone=(), geolocation=()',
-    );
     if (
       req.path.startsWith('/auth') ||
       req.path.startsWith('/account') ||
@@ -75,15 +129,8 @@ async function bootstrap() {
     ) {
       res.setHeader('Cache-Control', 'no-store');
     }
-    if (process.env.NODE_ENV === 'production') {
-      res.setHeader(
-        'Strict-Transport-Security',
-        'max-age=31536000; includeSubDomains; preload',
-      );
-    }
     next();
   });
-
   await app.init();
   await app.get(PlatformSecretsService).migrateStoredPlatformSecrets();
   await app.listen(process.env.PORT ?? 3000);

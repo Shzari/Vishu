@@ -2,6 +2,17 @@ www.vishu.shop {
   redir https://vishu.shop{uri} permanent
 }
 
+(admin_security_headers) {
+  header {
+    -Server
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+}
+
 http://localhost, http://127.0.0.1 {
   encode gzip zstd
   header {
@@ -29,13 +40,22 @@ http://localhost, http://127.0.0.1 {
 
 vishu.shop {
   encode gzip zstd
-  header {
-    -Server
-    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    X-Content-Type-Options "nosniff"
-    X-Frame-Options "DENY"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  import admin_security_headers
+
+  handle /admin* {
+    respond 404
+  }
+
+  handle /api/admin* {
+    respond 404
+  }
+
+  handle /admin* {
+    respond 404
+  }
+
+  handle /api/admin* {
+    respond 404
   }
 
   redir /api /api/ 308
@@ -50,5 +70,40 @@ vishu.shop {
 
   handle {
     reverse_proxy 127.0.0.1:3001
+  }
+}
+
+vishu.shop:8443 {
+  encode gzip zstd
+  import admin_security_headers
+
+  redir /api /api/ 308
+
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:3000 {
+      header_up X-Vishu-Admin-Proxy {$ADMIN_PROXY_SECRET}
+    }
+  }
+
+  handle /uploads* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle /_next* {
+    reverse_proxy 127.0.0.1:3001
+  }
+
+  handle /icon.png {
+    reverse_proxy 127.0.0.1:3001
+  }
+
+  handle /admin* {
+    reverse_proxy 127.0.0.1:3001 {
+      header_up X-Vishu-Admin-Proxy {$ADMIN_PROXY_SECRET}
+    }
+  }
+
+  handle {
+    respond 404
   }
 }

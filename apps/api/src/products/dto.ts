@@ -95,6 +95,13 @@ export class ProductMutationDto {
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   replaceImages?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  primaryUploadIndex?: number;
 }
 
 export class ProductUpdateDto {
@@ -192,6 +199,17 @@ export class ProductUpdateDto {
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   replaceImages?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  primaryUploadIndex?: number;
+
+  @IsOptional()
+  @IsString()
+  primaryExistingImageUrl?: string;
 }
 
 export class ProductListingDto {

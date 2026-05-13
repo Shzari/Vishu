@@ -18,11 +18,12 @@ import type { Product, ReviewStatus } from "@/lib/types";
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
-  const { token, currentRole } = useAuth();
+  const { token, currentRole, profile } = useAuth();
   const { addItem } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | undefined>();
+  const [selectedSizeId, setSelectedSizeId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(null);
   const [reviewRating, setReviewRating] = useState(5);
@@ -35,6 +36,9 @@ export default function ProductDetailPage() {
   const [shopReviewSaving, setShopReviewSaving] = useState(false);
   const [shopReviewMessage, setShopReviewMessage] = useState<string | null>(null);
   const [reviewModal, setReviewModal] = useState<"product" | "shop" | null>(null);
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [imageZoom, setImageZoom] = useState(1);
 
   useEffect(() => {
     async function loadProduct() {
@@ -45,6 +49,7 @@ export default function ProductDetailPage() {
         ]);
         setProduct(data);
         setSelectedImage(data.images[0]);
+        setSelectedSizeId(data.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "");
         setRelatedProducts(
           catalog
             .filter((entry) => entry.id !== data.id)
@@ -131,7 +136,7 @@ export default function ProductDetailPage() {
   }, [currentRole, product?.vendor, token]);
 
   useEffect(() => {
-    if (!reviewModal || typeof document === "undefined") {
+    if ((!reviewModal && !imageViewerOpen) || typeof document === "undefined") {
       return;
     }
 
@@ -139,6 +144,7 @@ export default function ProductDetailPage() {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setReviewModal(null);
+        setImageViewerOpen(false);
       }
     };
 
@@ -149,7 +155,7 @@ export default function ProductDetailPage() {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [reviewModal]);
+  }, [imageViewerOpen, reviewModal]);
 
   async function refreshProduct() {
     const data = await apiRequest<Product>(`/products/${params.id}`);
@@ -231,6 +237,15 @@ export default function ProductDetailPage() {
     setReviewModal(target);
   }
 
+  function openImageViewer() {
+    if (!selectedImage) {
+      return;
+    }
+
+    setImageZoom(1);
+    setImageViewerOpen(true);
+  }
+
   if (error) {
     return <div className="message error">{error}</div>;
   }
@@ -276,36 +291,58 @@ export default function ProductDetailPage() {
     ? "Describe the overall shop experience, communication, packaging, or delivery reliability."
     : "Talk about quality, fit, delivery, or anything helpful for the next customer.";
   const activeReviewLockedText = isShopReviewModal ? shopReviewSupportText : productReviewSupportText;
+  const selectedSize = product.sizeVariants.find((entry) => entry.id === selectedSizeId) ?? null;
+  const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
+  const displaySizeOptions = product.sizeOptions?.length ? product.sizeOptions : product.sizeVariants.map((variant) => ({
+    ...variant,
+    isAvailable: true,
+  }));
+
+  function addSelectedProductToCart() {
+    if (!product) return;
+
+    addItem(
+      {
+        productId: product.id,
+        vendorId: product.vendor?.id ?? null,
+        sizeId: selectedSize?.id ?? null,
+        title: product.title,
+        price: product.price,
+        image: product.images[0],
+        color: product.color ?? product.colors[0]?.name ?? null,
+        size: selectedSize?.label ?? product.size ?? null,
+        quantity: 1,
+        stock: selectedSize?.stock ?? product.stock,
+      },
+      { openCart: false },
+    );
+    setCartNotice(`${product.title} added to cart.`);
+    window.setTimeout(() => setCartNotice(null), 2600);
+  }
 
   return (
     <div className="product-detail-shell stack">
-      <div className="product-detail-top-links">
-        <Link className="table-link" href={categoryBrowseHref}>
-          Back to {formatCatalogLabel(product.category)}
-        </Link>
-        {product.vendor ? (
-          <Link className="table-link" href={`/shops/${product.vendor.id}`}>
-            Visit {product.vendor.shopName}
-          </Link>
-        ) : (
-          <Link className="table-link" href="/shops">
-            Browse shops
-          </Link>
-        )}
-      </div>
+      {cartNotice ? <div className="cart-added-toast">{cartNotice}</div> : null}
 
       <div className="product-detail-card">
         <div className="product-detail-gallery">
           <div className="product-detail-main">
-            <ProductMedia
-              image={assetUrl(selectedImage)}
-              title={product.title}
-              subtitle={
-                departmentLabel
-                  ? `${departmentLabel} ${formatCatalogLabel(product.category)}`
-                  : formatCatalogLabel(product.category)
-              }
-            />
+            <button
+              className="product-detail-image-button"
+              type="button"
+              onClick={openImageViewer}
+              aria-label="Open product photo"
+            >
+              <ProductMedia
+                image={assetUrl(selectedImage)}
+                title={product.title}
+                subtitle={
+                  departmentLabel
+                    ? `${departmentLabel} ${formatCatalogLabel(product.category)}`
+                    : formatCatalogLabel(product.category)
+                }
+              />
+            </button>
           </div>
           <div className="product-detail-thumbs">
             {product.images.map((image) => (
@@ -329,18 +366,39 @@ export default function ProductDetailPage() {
           </div>
           <h1 className="product-detail-title">{product.title}</h1>
           <RatingStars value={product.ratingSummary.average} count={product.ratingSummary.count} size="lg" />
-          {product.vendor ? (
-            <div className="product-detail-shop-link">
-              <span>Sold by</span>
-              <Link className="table-link" href={`/shops/${product.vendor.id}`}>
-                {product.vendor.shopName}
-              </Link>
-            </div>
-          ) : null}
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
           <div className="product-stock detail-stock">
             {product.stock > 0 ? `In stock: ${product.stock}` : "Currently unavailable"}
           </div>
+          {displaySizeOptions.length > 0 ? (
+            <div className="product-size-picker">
+              <span>Size</span>
+              <div className="product-size-options">
+                {displaySizeOptions.map((variant) => {
+                  const isUnavailable = !variant.isAvailable || variant.stock === 0;
+
+                  return (
+                    <button
+                      key={variant.id}
+                      type="button"
+                      className={[
+                        "product-size-option",
+                        selectedSizeId === variant.id ? "selected" : "",
+                        isUnavailable ? "unavailable" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      disabled={isUnavailable}
+                      onClick={() => setSelectedSizeId(variant.id)}
+                      aria-label={`${variant.label}${isUnavailable ? " unavailable" : ""}`}
+                    >
+                      {formatProductAttributeLabel(variant.label)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           <p className="product-detail-copy">{product.description}</p>
 
           <div className="mini-stats product-detail-mini-stats">
@@ -352,37 +410,36 @@ export default function ProductDetailPage() {
               <span>Category</span>
               <strong>{formatCatalogLabel(product.category)}</strong>
             </div>
-            <div className="mini-stat">
-              <span>Shop</span>
-              <strong>{product.vendor?.shopName ?? "Marketplace"}</strong>
-            </div>
+            {product.vendor ? (
+              <Link
+                className="mini-stat mini-stat-clickable"
+                href={`/shops/${product.vendor.id}`}
+              >
+                <span>Shop</span>
+                <strong>{product.vendor.shopName}</strong>
+              </Link>
+            ) : (
+              <div className="mini-stat">
+                <span>Shop</span>
+                <strong>Marketplace</strong>
+              </div>
+            )}
           </div>
 
           <div className="product-detail-actions">
             <button
               type="button"
               className="button"
-              onClick={() =>
-                addItem({
-                  productId: product.id,
-                  title: product.title,
-                  price: product.price,
-                  image: product.images[0],
-                  color: product.color ?? product.colors[0]?.name ?? null,
-                  size: product.size ?? product.sizeVariants[0]?.label ?? null,
-                  quantity: 1,
-                  stock: product.stock,
-                })
-              }
-              disabled={product.stock === 0}
+              onClick={addSelectedProductToCart}
+              disabled={product.stock === 0 || isOwnVendorProduct || (product.sizeVariants.length > 0 && !selectedSize)}
             >
-              {product.stock === 0 ? "Sold Out" : "Add to Cart"}
+              {product.stock === 0 ? "Sold Out" : isOwnVendorProduct ? "Your product" : "Add to Cart"}
             </button>
-            {product.vendor ? (
-              <Link className="button-secondary" href={`/shops/${product.vendor.id}`}>
-                Visit shop
-              </Link>
-            ) : null}
+            <FavoriteStarButton
+              product={product}
+              className="product-detail-favorite-button"
+              showLabel
+            />
             <Link className="button-secondary" href="/cart">
               Go to Cart
             </Link>
@@ -410,14 +467,6 @@ export default function ProductDetailPage() {
               <span>Category</span>
               <strong>{formatCatalogLabel(product.category)}</strong>
             </div>
-            {product.vendor ? (
-              <div className="meta-row">
-                <span>Shop</span>
-                <Link className="table-link" href={`/shops/${product.vendor.id}`}>
-                  {product.vendor.shopName}
-                </Link>
-              </div>
-            ) : null}
             {product.color ? (
               <div className="meta-row">
                 <span>Color</span>
@@ -615,6 +664,58 @@ export default function ProductDetailPage() {
                 <p>{activeReviewLockedText}</p>
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {imageViewerOpen && selectedImage ? (
+        <div className="product-image-viewer-backdrop" role="presentation" onClick={() => setImageViewerOpen(false)}>
+          <div
+            className="product-image-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Product photo viewer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="product-image-viewer-toolbar">
+              <div className="product-image-viewer-title">
+                <strong>{product.title}</strong>
+                <span>{Math.round(imageZoom * 100)}%</span>
+              </div>
+              <div className="product-image-viewer-actions">
+                <button
+                  className="button-ghost"
+                  type="button"
+                  onClick={() => setImageZoom((current) => Math.max(1, Number((current - 0.25).toFixed(2))))}
+                >
+                  Zoom out
+                </button>
+                <button
+                  className="button-ghost"
+                  type="button"
+                  onClick={() => setImageZoom(1)}
+                >
+                  Reset
+                </button>
+                <button
+                  className="button-ghost"
+                  type="button"
+                  onClick={() => setImageZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))}
+                >
+                  Zoom in
+                </button>
+                <button className="button" type="button" onClick={() => setImageViewerOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="product-image-viewer-canvas">
+              <img
+                src={assetUrl(selectedImage)}
+                alt={product.title}
+                style={{ transform: `scale(${imageZoom})` }}
+              />
+            </div>
           </div>
         </div>
       ) : null}

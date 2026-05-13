@@ -10,7 +10,7 @@ export default function TermsPage() {
     <div className="auth-page legal-page">
       <div className="legal-content">
         <h1 className="hero-title">Terms of Service</h1>
-        <p className="muted">Last updated: April 2026</p>
+        <p className="muted">Last updated: May 2026</p>
 
         <section className="legal-section">
           <h2>1. Acceptance of Terms</h2>
@@ -24,8 +24,9 @@ export default function TermsPage() {
           <h2>2. Use of the Platform</h2>
           <p>
             Vishu is a marketplace connecting buyers and independent vendors. You may browse
-            products as a guest, but purchasing requires account registration. You are responsible
-            for maintaining the confidentiality of your account credentials.
+            products, add items to cart, and place eligible orders as a guest. If you create an
+            account, you are responsible for maintaining the confidentiality of your account
+            credentials.
           </p>
         </section>
 
@@ -41,9 +42,23 @@ export default function TermsPage() {
         <section className="legal-section">
           <h2>4. Returns and Refunds</h2>
           <p>
-            Return policies vary by vendor. Each vendor&apos;s return policy is displayed on their
-            shop page. Disputes between buyers and vendors should be directed to the vendor first.
-            If unresolved, contact us at support@vishu.shop.
+            Vendors that sell on Vishu agree to follow Vishu&apos;s marketplace refund policy.
+            A vendor may publish shop-specific return instructions, such as return address,
+            product condition requirements, or handling steps, but those instructions cannot
+            remove customer rights, block an approved refund, or conflict with these Terms.
+          </p>
+          <p>
+            Refunds may be approved when an order is cancelled before fulfilment, an item is not
+            delivered, the wrong item is delivered, an item is materially different from the
+            listing, or a product arrives damaged or defective. Some products may be ineligible
+            for return after use, damage by the customer, hygiene restriction, customisation, or
+            other lawful exception.
+          </p>
+          <p>
+            Customers should contact the vendor first where possible. If the issue is unresolved,
+            Vishu may review the order, messages, delivery status, product listing, and evidence
+            from both sides. Vendors must cooperate with Vishu&apos;s review and honour refund or
+            return outcomes approved through the Platform.
           </p>
         </section>
 
@@ -52,6 +67,13 @@ export default function TermsPage() {
           <p>
             Vendors are responsible for the accuracy of their product listings, stock levels, and
             fulfilment of orders. Misrepresentation of products may result in account suspension.
+          </p>
+          <p>
+            By creating or operating a vendor account, the vendor confirms that they accept these
+            Terms, the Marketplace Policy, and Vishu&apos;s refund rules. Vendors that repeatedly
+            refuse valid refund requests, delay resolution, or publish return terms that conflict
+            with Vishu policy may have products hidden, payouts delayed where lawful, or their
+            shop suspended.
           </p>
         </section>
 

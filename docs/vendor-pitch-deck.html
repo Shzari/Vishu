@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Vishu Vendor Pitch Deck</title>
+  <style>
+    @page {
+      size: 13.333in 7.5in;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #111827;
+      font-family: Manrope, Inter, Arial, sans-serif;
+    }
+
+    .slide {
+      position: relative;
+      width: 13.333in;
+      height: 7.5in;
+      overflow: hidden;
+      page-break-after: always;
+      background: #f8fafc;
+      padding: 58px 66px;
+    }
+
+    .slide.dark {
+      background: #0b1020;
+      color: #f8fafc;
+    }
+
+    .slide.split {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 54px;
+      align-items: center;
+    }
+
+    .brand {
+      position: absolute;
+      top: 34px;
+      left: 66px;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0;
+      color: #38bdf8;
+    }
+
+    .page {
+      position: absolute;
+      right: 44px;
+      bottom: 28px;
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 64px;
+      line-height: 1.02;
+      letter-spacing: 0;
+      max-width: 760px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 47px;
+      line-height: 1.07;
+      letter-spacing: 0;
+      max-width: 820px;
+    }
+
+    p {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.45;
+      color: #475569;
+    }
+
+    .dark p {
+      color: #cbd5e1;
+    }
+
+    .lead {
+      margin-top: 28px;
+      max-width: 690px;
+      font-size: 24px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 38px;
+      padding: 0 18px;
+      margin-bottom: 22px;
+      background: #e0f2fe;
+      color: #0369a1;
+      font-size: 14px;
+      font-weight: 850;
+    }
+
+    .dark .tag {
+      background: #38bdf8;
+      color: #03121e;
+    }
+
+    .accent {
+      color: #38bdf8;
+    }
+
+    .green {
+      color: #16a34a;
+    }
+
+    .pink {
+      color: #db2777;
+    }
+
+    .amber {
+      color: #d97706;
+    }
+
+    .cta {
+      display: inline-flex;
+      margin-top: 34px;
+      height: 52px;
+      align-items: center;
+      padding: 0 24px;
+      background: #ffffff;
+      color: #0b1020;
+      font-weight: 900;
+      font-size: 17px;
+    }
+
+    .mock-phone {
+      width: 276px;
+      height: 500px;
+      border: 12px solid #111827;
+      background: #f8fafc;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+      padding: 18px;
+      justify-self: center;
+    }
+
+    .phone-top {
+      height: 18px;
+      width: 108px;
+      margin: 0 auto 20px;
+      background: #111827;
+    }
+
+    .shop-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .photo {
+      height: 168px;
+      background: linear-gradient(135deg, #fb7185, #f59e0b);
+      margin-bottom: 12px;
+    }
+
+    .photo.green-bg {
+      background: linear-gradient(135deg, #22c55e, #38bdf8);
+    }
+
+    .line {
+      height: 10px;
+      background: #cbd5e1;
+      margin: 8px 0;
+    }
+
+    .line.short {
+      width: 62%;
+    }
+
+    .button {
+      height: 34px;
+      background: #0ea5e9;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 14px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-top: 44px;
+    }
+
+    .panel {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      padding: 30px;
+      min-height: 270px;
+    }
+
+    .panel.dark-panel {
+      background: #111827;
+      color: #f8fafc;
+      border: 0;
+    }
+
+    .panel h3,
+    .card h3 {
+      margin: 0 0 18px;
+      font-size: 25px;
+      line-height: 1.15;
+    }
+
+    ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    li {
+      position: relative;
+      padding-left: 22px;
+      margin: 14px 0;
+      color: #475569;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 8px;
+      height: 8px;
+      background: #0ea5e9;
+    }
+
+    .dark li,
+    .dark-panel li {
+      color: #cbd5e1;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 22px;
+      margin-top: 42px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-top: 42px;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      padding: 26px;
+      min-height: 150px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 10px;
+      color: #0f172a;
+      font-size: 22px;
+    }
+
+    .card p {
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    .stripe-blue {
+      border-top: 8px solid #0ea5e9;
+    }
+
+    .stripe-green {
+      border-top: 8px solid #16a34a;
+    }
+
+    .stripe-amber {
+      border-top: 8px solid #f59e0b;
+    }
+
+    .stripe-pink {
+      border-top: 8px solid #db2777;
+    }
+
+    .browser {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+      overflow: hidden;
+    }
+
+    .browser-bar {
+      height: 42px;
+      background: #111827;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 18px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      background: #38bdf8;
+    }
+
+    .dot:nth-child(2) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(3) {
+      background: #22c55e;
+    }
+
+    .cover {
+      height: 120px;
+      background: linear-gradient(90deg, #0ea5e9, #16a34a);
+    }
+
+    .shop-row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 18px;
+      padding: 24px;
+      align-items: center;
+    }
+
+    .logo {
+      width: 86px;
+      height: 86px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      color: #0ea5e9;
+    }
+
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      padding: 0 24px 24px;
+    }
+
+    .mini-product {
+      border: 1px solid #e2e8f0;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    .mini-product div {
+      height: 74px;
+      margin-bottom: 8px;
+      background: #fb7185;
+    }
+
+    .mini-product:nth-child(2) div {
+      background: #22c55e;
+    }
+
+    .mini-product:nth-child(3) div {
+      background: #38bdf8;
+    }
+
+    .map {
+      position: relative;
+      height: 400px;
+      margin-top: 20px;
+    }
+
+    .center-node {
+      position: absolute;
+      left: 50%;
+      top: 48%;
+      width: 190px;
+      height: 116px;
+      transform: translate(-50%, -50%);
+      background: #111827;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 25px;
+      font-weight: 900;
+    }
+
+    .node {
+      position: absolute;
+      width: 150px;
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 15px;
+    }
+
+    .n1 { left: 84px; top: 54px; background: #0ea5e9; }
+    .n2 { left: 330px; top: 20px; background: #16a34a; }
+    .n3 { right: 170px; top: 56px; background: #f59e0b; }
+    .n4 { right: 36px; top: 176px; background: #db2777; }
+    .n5 { right: 210px; bottom: 42px; background: #0ea5e9; }
+    .n6 { left: 290px; bottom: 34px; background: #16a34a; }
+    .n7 { left: 58px; top: 210px; background: #f59e0b; }
+
+    .dashboard {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      padding: 0;
+      margin-top: 38px;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.1);
+    }
+
+    .dash-head {
+      height: 52px;
+      background: #111827;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      font-weight: 900;
+    }
+
+    .dash-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 180px;
+      gap: 24px;
+      padding: 20px 24px;
+      border-top: 1px solid #e2e8f0;
+      color: #475569;
+      font-size: 18px;
+    }
+
+    .dash-row strong {
+      color: #111827;
+    }
+
+    .big-quote {
+      max-width: 840px;
+      font-size: 56px;
+      line-height: 1.08;
+      font-weight: 900;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <section class="slide dark split">
+    <div>
+      <div class="brand">Vishu.shop</div>
+      <div class="tag">Vendor pitch deck</div>
+      <h1>Your shop, <span class="accent">online</span>.</h1>
+      <p class="lead">Vishu helps fashion vendors sell beyond walk-in traffic with a public shop profile, product discovery, cart, checkout, and order tools.</p>
+      <div class="cta">Start your vendor shop</div>
+    </div>
+    <div class="mock-phone">
+      <div class="phone-top"></div>
+      <div class="shop-card">
+        <div class="photo"></div>
+        <div class="line"></div>
+        <div class="line short"></div>
+        <div class="button">Add to cart</div>
+      </div>
+      <div class="shop-card">
+        <div class="photo green-bg"></div>
+        <div class="line"></div>
+        <div class="line short"></div>
+      </div>
+    </div>
+    <div class="page">01 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Why now</div>
+    <h2>The customer journey has moved to the phone.</h2>
+    <p class="lead">Many customers browse online before deciding what to buy or which shop to visit. A store is limited by location and opening hours. Vishu gives vendors a digital window customers can open anytime.</p>
+    <div class="compare">
+      <div class="panel">
+        <h3 class="pink">Walk-in only</h3>
+        <ul>
+          <li>Nearby customers</li>
+          <li>Opening hours</li>
+          <li>Products visible only in-store</li>
+        </ul>
+      </div>
+      <div class="panel dark-panel">
+        <h3 class="accent">With Vishu online</h3>
+        <ul>
+          <li>Customers browse anytime</li>
+          <li>Products stay visible</li>
+          <li>Orders are more organized</li>
+        </ul>
+      </div>
+    </div>
+    <div class="page">02 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Problem</div>
+    <h2>Good products can be hidden by a manual selling process.</h2>
+    <div class="grid-3">
+      <div class="card stripe-pink"><strong>Hard to discover</strong><p>New customers may never see the shop or product catalog.</p></div>
+      <div class="card stripe-amber"><strong>Repeated questions</strong><p>Photos, sizes, colors, prices, and stock are asked again and again.</p></div>
+      <div class="card stripe-blue"><strong>Message orders</strong><p>Orders can get mixed between chats, calls, and notes.</p></div>
+      <div class="card stripe-green"><strong>Manual stock</strong><p>Availability is hard to keep clear when everything is offline.</p></div>
+      <div class="card stripe-blue"><strong>Trust gap</strong><p>Customers need a professional shop profile before they buy.</p></div>
+      <div class="card stripe-pink"><strong>Lost time</strong><p>Vendors spend time repeating information instead of selling.</p></div>
+    </div>
+    <div class="page">03 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Solution</div>
+    <h2>A digital shopfront inside a fashion marketplace.</h2>
+    <p class="lead">Each approved vendor gets a public shop profile and product catalog customers can browse, trust, and order from.</p>
+    <div class="browser">
+      <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      <div class="cover"></div>
+      <div class="shop-row">
+        <div class="logo">LOGO</div>
+        <div>
+          <div class="line" style="width: 42%; height: 14px;"></div>
+          <div class="line" style="width: 72%;"></div>
+          <div class="line short"></div>
+        </div>
+      </div>
+      <div class="product-grid">
+        <div class="mini-product"><div></div><span>Product</span></div>
+        <div class="mini-product"><div></div><span>Product</span></div>
+        <div class="mini-product"><div></div><span>Product</span></div>
+      </div>
+    </div>
+    <div class="page">04 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Discovery</div>
+    <h2>One product. Many paths to attention.</h2>
+    <div class="map">
+      <div class="center-node">Your<br />Product</div>
+      <div class="node n1">Home</div>
+      <div class="node n2">Categories</div>
+      <div class="node n3">Search</div>
+      <div class="node n4">All shops</div>
+      <div class="node n5">Shop page</div>
+      <div class="node n6">Favorites</div>
+      <div class="node n7">Product page</div>
+    </div>
+    <p style="text-align:center; font-weight:900; color:#111827;">More visibility creates more chances to sell.</p>
+    <div class="page">05 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Vendor workspace</div>
+    <h2>Manage the daily selling flow in one place.</h2>
+    <div class="dashboard">
+      <div class="dash-head">Vendor dashboard</div>
+      <div class="dash-row"><strong>Products</strong><span>Photos, prices, sizes, colors, stock</span><span>Publish / edit</span></div>
+      <div class="dash-row"><strong>Orders</strong><span>Customer details and fulfillment status</span><span>Manage</span></div>
+      <div class="dash-row"><strong>Shop profile</strong><span>Logo, cover, contact, shipping and returns</span><span>Update</span></div>
+      <div class="dash-row"><strong>Earnings</strong><span>Sales and vendor totals</span><span>Track</span></div>
+    </div>
+    <p class="lead" style="font-size: 18px;">Commercial terms are explained clearly before the shop goes live.</p>
+    <div class="page">06 / 08</div>
+  </section>
+
+  <section class="slide">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Benefits</div>
+    <h2>What vendors gain by joining Vishu.</h2>
+    <div class="grid-3">
+      <div class="card stripe-blue"><strong>More visibility</strong><p>Reach beyond only walk-in customers.</p></div>
+      <div class="card stripe-green"><strong>More trust</strong><p>A shop profile customers can open anytime.</p></div>
+      <div class="card stripe-amber"><strong>Cleaner orders</strong><p>Cart and checkout reduce message chaos.</p></div>
+      <div class="card stripe-pink"><strong>Organized catalog</strong><p>Photos, sizes, colors, stock, and prices.</p></div>
+      <div class="card stripe-blue"><strong>Better workflow</strong><p>Manage daily selling from one vendor area.</p></div>
+      <div class="card stripe-green"><strong>More focus</strong><p>Spend more time on products and customers.</p></div>
+    </div>
+    <div class="page">07 / 08</div>
+  </section>
+
+  <section class="slide dark">
+    <div class="brand">Vishu.shop</div>
+    <div class="tag">Join Vishu</div>
+    <div class="big-quote">Your products deserve more than a shelf, a post, or a message thread.</div>
+    <p class="lead">Vishu helps local fashion vendors become easier to find, easier to trust, and easier to buy from.</p>
+    <div class="grid-3" style="margin-top: 54px;">
+      <div class="card stripe-blue"><strong>Be seen</strong><p>Customers discover products online.</p></div>
+      <div class="card stripe-green"><strong>Be trusted</strong><p>Your shop looks professional.</p></div>
+      <div class="card stripe-amber"><strong>Be ready</strong><p>Products and orders stay organized.</p></div>
+    </div>
+    <div class="cta">Start on Vishu.shop</div>
+    <div class="page">08 / 08</div>
+  </section>
+</body>
+</html>

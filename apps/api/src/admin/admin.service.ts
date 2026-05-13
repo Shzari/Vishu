@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import sharp from 'sharp';
 import { AuthService } from '../auth/auth.service';
 import {
   assertStoredImageFileMatchesMimeType,
@@ -15,7 +16,6 @@ import {
   hashOpaqueToken,
   resolveAllowedBrowserOrigins,
 } from '../common/security/security.utils';
-import { COMMISSION_RATE } from '../common/types';
 import {
   isStoredSecretProtected,
   protectStoredSecret,
@@ -40,10 +40,12 @@ import {
   SizeTypeMutationDto,
   SubcategoryMutationDto,
   UpdatePlatformSettingsDto,
+  UpdateVendorPlatformFeeDto,
 } from './dto';
 
 const DEFAULT_HOMEPAGE_HERO_INTERVAL_SECONDS = 6;
 type UploadedFile = Express.Multer.File;
+const DELIVERABLE_EMAIL_PATTERN = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 
 @Injectable()
 export class AdminService {
@@ -448,13 +450,15 @@ export class AdminService {
           id: string;
           email: string;
           role: string;
+          first_name: string | null;
+          last_name: string | null;
           full_name: string | null;
           phone_number: string | null;
           is_active: boolean;
           created_at: Date;
         }>(
           `INSERT INTO users (email, full_name, phone_number, password_hash, role, is_active, email_verified_at)
-         OUTPUT INSERTED.id, INSERTED.email, INSERTED.role, INSERTED.full_name, INSERTED.phone_number, INSERTED.is_active, INSERTED.created_at
+         OUTPUT INSERTED.id, INSERTED.email, INSERTED.role, INSERTED.first_name, INSERTED.last_name, INSERTED.full_name, INSERTED.phone_number, INSERTED.is_active, INSERTED.created_at
          VALUES ($1, $2, $3, $4, 'admin', 1, SYSDATETIME())`,
           [email, fullName, phoneNumber, passwordHash],
         );
@@ -481,6 +485,8 @@ export class AdminService {
         id: result.rows[0].id,
         email: result.rows[0].email,
         role: result.rows[0].role,
+        firstName: result.rows[0].first_name,
+        lastName: result.rows[0].last_name,
         fullName: result.rows[0].full_name,
         phoneNumber: result.rows[0].phone_number,
         isActive: result.rows[0].is_active,
@@ -706,7 +712,16 @@ export class AdminService {
     }
 
     if (dto.mailFrom !== undefined) {
-      pushUpdate('mail_from', dto.mailFrom.trim().toLowerCase() || null);
+      const normalizedMailFrom = dto.mailFrom.trim();
+      if (
+        normalizedMailFrom &&
+        !DELIVERABLE_EMAIL_PATTERN.test(normalizedMailFrom)
+      ) {
+        throw new BadRequestException(
+          'Mail sender must be a complete email address, for example admin@vishu.shop.',
+        );
+      }
+      pushUpdate('mail_from', normalizedMailFrom || null);
       changedAreas.push('mail sender');
     }
 
@@ -1791,10 +1806,14 @@ export class AdminService {
       );
       storedMobileImageUrl = mobileImage
         ? this.storeHomepagePromotionImage(mobileImage, 'mobile')
-        : null;
+        : await this.createMobilePromotionImageFromDesktop(
+            storedDesktopImageUrl,
+          );
     } catch (error) {
       this.cleanupTemporaryFile(desktopImage);
       this.cleanupTemporaryFile(mobileImage);
+      this.deleteStoredMedia(storedDesktopImageUrl);
+      this.deleteStoredMedia(storedMobileImageUrl);
       throw error;
     }
 
@@ -1907,12 +1926,25 @@ export class AdminService {
       storedDesktopImageUrl = desktopImage
         ? this.storeHomepagePromotionImage(desktopImage, 'desktop')
         : null;
-      storedMobileImageUrl = mobileImage
-        ? this.storeHomepagePromotionImage(mobileImage, 'mobile')
-        : null;
+      if (mobileImage) {
+        storedMobileImageUrl = this.storeHomepagePromotionImage(
+          mobileImage,
+          'mobile',
+        );
+      } else if (storedDesktopImageUrl) {
+        storedMobileImageUrl = await this.createMobilePromotionImageFromDesktop(
+          storedDesktopImageUrl,
+        );
+      } else if (dto.clearMobileImage && current.desktop_image_url) {
+        storedMobileImageUrl = await this.createMobilePromotionImageFromDesktop(
+          current.desktop_image_url,
+        );
+      }
     } catch (error) {
       this.cleanupTemporaryFile(desktopImage);
       this.cleanupTemporaryFile(mobileImage);
+      this.deleteStoredMedia(storedDesktopImageUrl);
+      this.deleteStoredMedia(storedMobileImageUrl);
       throw error;
     }
 
@@ -2168,6 +2200,7 @@ export class AdminService {
       shop_name: string;
       vendor_email: string;
       platform_fee: number | string | null;
+      fee_free_until: Date | null;
       vendor_created_at: Date | null;
       total_fee_generated: number | string;
       online_fee_collected: number | string;
@@ -2185,6 +2218,7 @@ export class AdminService {
          v.shop_name,
          u.email AS vendor_email,
          v.platform_fee,
+         v.fee_free_until,
          v.created_at AS vendor_created_at,
          ISNULL(fees.total_fee_generated, 0) AS total_fee_generated,
          ISNULL(fees.online_fee_collected, 0) AS online_fee_collected,
@@ -2231,28 +2265,27 @@ export class AdminService {
            END) AS last_paid_at,
            ISNULL(SUM(order_fee.total_platform_take), 0) AS total_platform_take
          FROM (
-           SELECT
-             o.id,
-             o.created_at AS paid_at,
-             o.payment_method,
-             o.payment_status,
-             ISNULL(SUM(oi.commission_amount), 0) AS total_platform_take,
-             ISNULL(
-               SUM(
-                 CASE
-                   WHEN oi.commission_amount > ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
-                     THEN oi.commission_amount - ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
-                   ELSE 0
-                 END
-               ),
-               0
-             ) AS fee_amount
-           FROM order_items oi
-           INNER JOIN orders o ON o.id = oi.order_id
-           WHERE oi.vendor_id = v.id
-           GROUP BY o.id, o.created_at, o.payment_method, o.payment_status
-         ) order_fee
-       ) fees
+            SELECT
+              o.id,
+              o.created_at AS paid_at,
+              o.payment_method,
+              o.payment_status,
+              vendor_scope.created_at AS vendor_created_at,
+              ISNULL(SUM(oi.commission_amount), 0) AS total_platform_take,
+              ISNULL(SUM(oi.commission_amount), 0) AS fee_amount
+            FROM order_items oi
+            INNER JOIN orders o ON o.id = oi.order_id
+            INNER JOIN vendors vendor_scope ON vendor_scope.id = oi.vendor_id
+            WHERE oi.vendor_id = v.id
+            GROUP BY
+              o.id,
+              o.created_at,
+              o.payment_method,
+              o.payment_status,
+              vendor_scope.created_at
+          ) order_fee
+          WHERE order_fee.paid_at >= DATEADD(MONTH, 2, order_fee.vendor_created_at)
+        ) fees
        ORDER BY
          ISNULL(fees.cod_fee_owed, 0) DESC,
          ISNULL(fees.online_fee_collected, 0) DESC,
@@ -2265,7 +2298,25 @@ export class AdminService {
       const feePreview = this.getVendorPlatformFeePreview(
         configuredFee,
         row.vendor_created_at,
+        row.fee_free_until,
       );
+      const isFeeGraceActive = feePreview.effectiveFee === 0;
+      const totalFeeGenerated = isFeeGraceActive
+        ? 0
+        : Number(row.total_fee_generated);
+      const onlineFeeCollected = isFeeGraceActive
+        ? 0
+        : Number(row.online_fee_collected);
+      const cashOnDeliveryFeeOwed = isFeeGraceActive
+        ? 0
+        : Number(row.cod_fee_owed);
+      const totalFeePaid = isFeeGraceActive ? 0 : Number(row.total_fee_paid);
+      const outstandingFee = isFeeGraceActive
+        ? 0
+        : Math.max(0, Number(row.outstanding_fee));
+      const totalPlatformTake = isFeeGraceActive
+        ? 0
+        : Number(row.total_platform_take);
 
       return {
         vendorId: row.vendor_id,
@@ -2274,17 +2325,21 @@ export class AdminService {
         basePlatformFee: configuredFee,
         effectivePlatformFee: feePreview.effectiveFee,
         feeGraceEndsAt: feePreview.graceEndsAt,
-        totalFeeGenerated: Number(row.total_fee_generated),
-        onlineFeeCollected: Number(row.online_fee_collected),
-        cashOnDeliveryFeeOwed: Number(row.cod_fee_owed),
-        totalFeeOwed: Number(row.total_fee_generated),
-        totalFeePaid: Number(row.total_fee_paid),
-        outstandingFee: Math.max(0, Number(row.outstanding_fee)),
-        totalPlatformTake: Number(row.total_platform_take),
-        chargedOrderCount: row.charged_order_count,
-        onlineCollectedOrderCount: row.online_collected_order_count,
-        cashOnDeliveryOwedOrderCount: row.cod_owed_order_count,
-        lastPaidAt: row.last_paid_at,
+        totalFeeGenerated,
+        onlineFeeCollected,
+        cashOnDeliveryFeeOwed,
+        totalFeeOwed: totalFeeGenerated,
+        totalFeePaid,
+        outstandingFee,
+        totalPlatformTake,
+        chargedOrderCount: isFeeGraceActive ? 0 : row.charged_order_count,
+        onlineCollectedOrderCount: isFeeGraceActive
+          ? 0
+          : row.online_collected_order_count,
+        cashOnDeliveryOwedOrderCount: isFeeGraceActive
+          ? 0
+          : row.cod_owed_order_count,
+        lastPaidAt: isFeeGraceActive ? null : row.last_paid_at,
       };
     });
   }
@@ -2318,19 +2373,19 @@ export class AdminService {
          o.payment_method,
          o.payment_status,
          ISNULL(SUM(oi.unit_price * oi.quantity), 0) AS gross_sales,
-         ISNULL(SUM(oi.commission_amount), 0) AS total_platform_take,
-         ISNULL(
-           SUM(
-             CASE
-               WHEN oi.commission_amount > ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
-                 THEN oi.commission_amount - ROUND((oi.unit_price * oi.quantity) * ${COMMISSION_RATE}, 2)
-               ELSE 0
-             END
-           ),
-           0
-         ) AS fee_amount
+         CASE
+           WHEN o.created_at < DATEADD(MONTH, 2, v.created_at)
+             THEN 0
+           ELSE ISNULL(SUM(oi.commission_amount), 0)
+         END AS total_platform_take,
+         CASE
+           WHEN o.created_at < DATEADD(MONTH, 2, v.created_at)
+             THEN 0
+           ELSE ISNULL(SUM(oi.commission_amount), 0)
+         END AS fee_amount
        FROM order_items oi
        INNER JOIN orders o ON o.id = oi.order_id
+       INNER JOIN vendors v ON v.id = oi.vendor_id
        WHERE oi.vendor_id = $1
        GROUP BY
          o.id,
@@ -2338,7 +2393,8 @@ export class AdminService {
          o.created_at,
          o.status,
          o.payment_method,
-         o.payment_status
+         o.payment_status,
+         v.created_at
        ORDER BY o.created_at DESC, o.id DESC`,
       [vendorId],
     );
@@ -2366,6 +2422,263 @@ export class AdminService {
           : row.payment_status === 'cod_refused'
             ? 'voided'
             : 'owed_cod',
+    }));
+  }
+
+  async getVendorEconomics(month?: string) {
+    const { monthKey, start, end } = this.resolveEconomicMonth(month);
+    const result = await this.databaseService.query<{
+      vendor_id: string;
+      shop_name: string;
+      vendor_email: string;
+      card_gross_sales: number | string;
+      cod_gross_sales: number | string;
+      cod_collected_gross_sales: number | string;
+      cod_pending_gross_sales: number | string;
+      card_fee_collected: number | string;
+      cod_fee_owed: number | string;
+      cod_fee_voided: number | string;
+      card_order_count: number;
+      cod_order_count: number;
+      total_order_count: number;
+      free_order_count: number;
+      last_order_at: Date | null;
+      platform_fee: number | string | null;
+      fee_free_until: Date | null;
+      vendor_created_at: Date | null;
+    }>(
+      `SELECT
+         v.id AS vendor_id,
+         v.shop_name,
+         u.email AS vendor_email,
+         v.platform_fee,
+         v.fee_free_until,
+         v.created_at AS vendor_created_at,
+         ISNULL(monthly.card_gross_sales, 0) AS card_gross_sales,
+         ISNULL(monthly.cod_gross_sales, 0) AS cod_gross_sales,
+         ISNULL(monthly.cod_collected_gross_sales, 0) AS cod_collected_gross_sales,
+         ISNULL(monthly.cod_pending_gross_sales, 0) AS cod_pending_gross_sales,
+         ISNULL(monthly.card_fee_collected, 0) AS card_fee_collected,
+         ISNULL(monthly.cod_fee_owed, 0) AS cod_fee_owed,
+         ISNULL(monthly.cod_fee_voided, 0) AS cod_fee_voided,
+         ISNULL(monthly.card_order_count, 0) AS card_order_count,
+         ISNULL(monthly.cod_order_count, 0) AS cod_order_count,
+         ISNULL(monthly.total_order_count, 0) AS total_order_count,
+         ISNULL(monthly.free_order_count, 0) AS free_order_count,
+         monthly.last_order_at
+       FROM vendors v
+       INNER JOIN users u ON u.id = v.user_id
+       OUTER APPLY (
+         SELECT
+           ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN order_totals.gross_sales ELSE 0 END), 0) AS card_gross_sales,
+           ISNULL(SUM(CASE WHEN order_totals.payment_method = 'cash_on_delivery' THEN order_totals.gross_sales ELSE 0 END), 0) AS cod_gross_sales,
+           ISNULL(SUM(CASE
+             WHEN order_totals.payment_method = 'cash_on_delivery'
+              AND order_totals.payment_status = 'cod_collected'
+               THEN order_totals.gross_sales
+             ELSE 0
+           END), 0) AS cod_collected_gross_sales,
+           ISNULL(SUM(CASE
+             WHEN order_totals.payment_method = 'cash_on_delivery'
+              AND order_totals.payment_status = 'cod_pending'
+               THEN order_totals.gross_sales
+             ELSE 0
+           END), 0) AS cod_pending_gross_sales,
+           ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN order_totals.fee_amount ELSE 0 END), 0) AS card_fee_collected,
+           ISNULL(SUM(CASE
+             WHEN order_totals.payment_method = 'cash_on_delivery'
+              AND order_totals.payment_status <> 'cod_refused'
+               THEN order_totals.fee_amount
+             ELSE 0
+           END), 0) AS cod_fee_owed,
+           ISNULL(SUM(CASE
+             WHEN order_totals.payment_method = 'cash_on_delivery'
+              AND order_totals.payment_status = 'cod_refused'
+               THEN order_totals.fee_amount
+             ELSE 0
+           END), 0) AS cod_fee_voided,
+            ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN 1 ELSE 0 END), 0) AS card_order_count,
+            ISNULL(SUM(CASE WHEN order_totals.payment_method = 'cash_on_delivery' THEN 1 ELSE 0 END), 0) AS cod_order_count,
+            COUNT(*) AS total_order_count,
+            ISNULL(SUM(CASE WHEN order_totals.is_free_period_order = 1 THEN 1 ELSE 0 END), 0) AS free_order_count,
+            MAX(order_totals.created_at) AS last_order_at
+         FROM (
+           SELECT
+             o.id,
+             o.created_at,
+              o.payment_method,
+              o.payment_status,
+              CASE WHEN o.created_at < DATEADD(MONTH, 2, vendor_scope.created_at) THEN 1 ELSE 0 END AS is_free_period_order,
+              ISNULL(SUM(oi.unit_price * oi.quantity), 0) AS gross_sales,
+              CASE
+                WHEN o.created_at < DATEADD(MONTH, 2, vendor_scope.created_at)
+                  THEN 0
+                ELSE ISNULL(SUM(oi.commission_amount), 0)
+              END AS fee_amount
+            FROM order_items oi
+            INNER JOIN orders o ON o.id = oi.order_id
+            INNER JOIN vendors vendor_scope ON vendor_scope.id = oi.vendor_id
+            WHERE oi.vendor_id = v.id
+              AND o.created_at >= $1
+              AND o.created_at < $2
+            GROUP BY
+              o.id,
+              o.created_at,
+              o.payment_method,
+              o.payment_status,
+              vendor_scope.created_at
+          ) order_totals
+       ) monthly
+       ORDER BY
+         ISNULL(monthly.card_gross_sales, 0) + ISNULL(monthly.cod_gross_sales, 0) DESC,
+         v.shop_name ASC`,
+      [start, end],
+    );
+
+    return {
+      month: monthKey,
+      monthStart: start,
+      monthEnd: end,
+      rows: result.rows.map((row) => {
+        const feePreview = this.getVendorPlatformFeePreview(
+          Number(row.platform_fee ?? 0),
+          row.vendor_created_at,
+          row.fee_free_until,
+        );
+        const isFeeGraceActive = feePreview.effectiveFee === 0;
+        const cardFeeCollected = Number(row.card_fee_collected);
+        const cashOnDeliveryFeeOwed = Number(row.cod_fee_owed);
+
+        return {
+          vendorId: row.vendor_id,
+          shopName: row.shop_name,
+          vendorEmail: row.vendor_email,
+          cardGrossSales: Number(row.card_gross_sales),
+          cashOnDeliveryGrossSales: Number(row.cod_gross_sales),
+          cashOnDeliveryCollectedGrossSales: Number(
+            row.cod_collected_gross_sales,
+          ),
+          cashOnDeliveryPendingGrossSales: Number(row.cod_pending_gross_sales),
+          cardFeeCollected,
+          cashOnDeliveryFeeOwed,
+          cashOnDeliveryFeeVoided: Number(row.cod_fee_voided),
+          totalGrossSales:
+            Number(row.card_gross_sales) + Number(row.cod_gross_sales),
+          totalFee: cardFeeCollected + cashOnDeliveryFeeOwed,
+          cardOrderCount: row.card_order_count,
+          cashOnDeliveryOrderCount: row.cod_order_count,
+          totalOrderCount: row.total_order_count,
+          freeOrderCount: row.free_order_count,
+          isFeeGraceActive,
+          feeGraceEndsAt: feePreview.graceEndsAt,
+          lastOrderAt: row.last_order_at,
+        };
+      }),
+    };
+  }
+
+  async getVendorEconomicsHistory(vendorId: string) {
+    const vendor = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM vendors WHERE id = $1',
+      [vendorId],
+    );
+
+    if (!vendor.rows[0]) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const result = await this.databaseService.query<{
+      month_key: string;
+      card_gross_sales: number | string;
+      cod_gross_sales: number | string;
+      cod_collected_gross_sales: number | string;
+      cod_pending_gross_sales: number | string;
+      card_fee_collected: number | string;
+      cod_fee_owed: number | string;
+      cod_fee_voided: number | string;
+      card_order_count: number;
+      cod_order_count: number;
+      total_order_count: number;
+      free_order_count: number;
+      last_order_at: Date | null;
+    }>(
+      `SELECT
+         CONVERT(char(7), order_totals.created_at, 120) AS month_key,
+         ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN order_totals.gross_sales ELSE 0 END), 0) AS card_gross_sales,
+         ISNULL(SUM(CASE WHEN order_totals.payment_method = 'cash_on_delivery' THEN order_totals.gross_sales ELSE 0 END), 0) AS cod_gross_sales,
+         ISNULL(SUM(CASE
+           WHEN order_totals.payment_method = 'cash_on_delivery'
+            AND order_totals.payment_status = 'cod_collected'
+             THEN order_totals.gross_sales
+           ELSE 0
+         END), 0) AS cod_collected_gross_sales,
+         ISNULL(SUM(CASE
+           WHEN order_totals.payment_method = 'cash_on_delivery'
+            AND order_totals.payment_status = 'cod_pending'
+             THEN order_totals.gross_sales
+           ELSE 0
+         END), 0) AS cod_pending_gross_sales,
+         ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN order_totals.fee_amount ELSE 0 END), 0) AS card_fee_collected,
+         ISNULL(SUM(CASE
+           WHEN order_totals.payment_method = 'cash_on_delivery'
+            AND order_totals.payment_status <> 'cod_refused'
+             THEN order_totals.fee_amount
+           ELSE 0
+         END), 0) AS cod_fee_owed,
+         ISNULL(SUM(CASE
+           WHEN order_totals.payment_method = 'cash_on_delivery'
+            AND order_totals.payment_status = 'cod_refused'
+             THEN order_totals.fee_amount
+           ELSE 0
+         END), 0) AS cod_fee_voided,
+         ISNULL(SUM(CASE WHEN order_totals.payment_method = 'card' THEN 1 ELSE 0 END), 0) AS card_order_count,
+         ISNULL(SUM(CASE WHEN order_totals.payment_method = 'cash_on_delivery' THEN 1 ELSE 0 END), 0) AS cod_order_count,
+         COUNT(*) AS total_order_count,
+         ISNULL(SUM(CASE WHEN order_totals.is_free_period_order = 1 THEN 1 ELSE 0 END), 0) AS free_order_count,
+         MAX(order_totals.created_at) AS last_order_at
+       FROM (
+         SELECT
+           o.id,
+            o.created_at,
+            o.payment_method,
+            o.payment_status,
+            CASE WHEN o.created_at < DATEADD(MONTH, 2, v.created_at) THEN 1 ELSE 0 END AS is_free_period_order,
+            ISNULL(SUM(oi.unit_price * oi.quantity), 0) AS gross_sales,
+            CASE
+              WHEN o.created_at < DATEADD(MONTH, 2, v.created_at)
+                THEN 0
+              ELSE ISNULL(SUM(oi.commission_amount), 0)
+            END AS fee_amount
+          FROM order_items oi
+          INNER JOIN orders o ON o.id = oi.order_id
+          INNER JOIN vendors v ON v.id = oi.vendor_id
+          WHERE oi.vendor_id = $1
+          GROUP BY o.id, o.created_at, o.payment_method, o.payment_status, v.created_at
+        ) order_totals
+       GROUP BY CONVERT(char(7), order_totals.created_at, 120)
+       ORDER BY month_key DESC`,
+      [vendorId],
+    );
+
+    return result.rows.map((row) => ({
+      month: row.month_key,
+      cardGrossSales: Number(row.card_gross_sales),
+      cashOnDeliveryGrossSales: Number(row.cod_gross_sales),
+      cashOnDeliveryCollectedGrossSales: Number(row.cod_collected_gross_sales),
+      cashOnDeliveryPendingGrossSales: Number(row.cod_pending_gross_sales),
+      cardFeeCollected: Number(row.card_fee_collected),
+      cashOnDeliveryFeeOwed: Number(row.cod_fee_owed),
+      cashOnDeliveryFeeVoided: Number(row.cod_fee_voided),
+      totalGrossSales:
+        Number(row.card_gross_sales) + Number(row.cod_gross_sales),
+      totalFee: Number(row.card_fee_collected) + Number(row.cod_fee_owed),
+      cardOrderCount: row.card_order_count,
+      cashOnDeliveryOrderCount: row.cod_order_count,
+      totalOrderCount: row.total_order_count,
+      freeOrderCount: row.free_order_count,
+      isFeeGraceActive: false,
+      feeGraceEndsAt: null,
+      lastOrderAt: row.last_order_at,
     }));
   }
 
@@ -2421,6 +2734,8 @@ export class AdminService {
   }
 
   async getUsers(pagination?: PaginationInput | null) {
+    await this.disableInactiveVendors();
+
     const pagingClause = pagination
       ? ` OFFSET ${pagination.offset} ROWS FETCH NEXT ${pagination.pageSize} ROWS ONLY`
       : '';
@@ -2428,12 +2743,21 @@ export class AdminService {
       this.databaseService.query<{
       id: string;
       email: string;
+      first_name: string | null;
+      last_name: string | null;
+      full_name: string | null;
       role: string;
       is_active: boolean;
       created_at: Date;
       vendor_id: string | null;
       shop_name: string | null;
       platform_fee: number | string | null;
+      platform_fee_mode: 'dynamic' | 'fixed' | null;
+      fee_free_until: Date | null;
+      last_login_at: Date | null;
+      last_activity_at: Date | null;
+      inactivity_disabled_at: Date | null;
+      reactivation_requested_at: Date | null;
       vendor_created_at: Date | null;
       vendor_active: boolean | null;
       vendor_verified: boolean | null;
@@ -2441,12 +2765,21 @@ export class AdminService {
         `SELECT
          u.id,
          u.email,
+         u.first_name,
+         u.last_name,
+         u.full_name,
          u.role,
          u.is_active,
          u.created_at,
          v.id AS vendor_id,
          v.shop_name,
          v.platform_fee,
+         v.platform_fee_mode,
+         v.fee_free_until,
+         v.last_login_at,
+         v.last_activity_at,
+         v.inactivity_disabled_at,
+         v.reactivation_requested_at,
          v.created_at AS vendor_created_at,
          v.is_active AS vendor_active,
          v.is_verified AS vendor_verified
@@ -2466,11 +2799,14 @@ export class AdminService {
       const feePreview = this.getVendorPlatformFeePreview(
         configuredFee,
         row.vendor_created_at,
+        row.fee_free_until,
       );
 
       return {
         ...row,
         platform_fee: configuredFee,
+        platform_fee_mode: row.platform_fee_mode ?? 'dynamic',
+        fee_free_until: row.fee_free_until,
         effective_platform_fee: feePreview.effectiveFee,
         fee_grace_ends_at: feePreview.graceEndsAt,
       };
@@ -2491,6 +2827,9 @@ export class AdminService {
     const user = await this.databaseService.query<{
       id: string;
       email: string;
+      first_name: string | null;
+      last_name: string | null;
+      full_name: string | null;
       phone_number: string | null;
       role: string;
       is_active: boolean;
@@ -2505,6 +2844,9 @@ export class AdminService {
       `SELECT TOP 1
          u.id,
          u.email,
+         u.first_name,
+         u.last_name,
+         u.full_name,
          u.phone_number,
          u.role,
          u.is_active,
@@ -2603,6 +2945,9 @@ export class AdminService {
     return {
       id: record.id,
       email: record.email,
+      firstName: record.first_name,
+      lastName: record.last_name,
+      fullName: record.full_name,
       phoneNumber: record.phone_number,
       role: record.role,
       isActive: record.is_active,
@@ -2653,26 +2998,42 @@ export class AdminService {
       id: string;
       shop_name: string;
       platform_fee: number | string;
+      platform_fee_mode: 'dynamic' | 'fixed' | null;
+      fee_free_until: Date | null;
+      last_login_at: Date | null;
+      last_activity_at: Date | null;
+      inactivity_disabled_at: Date | null;
+      reactivation_requested_at: Date | null;
       is_active: boolean;
       is_verified: boolean;
       approved_at: Date | null;
       created_at: Date;
       updated_at: Date;
+      support_phone: string | null;
       user_id: string;
       user_email: string;
+      user_phone_number: string | null;
       user_active: boolean;
     }>(
       `SELECT TOP 1
          v.id,
          v.shop_name,
          v.platform_fee,
+         v.platform_fee_mode,
+         v.fee_free_until,
+         v.last_login_at,
+         v.last_activity_at,
+         v.inactivity_disabled_at,
+         v.reactivation_requested_at,
          v.is_active,
          v.is_verified,
          v.approved_at,
          v.created_at,
          v.updated_at,
+         v.support_phone,
          u.id AS user_id,
          u.email AS user_email,
+         u.phone_number AS user_phone_number,
          u.is_active AS user_active
        FROM vendors v
        INNER JOIN users u ON u.id = v.user_id
@@ -2689,6 +3050,7 @@ export class AdminService {
     const feePreview = this.getVendorPlatformFeePreview(
       configuredFee,
       record.created_at,
+      record.fee_free_until,
     );
 
     const [metrics, categoryRows, recentOrders, payoutHistory] =
@@ -2784,6 +3146,12 @@ export class AdminService {
       id: record.id,
       shopName: record.shop_name,
       platformFee: configuredFee,
+      platformFeeMode: record.platform_fee_mode ?? 'dynamic',
+      feeFreeUntil: record.fee_free_until,
+      lastLoginAt: record.last_login_at,
+      lastActivityAt: record.last_activity_at,
+      inactivityDisabledAt: record.inactivity_disabled_at,
+      reactivationRequestedAt: record.reactivation_requested_at,
       effectivePlatformFee: feePreview.effectiveFee,
       feeGraceEndsAt: feePreview.graceEndsAt,
       isActive: record.is_active,
@@ -2794,6 +3162,8 @@ export class AdminService {
       user: {
         id: record.user_id,
         email: record.user_email,
+        phoneNumber: record.user_phone_number,
+        supportPhone: record.support_phone,
         isActive: record.user_active,
       },
       metrics: {
@@ -2839,15 +3209,29 @@ export class AdminService {
     };
   }
 
-  async updateVendorPlatformFee(vendorId: string, fee: number) {
-    const normalizedFee = Number(fee);
-    if (!Number.isFinite(normalizedFee) || normalizedFee < 0) {
-      throw new BadRequestException(
-        'Platform fee must be a number greater than or equal to 0.',
-      );
+  async updateVendorPlatformFee(
+    vendorId: string,
+    dto: UpdateVendorPlatformFeeDto,
+  ) {
+    const requestedMode = dto.feeMode ?? 'dynamic';
+    if (!['dynamic', 'fixed'].includes(requestedMode)) {
+      throw new BadRequestException('Platform fee mode is invalid.');
     }
 
-    const roundedFee = Number(normalizedFee.toFixed(2));
+    const requestedFee = Number(dto.platformFee ?? 1);
+    if (requestedMode === 'fixed' && (!Number.isFinite(requestedFee) || requestedFee < 0)) {
+      throw new BadRequestException('Fixed platform fee must be a valid amount.');
+    }
+
+    const feeFreeUntil = dto.clearFeeFreeUntil
+      ? null
+      : dto.feeFreeUntil
+        ? new Date(dto.feeFreeUntil)
+        : undefined;
+    if (feeFreeUntil !== undefined && feeFreeUntil !== null && Number.isNaN(feeFreeUntil.getTime())) {
+      throw new BadRequestException('Free fee date is invalid.');
+    }
+
     const vendor = await this.databaseService.query<{ id: string }>(
       'SELECT TOP 1 id FROM vendors WHERE id = $1',
       [vendorId],
@@ -2857,16 +3241,31 @@ export class AdminService {
       throw new NotFoundException('Vendor not found');
     }
 
+    const updates = [
+      'platform_fee_mode = $1',
+      'platform_fee = $2',
+      'updated_at = SYSDATETIME()',
+    ];
+    const params: unknown[] = [
+      requestedMode,
+      requestedMode === 'fixed' ? Number(requestedFee.toFixed(2)) : 1,
+    ];
+
+    if (feeFreeUntil !== undefined) {
+      params.push(feeFreeUntil);
+      updates.splice(2, 0, `fee_free_until = $${params.length}`);
+    }
+
+    params.push(vendorId);
     await this.databaseService.query(
       `UPDATE vendors
-       SET platform_fee = $1,
-           updated_at = SYSDATETIME()
-       WHERE id = $2`,
-      [roundedFee, vendorId],
+       SET ${updates.join(', ')}
+       WHERE id = $${params.length}`,
+      params,
     );
 
     return {
-      message: 'Platform fee updated.',
+      message: 'Vendor platform fee setting updated.',
       vendor: await this.getVendorById(vendorId),
     };
   }
@@ -3162,7 +3561,12 @@ export class AdminService {
 
     const result = await this.databaseService.query<{ id: string }>(
       `UPDATE vendors
-       SET is_active = $1, approved_at = CASE WHEN $1 = 1 THEN SYSDATETIME() ELSE approved_at END, updated_at = SYSDATETIME()
+       SET is_active = $1,
+           approved_at = CASE WHEN $1 = 1 THEN SYSDATETIME() ELSE approved_at END,
+           inactivity_disabled_at = CASE WHEN $1 = 1 THEN NULL ELSE inactivity_disabled_at END,
+           reactivation_requested_at = CASE WHEN $1 = 1 THEN NULL ELSE reactivation_requested_at END,
+           last_activity_at = CASE WHEN $1 = 1 THEN SYSDATETIME() ELSE last_activity_at END,
+           updated_at = SYSDATETIME()
        OUTPUT INSERTED.id
        WHERE id = $2`,
       [isActive, vendorId],
@@ -3390,14 +3794,21 @@ export class AdminService {
   private getVendorPlatformFeePreview(
     configuredFee: number,
     vendorCreatedAt: Date | null,
+    feeFreeUntil?: Date | null,
   ) {
-    if (
-      !vendorCreatedAt ||
-      !Number.isFinite(configuredFee) ||
-      configuredFee <= 0
-    ) {
+    const previewFee =
+      Number.isFinite(configuredFee) && configuredFee > 0 ? configuredFee : 1;
+
+    if (feeFreeUntil && new Date() < new Date(feeFreeUntil)) {
       return {
-        effectiveFee: Math.max(0, configuredFee || 0),
+        effectiveFee: 0,
+        graceEndsAt: feeFreeUntil,
+      };
+    }
+
+    if (!vendorCreatedAt) {
+      return {
+        effectiveFee: previewFee,
         graceEndsAt: null as Date | null,
       };
     }
@@ -3413,9 +3824,22 @@ export class AdminService {
     }
 
     return {
-      effectiveFee: configuredFee,
+      effectiveFee: previewFee,
       graceEndsAt: null as Date | null,
     };
+  }
+
+  private async disableInactiveVendors() {
+    await this.databaseService.query(
+      `UPDATE vendors
+       SET is_active = 0,
+           is_verified = 0,
+           admin_status = 'under_review',
+           inactivity_disabled_at = COALESCE(inactivity_disabled_at, SYSDATETIME()),
+           updated_at = SYSDATETIME()
+       WHERE is_active = 1
+         AND COALESCE(last_activity_at, last_login_at, updated_at, created_at) < DATEADD(MONTH, -6, SYSDATETIME())`,
+    );
   }
 
   async getExport(
@@ -3479,11 +3903,17 @@ export class AdminService {
     if (resource === 'customers') {
       const result = await this.databaseService.query<{
         email: string;
+        first_name: string | null;
+        last_name: string | null;
+        full_name: string | null;
         is_active: boolean;
         created_at: Date;
       }>(
         `SELECT
            email,
+           first_name,
+           last_name,
+           full_name,
            is_active,
            created_at
          FROM users
@@ -3492,8 +3922,11 @@ export class AdminService {
       );
 
       const csv = this.toCsv([
-        ['Email', 'Login active', 'Created at'],
+        ['First name', 'Last name', 'Full name', 'Email', 'Login active', 'Created at'],
         ...result.rows.map((row) => [
+          row.first_name ?? '',
+          row.last_name ?? '',
+          row.full_name ?? '',
           row.email,
           row.is_active ? 'yes' : 'no',
           row.created_at.toISOString(),
@@ -3671,17 +4104,56 @@ export class AdminService {
     return `/media/homepage-promotions/${fileName}`;
   }
 
+  private async createMobilePromotionImageFromDesktop(desktopImageUrl: string) {
+    const sourcePath = this.resolveStoredMediaPath(desktopImageUrl);
+    const targetDir = join(process.cwd(), 'uploads', 'homepage-promotions');
+
+    if (!existsSync(sourcePath)) {
+      throw new BadRequestException(
+        'Desktop promotion image could not be converted for mobile',
+      );
+    }
+
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true });
+    }
+
+    const fileName = `promotion-mobile-auto-${Date.now()}-${Math.round(Math.random() * 1_000_000)}.jpg`;
+    const targetPath = join(targetDir, fileName);
+
+    try {
+      await sharp(sourcePath)
+        .rotate()
+        .resize(1080, 1350, {
+          fit: 'cover',
+          position: 'attention',
+        })
+        .jpeg({ quality: 88, mozjpeg: true })
+        .toFile(targetPath);
+    } catch {
+      throw new BadRequestException(
+        'Desktop promotion image could not be converted for mobile',
+      );
+    }
+
+    return `/media/homepage-promotions/${fileName}`;
+  }
+
   private deleteStoredMedia(mediaUrl?: string | null) {
     if (!mediaUrl || !mediaUrl.startsWith('/media/')) {
       return;
     }
 
-    const relative = mediaUrl.replace(/^\/media\//, '');
-    const fullPath = join(process.cwd(), 'uploads', relative);
+    const fullPath = this.resolveStoredMediaPath(mediaUrl);
 
     if (existsSync(fullPath)) {
       unlinkSync(fullPath);
     }
+  }
+
+  private resolveStoredMediaPath(mediaUrl: string) {
+    const relative = mediaUrl.replace(/^\/media\//, '');
+    return join(process.cwd(), 'uploads', relative);
   }
 
   private normalizePromotionPayload(input: {
@@ -4144,6 +4616,32 @@ export class AdminService {
 
   private formatSqlDateTime(value: Date) {
     return value.toISOString().replace('T', ' ').replace('Z', '');
+  }
+
+  private resolveEconomicMonth(month?: string) {
+    const normalizedMonth = month?.trim();
+    const monthMatch = normalizedMonth?.match(/^(\d{4})-(\d{2})$/);
+    const now = new Date();
+    const year = monthMatch ? Number(monthMatch[1]) : now.getUTCFullYear();
+    const monthIndex = monthMatch
+      ? Number(monthMatch[2]) - 1
+      : now.getUTCMonth();
+
+    if (monthIndex < 0 || monthIndex > 11) {
+      throw new BadRequestException('Month must use YYYY-MM format.');
+    }
+
+    const startDate = new Date(Date.UTC(year, monthIndex, 1));
+    const endDate = new Date(Date.UTC(year, monthIndex + 1, 1));
+    const monthKey = `${startDate.getUTCFullYear()}-${String(
+      startDate.getUTCMonth() + 1,
+    ).padStart(2, '0')}`;
+
+    return {
+      monthKey,
+      start: this.formatSqlDateTime(startDate),
+      end: this.formatSqlDateTime(endDate),
+    };
   }
 
   private buildGuidLiteralClause(ids: string[]) {

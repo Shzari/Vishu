@@ -3,13 +3,16 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { startTransition, useEffect, useMemo, useState } from "react";
-import { useCart } from "@/components/providers";
+import { useAuth, useCart } from "@/components/providers";
 import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { StorefrontCategoryNav } from "@/components/storefront-category-nav";
 import { assetUrl, apiRequest, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
+  formatProductAttributeLabel,
+  getCatalogBrandFilterOptions,
   getCatalogDepartmentDisplayLabel,
+  getCatalogSizeFilterOptions,
 } from "@/lib/catalog";
 import {
   buildStorefrontCategoryHref,
@@ -21,9 +24,11 @@ import { ProductMedia } from "@/components/product-media";
 import type { Product, PublicVendorSummary } from "@/lib/types";
 
 type CategoryResultsMode = "category" | "new";
-type SortOption = "relevance" | "newest" | "price-low" | "price-high";
+type SortOption = "relevance" | "newest" | "price-low" | "price-high" | "title" | "vendor";
 
 const NEW_RESULTS_LIMIT = 48;
+const NEW_ARRIVAL_DAYS = 30;
+const COLLAPSED_FILTER_OPTION_LIMIT = 5;
 
 function parseListParam(value: string | null) {
   return value
@@ -67,6 +72,14 @@ function getDisplayGenderLabel(rawGender: string, department: string) {
   return rawGender;
 }
 
+function getProductVendorName(product: Product) {
+  return product.vendor?.shopName?.trim() || "Vendor";
+}
+
+function normalizeSizeOption(value: string) {
+  return value.trim().toLowerCase();
+}
+
 export function CategoryResultsPage({
   mode,
   department,
@@ -77,6 +90,7 @@ export function CategoryResultsPage({
   category?: string;
 }) {
   const { addItem } = useCart();
+  const { currentRole, profile } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -84,12 +98,16 @@ export function CategoryResultsPage({
   const [vendors, setVendors] = useState<PublicVendorSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+  const [expandedFilterGroups, setExpandedFilterGroups] = useState<
+    Record<string, boolean>
+  >({});
   const [minPriceDraft, setMinPriceDraft] = useState("");
   const [maxPriceDraft, setMaxPriceDraft] = useState("");
 
   const currentDepartment = department ?? "all";
   const currentCategory = category ?? "all";
+  const isDepartmentBrowse = mode === "category" && currentCategory === "all";
   const selectedColors = useMemo(
     () => new Set(parseListParam(searchParams.get("colors"))),
     [searchParams],
@@ -106,9 +124,9 @@ export function CategoryResultsPage({
     () => new Set(parseListParam(searchParams.get("sizes"))),
     [searchParams],
   );
-  const selectedVendors = useMemo(
-    () => new Set(parseListParam(searchParams.get("vendors"))),
-    [searchParams],
+  const selectedSizeKeys = useMemo(
+    () => new Set([...selectedSizes].map(normalizeSizeOption)),
+    [selectedSizes],
   );
   const inStockOnly = searchParams.get("stock") === "in-stock";
   const sortBy = (searchParams.get("sort") as SortOption | null) ?? "relevance";
@@ -147,6 +165,29 @@ export function CategoryResultsPage({
   }, []);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    setShowFilters(!mediaQuery.matches);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!showFilters) {
+      return;
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowFilters(false);
+      }
+    }
+
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showFilters]);
+
+  useEffect(() => {
     setMinPriceDraft(minPrice);
     setMaxPriceDraft(maxPrice);
   }, [maxPrice, minPrice]);
@@ -155,7 +196,9 @@ export function CategoryResultsPage({
     const listedProducts = products.filter((product) => product.isListed !== false);
 
     if (mode === "new") {
+      const cutoff = Date.now() - NEW_ARRIVAL_DAYS * 24 * 60 * 60 * 1000;
       return [...listedProducts]
+        .filter((product) => new Date(product.createdAt).getTime() >= cutoff)
         .sort(
           (left, right) =>
             new Date(right.createdAt).getTime() -
@@ -167,9 +210,9 @@ export function CategoryResultsPage({
     return listedProducts.filter(
       (product) =>
         product.department === currentDepartment &&
-        product.category === currentCategory,
+        (isDepartmentBrowse || product.category === currentCategory),
     );
-  }, [currentCategory, currentDepartment, mode, products]);
+  }, [currentCategory, currentDepartment, isDepartmentBrowse, mode, products]);
 
   const relatedCategories = useMemo(
     () =>
@@ -181,29 +224,28 @@ export function CategoryResultsPage({
     currentDepartment === "kids" ||
     currentDepartment === "babies";
 
-  const vendorOptions = useMemo(() => {
-    const vendors = new Map<string, string>();
-
-    baseProducts.forEach((product) => {
-      if (product.vendor?.id && product.vendor.shopName) {
-        vendors.set(product.vendor.id, product.vendor.shopName);
-      }
-    });
-
-    return [...vendors.entries()]
-      .map(([id, name]) => ({ id, name }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [baseProducts]);
-
   const brandOptions = useMemo(
-    () =>
-      [
-        ...new Set(
-          baseProducts
-            .map((product) => product.brand?.name?.trim())
-            .filter((entry): entry is string => Boolean(entry)),
-        ),
-      ].sort((left, right) => left.localeCompare(right)),
+    () => {
+      const nextOptions = new Map<string, string>();
+
+      getCatalogBrandFilterOptions().forEach((entry) => {
+        nextOptions.set(entry.trim().toLowerCase(), entry);
+      });
+
+      baseProducts
+        .map((product) => product.brand?.name?.trim())
+        .filter((entry): entry is string => Boolean(entry))
+        .forEach((entry) => {
+          const key = entry.trim().toLowerCase();
+          if (!nextOptions.has(key)) {
+            nextOptions.set(key, entry);
+          }
+        });
+
+      return [...nextOptions.values()].sort((left, right) =>
+        left.localeCompare(right),
+      );
+    },
     [baseProducts],
   );
 
@@ -244,20 +286,33 @@ export function CategoryResultsPage({
   );
 
   const sizeOptions = useMemo(
-    () =>
-      [
-        ...new Set(
-          baseProducts.flatMap((product) =>
-            product.sizeVariants.length
-              ? product.sizeVariants.map((entry) => entry.label)
-              : product.size
-                ? [product.size]
-                : [],
-          ),
-        ),
-      ]
-        .sort((left, right) => left.localeCompare(right)),
-    [baseProducts],
+    () => {
+      const nextOptions = new Map<string, string>();
+
+      getCatalogSizeFilterOptions(currentDepartment, currentCategory).forEach(
+        (entry) => {
+          nextOptions.set(normalizeSizeOption(entry), entry);
+        },
+      );
+
+      baseProducts
+        .flatMap((product) =>
+          product.sizeVariants.length
+            ? product.sizeVariants.map((entry) => entry.label)
+            : product.size
+              ? [product.size]
+              : [],
+        )
+        .forEach((entry) => {
+          const key = normalizeSizeOption(entry);
+          if (!nextOptions.has(key)) {
+            nextOptions.set(key, entry);
+          }
+        });
+
+      return [...nextOptions.values()];
+    },
+    [baseProducts, currentCategory, currentDepartment],
   );
   const filteredProducts = useMemo(() => {
     return baseProducts.filter((product) => {
@@ -288,13 +343,12 @@ export function CategoryResultsPage({
       const matchesSize =
         selectedSizes.size === 0 ||
         (product.sizeVariants.length
-          ? product.sizeVariants.some((entry) => selectedSizes.has(entry.label))
+          ? product.sizeVariants.some((entry) =>
+              selectedSizeKeys.has(normalizeSizeOption(entry.label)),
+            )
           : product.size
-            ? selectedSizes.has(product.size)
+            ? selectedSizeKeys.has(normalizeSizeOption(product.size))
             : false);
-      const matchesVendor =
-        selectedVendors.size === 0 ||
-        (product.vendor?.id ? selectedVendors.has(product.vendor.id) : false);
       const matchesStock = !inStockOnly || product.stock > 0;
 
       return (
@@ -304,7 +358,6 @@ export function CategoryResultsPage({
         matchesBrand &&
         matchesGender &&
         matchesSize &&
-        matchesVendor &&
         matchesStock
       );
     });
@@ -317,8 +370,8 @@ export function CategoryResultsPage({
     selectedBrands,
     selectedColors,
     selectedGenders,
+    selectedSizeKeys,
     selectedSizes,
-    selectedVendors,
     showGenderFilter,
   ]);
 
@@ -336,6 +389,14 @@ export function CategoryResultsPage({
         return nextProducts.sort((left, right) => left.price - right.price);
       case "price-high":
         return nextProducts.sort((left, right) => right.price - left.price);
+      case "title":
+        return nextProducts.sort((left, right) => left.title.localeCompare(right.title));
+      case "vendor":
+        return nextProducts.sort(
+          (left, right) =>
+            getProductVendorName(left).localeCompare(getProductVendorName(right)) ||
+            left.title.localeCompare(right.title),
+        );
       default:
         return nextProducts;
     }
@@ -344,6 +405,8 @@ export function CategoryResultsPage({
   const pageTitle =
     mode === "new"
       ? "New Arrivals"
+      : isDepartmentBrowse
+        ? `${getStorefrontDepartmentTitle(currentDepartment)} Products`
       : getStorefrontCategoryHeading(currentDepartment, currentCategory);
 
   function replaceQuery(updates: Record<string, string | null>) {
@@ -354,7 +417,7 @@ export function CategoryResultsPage({
   }
 
   function toggleListFilter(
-    key: "brands" | "colors" | "genders" | "sizes" | "vendors",
+    key: "brands" | "colors" | "genders" | "sizes",
     value: string,
   ) {
     const currentValues = parseListParam(searchParams.get(key));
@@ -375,6 +438,74 @@ export function CategoryResultsPage({
     });
   }
 
+  function toggleFilterGroup(group: string) {
+    setExpandedFilterGroups((current) => ({
+      ...current,
+      [group]: !current[group],
+    }));
+  }
+
+  function getVisibleFilterOptions(
+    group: string,
+    options: string[],
+    isSelected: (value: string) => boolean,
+  ) {
+    if (expandedFilterGroups[group] || options.length <= COLLAPSED_FILTER_OPTION_LIMIT) {
+      return options;
+    }
+
+    const selectedOptions = options.filter(isSelected);
+    const visibleOptions = [
+      ...selectedOptions,
+      ...options.filter((entry) => !isSelected(entry)),
+    ];
+
+    return visibleOptions.slice(0, COLLAPSED_FILTER_OPTION_LIMIT);
+  }
+
+  function renderExpandableFilterOptions({
+    group,
+    options,
+    isSelected,
+    onToggle,
+    formatLabel = (value: string) => value,
+  }: {
+    group: string;
+    options: string[];
+    isSelected: (value: string) => boolean;
+    onToggle: (value: string) => void;
+    formatLabel?: (value: string) => string;
+  }) {
+    const visibleOptions = getVisibleFilterOptions(group, options, isSelected);
+    const expanded = Boolean(expandedFilterGroups[group]);
+
+    return (
+      <>
+        <div className="category-filter-options">
+          {visibleOptions.map((entry) => (
+            <label key={entry} className="category-filter-check">
+              <input
+                type="checkbox"
+                checked={isSelected(entry)}
+                onChange={() => onToggle(entry)}
+              />
+              <span>{formatLabel(entry)}</span>
+            </label>
+          ))}
+        </div>
+        {options.length > COLLAPSED_FILTER_OPTION_LIMIT ? (
+          <button
+            type="button"
+            className="category-filter-more"
+            onClick={() => toggleFilterGroup(group)}
+          >
+            {expanded ? "Show less" : `Show all ${options.length}`}
+          </button>
+        ) : null}
+      </>
+    );
+  }
+
   const hasActiveFilters =
     minPrice.trim().length > 0 ||
     maxPrice.trim().length > 0 ||
@@ -382,7 +513,6 @@ export function CategoryResultsPage({
     selectedColors.size > 0 ||
     (showGenderFilter && selectedGenders.size > 0) ||
     selectedSizes.size > 0 ||
-    selectedVendors.size > 0 ||
     inStockOnly ||
     sortBy !== "relevance";
 
@@ -403,8 +533,12 @@ export function CategoryResultsPage({
         ) : (
           <>
             <span>{getStorefrontDepartmentTitle(currentDepartment)}</span>
-            <span>/</span>
-            <span>{formatCatalogLabel(currentCategory)}</span>
+            {isDepartmentBrowse ? null : (
+              <>
+                <span>/</span>
+                <span>{formatCatalogLabel(currentCategory)}</span>
+              </>
+            )}
           </>
         )}
       </div>
@@ -420,7 +554,7 @@ export function CategoryResultsPage({
             className="category-results-control"
             onClick={() => setShowFilters((current) => !current)}
           >
-            {showFilters ? "Hide filters" : "Show filters"}
+            {showFilters ? "Close filters" : "Filter"}
           </button>
 
           <label className="category-results-sort">
@@ -438,8 +572,10 @@ export function CategoryResultsPage({
             >
               <option value="relevance">Relevance</option>
               <option value="newest">Newest</option>
-              <option value="price-low">Price: low to high</option>
-              <option value="price-high">Price: high to low</option>
+              <option value="price-low">Price ↑</option>
+              <option value="price-high">Price ↓</option>
+              <option value="title">A-Z</option>
+              <option value="vendor">Vendor</option>
             </select>
           </label>
         </div>
@@ -459,12 +595,38 @@ export function CategoryResultsPage({
               : "category-results-sidebar-shell is-collapsed"
           }
           aria-hidden={!showFilters}
+          onClick={() => setShowFilters(false)}
         >
-          <aside className="category-results-sidebar">
+          <aside
+            className="category-results-sidebar"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="category-filter-drawer-head">
+              <strong>Filters</strong>
+              <button
+                type="button"
+                className="category-filter-drawer-close"
+                onClick={() => setShowFilters(false)}
+              >
+                Close
+              </button>
+            </div>
+
             {mode === "category" ? (
               <section className="category-filter-group">
                 <div className="category-filter-title">Category</div>
                 <div className="category-filter-links">
+                  <Link
+                    href={buildStorefrontCategoryHref(currentDepartment, "all")}
+                    className={
+                      isDepartmentBrowse
+                        ? "category-filter-link active"
+                        : "category-filter-link"
+                    }
+                    onClick={() => setShowFilters(false)}
+                  >
+                    All
+                  </Link>
                   {relatedCategories.map((entry) => (
                     <Link
                       key={entry}
@@ -474,6 +636,7 @@ export function CategoryResultsPage({
                           ? "category-filter-link active"
                           : "category-filter-link"
                       }
+                      onClick={() => setShowFilters(false)}
                     >
                       {formatCatalogLabel(entry)}
                     </Link>
@@ -537,90 +700,51 @@ export function CategoryResultsPage({
             {showGenderFilter && genderOptions.length > 0 ? (
               <section className="category-filter-group">
                 <div className="category-filter-title">Gender</div>
-                <div className="category-filter-options">
-                  {genderOptions.map((entry) => (
-                    <label key={entry} className="category-filter-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedGenders.has(entry)}
-                        onChange={() => toggleListFilter("genders", entry)}
-                      />
-                      <span>{entry}</span>
-                    </label>
-                  ))}
-                </div>
+                {renderExpandableFilterOptions({
+                  group: "genders",
+                  options: genderOptions,
+                  isSelected: (entry) => selectedGenders.has(entry),
+                  onToggle: (entry) => toggleListFilter("genders", entry),
+                })}
               </section>
             ) : null}
 
             {brandOptions.length > 0 ? (
               <section className="category-filter-group">
                 <div className="category-filter-title">Brand</div>
-                <div className="category-filter-options">
-                  {brandOptions.map((entry) => (
-                    <label key={entry} className="category-filter-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedBrands.has(entry)}
-                        onChange={() => toggleListFilter("brands", entry)}
-                      />
-                      <span>{entry}</span>
-                    </label>
-                  ))}
-                </div>
+                {renderExpandableFilterOptions({
+                  group: "brands",
+                  options: brandOptions,
+                  isSelected: (entry) => selectedBrands.has(entry),
+                  onToggle: (entry) => toggleListFilter("brands", entry),
+                })}
               </section>
             ) : null}
 
             {sizeOptions.length > 0 ? (
               <section className="category-filter-group">
                 <div className="category-filter-title">Size</div>
-                <div className="category-filter-options">
-                  {sizeOptions.map((entry) => (
-                    <label key={entry} className="category-filter-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedSizes.has(entry)}
-                        onChange={() => toggleListFilter("sizes", entry)}
-                      />
-                      <span>{String(entry).toUpperCase()}</span>
-                    </label>
-                  ))}
-                </div>
+                {renderExpandableFilterOptions({
+                  group: "sizes",
+                  options: sizeOptions,
+                  isSelected: (entry) =>
+                    selectedSizeKeys.has(normalizeSizeOption(entry)),
+                  onToggle: (entry) => toggleListFilter("sizes", entry),
+                  formatLabel: formatProductAttributeLabel,
+                })}
               </section>
             ) : null}
 
             {colorOptions.length > 0 ? (
               <section className="category-filter-group">
                 <div className="category-filter-title">Color</div>
-                <div className="category-filter-options">
-                  {colorOptions.map((entry) => (
-                    <label key={entry} className="category-filter-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedColors.has(entry)}
-                        onChange={() => toggleListFilter("colors", entry)}
-                      />
-                      <span>{formatCatalogLabel(entry)}</span>
-                    </label>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {vendorOptions.length > 0 ? (
-              <section className="category-filter-group">
-                <div className="category-filter-title">Brand / Vendor</div>
-                <div className="category-filter-options">
-                  {vendorOptions.map((entry) => (
-                    <label key={entry.id} className="category-filter-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedVendors.has(entry.id)}
-                        onChange={() => toggleListFilter("vendors", entry.id)}
-                      />
-                      <span>{entry.name}</span>
-                    </label>
-                  ))}
-                </div>
+                {renderExpandableFilterOptions({
+                  group: "colors",
+                  options: colorOptions,
+                  isSelected: (entry) => selectedColors.has(entry),
+                  onToggle: (entry) => toggleListFilter("colors", entry),
+                  formatLabel: formatCatalogLabel,
+                })}
               </section>
             ) : null}
 
@@ -651,7 +775,11 @@ export function CategoryResultsPage({
 
           {!loading && !error && visibleProducts.length > 0 ? (
             <div className="catalog-grid category-results-grid">
-              {visibleProducts.map((product) => (
+              {visibleProducts.map((product) => {
+                const isOwnVendorProduct =
+                  currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
+
+                return (
                 <article key={product.id} className="product-card">
                   <FavoriteStarButton product={product} className="product-card-favorite" />
                   <Link
@@ -723,34 +851,41 @@ export function CategoryResultsPage({
                         className="product-action-button product-action-button-secondary"
                         href={`/products/${product.id}`}
                       >
-                        Open product
+                        View
                       </Link>
                       <button
                         type="button"
                         className="product-action-button button"
-                        onClick={() =>
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const variant = product.sizeVariants.find((entry) => entry.stock > 0);
                           addItem({
                             productId: product.id,
+                            vendorId: product.vendor?.id ?? null,
+                            sizeId: variant?.id ?? null,
                             title: product.title,
                             price: product.price,
                             image: product.images[0],
                             color: product.color ?? product.colors[0]?.name ?? null,
-                            size:
-                              product.size ??
-                              product.sizeVariants[0]?.label ??
-                              null,
+                            size: variant?.label ?? product.size ?? null,
                             quantity: 1,
-                            stock: product.stock,
-                          })
-                        }
-                        disabled={product.stock === 0}
+                            stock: variant?.stock ?? product.stock,
+                          });
+                        }}
+                        disabled={product.stock === 0 || isOwnVendorProduct}
                       >
-                        {product.stock === 0 ? "Sold out" : "Add to cart"}
+                        {product.stock === 0
+                          ? "Sold out"
+                          : isOwnVendorProduct
+                            ? "Your product"
+                            : "Add to cart"}
                       </button>
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </section>

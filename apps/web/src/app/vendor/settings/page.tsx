@@ -5,13 +5,42 @@ import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { VendorWorkspaceShell } from "@/components/vendor-workspace-shell";
 import { apiRequest, assetUrl } from "@/lib/api";
+import { getPasswordPolicyError, passwordPolicyText } from "@/lib/password-policy";
 import type { AccountSettingsProfile, VendorTeamAccessResponse, VendorAccessRole } from "@/lib/types";
+
+function splitFullName(value?: string | null) {
+  const normalized = value?.trim() || "";
+  if (!normalized) {
+    return { firstName: "", lastName: "" };
+  }
+
+  const [firstName, ...rest] = normalized.split(/\s+/);
+  return {
+    firstName,
+    lastName: rest.join(" "),
+  };
+}
+
+const VENDOR_ROLE_LABELS: Record<VendorAccessRole, string> = {
+  shop_holder: "Shop Holder",
+  manager: "Manager",
+  employee: "Employee",
+};
+
+function getInviteRoleOptions(currentRole: VendorAccessRole): VendorAccessRole[] {
+  return currentRole === "shop_holder" ? ["employee", "manager", "shop_holder"] : ["employee"];
+}
+
+function canManageTeamRole(currentRole: VendorAccessRole, targetRole: VendorAccessRole) {
+  return currentRole === "shop_holder" || (currentRole === "manager" && targetRole === "employee");
+}
 
 export default function VendorSettingsPage() {
   const { token, currentRole, refreshProfile, profile } = useAuth();
   const [settings, setSettings] = useState<AccountSettingsProfile | null>(null);
   const [teamAccess, setTeamAccess] = useState<VendorTeamAccessResponse | null>(null);
-  const [fullName, setFullName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [shopName, setShopName] = useState("");
@@ -21,6 +50,7 @@ export default function VendorSettingsPage() {
   const [logoUrl, setLogoUrl] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [bannerUrl, setBannerUrl] = useState("");
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [businessAddress, setBusinessAddress] = useState("");
   const [returnPolicy, setReturnPolicy] = useState("");
   const [businessHours, setBusinessHours] = useState("");
@@ -38,7 +68,8 @@ export default function VendorSettingsPage() {
   const [inviteRole, setInviteRole] = useState<VendorAccessRole>("employee");
   const [inviteNote, setInviteNote] = useState("");
   const vendorAccessRole = profile?.vendor?.access_role ?? "shop_holder";
-  const canManageSettings = profile?.vendor?.access_role === "shop_holder";
+  const canManageSettings = vendorAccessRole !== "employee";
+  const inviteRoleOptions = useMemo(() => getInviteRoleOptions(vendorAccessRole), [vendorAccessRole]);
 
   const loadSettings = useCallback(async () => {
     if (!token) return;
@@ -53,7 +84,9 @@ export default function VendorSettingsPage() {
       ]);
       setSettings(data);
       setTeamAccess(nextTeamAccess);
-      setFullName(data.fullName ?? "");
+      const splitName = splitFullName(data.fullName);
+      setFirstName(data.firstName ?? splitName.firstName);
+      setLastName(data.lastName ?? splitName.lastName);
       setEmail(data.email);
       setPhoneNumber(data.phoneNumber ?? "");
       setShopName(data.vendor?.shopName ?? "");
@@ -80,6 +113,12 @@ export default function VendorSettingsPage() {
     }
   }, [canManageSettings, currentRole, loadSettings, token]);
 
+  useEffect(() => {
+    if (!inviteRoleOptions.includes(inviteRole)) {
+      setInviteRole(inviteRoleOptions[0] ?? "employee");
+    }
+  }, [inviteRole, inviteRoleOptions]);
+
   async function refreshTeamAccess() {
     if (!token || !canManageSettings) return;
     const nextTeamAccess = await apiRequest<VendorTeamAccessResponse>("/account/vendor-team", undefined, token);
@@ -94,6 +133,14 @@ export default function VendorSettingsPage() {
     return URL.createObjectURL(logoFile);
   }, [logoFile]);
 
+  const bannerPreviewUrl = useMemo(() => {
+    if (!bannerFile) {
+      return null;
+    }
+
+    return URL.createObjectURL(bannerFile);
+  }, [bannerFile]);
+
   useEffect(() => {
     return () => {
       if (logoPreviewUrl) {
@@ -102,18 +149,41 @@ export default function VendorSettingsPage() {
     };
   }, [logoPreviewUrl]);
 
+  useEffect(() => {
+    return () => {
+      if (bannerPreviewUrl) {
+        URL.revokeObjectURL(bannerPreviewUrl);
+      }
+    };
+  }, [bannerPreviewUrl]);
+
   async function saveProfile() {
     if (!token) return;
     const emailChanged = email.trim().toLowerCase() !== settings?.email.trim().toLowerCase();
+    const normalizedFirstName = firstName.trim();
+    const normalizedLastName = lastName.trim();
+
+    if (!normalizedFirstName || !normalizedLastName) {
+      setError("First name and last name are required.");
+      return;
+    }
+
     try {
       setSaving(true);
       setMessage(null);
       setError(null);
+      const fullName = [normalizedFirstName, normalizedLastName].join(" ");
       const next = await apiRequest<AccountSettingsProfile>(
         "/account/profile",
         {
           method: "PATCH",
-          body: JSON.stringify({ fullName, email, phoneNumber }),
+          body: JSON.stringify({
+            firstName: normalizedFirstName,
+            lastName: normalizedLastName,
+            fullName,
+            email,
+            phoneNumber,
+          }),
         },
         token,
       );
@@ -169,7 +239,8 @@ export default function VendorSettingsPage() {
       if (shopDescription) body.append("shopDescription", shopDescription);
       if (!logoFile && logoUrl) body.append("logoUrl", logoUrl);
       if (logoFile) body.append("logoImage", logoFile);
-      if (bannerUrl) body.append("bannerUrl", bannerUrl);
+      if (!bannerFile && bannerUrl) body.append("bannerUrl", bannerUrl);
+      if (bannerFile) body.append("bannerImage", bannerFile);
       if (businessAddress) body.append("businessAddress", businessAddress);
       if (returnPolicy) body.append("returnPolicy", returnPolicy);
       if (businessHours) body.append("businessHours", businessHours);
@@ -185,7 +256,9 @@ export default function VendorSettingsPage() {
       );
       setSettings(next);
       setLogoUrl(next.vendor?.logoUrl ?? "");
+      setBannerUrl(next.vendor?.bannerUrl ?? "");
       setLogoFile(null);
+      setBannerFile(null);
       await refreshProfile();
       setMessage("Vendor shop profile updated.");
     } catch (saveError) {
@@ -197,6 +270,12 @@ export default function VendorSettingsPage() {
 
   async function changePassword() {
     if (!token) return;
+    const passwordError = getPasswordPolicyError(newPassword);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     try {
       setSaving(true);
       setMessage(null);
@@ -319,9 +398,9 @@ export default function VendorSettingsPage() {
           section="settings"
           eyebrow="Restricted"
           title="Settings access is limited"
-          description="Employees can manage products, inventory, and orders, but only a Shop Holder can open shop settings, finance, or team access."
+          description="Employees can manage products, inventory, and orders, but only a Shop Holder or Manager can open shop settings, finance, or team access."
         >
-          <div className="message">Only a Shop Holder can manage vendor settings.</div>
+          <div className="message">Only a Shop Holder or Manager can manage vendor settings.</div>
         </VendorWorkspaceShell>
       </RequireRole>
     );
@@ -371,9 +450,15 @@ export default function VendorSettingsPage() {
       <section className="split">
         <div className="form-card stack">
           <h2 className="section-title">Account Profile</h2>
-          <div className="field">
-            <label>Full name</label>
-            <input value={fullName} onChange={(event) => setFullName(event.target.value)} />
+          <div className="form-grid two">
+            <div className="field">
+              <label>First name</label>
+              <input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+            </div>
+            <div className="field">
+              <label>Last name</label>
+              <input value={lastName} onChange={(event) => setLastName(event.target.value)} />
+            </div>
           </div>
           <div className="field">
             <label>Email</label>
@@ -397,6 +482,7 @@ export default function VendorSettingsPage() {
           <div className="field">
             <label>New password</label>
             <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <span className="muted">{passwordPolicyText}</span>
           </div>
           <button className="button" type="button" disabled={saving} onClick={changePassword}>
             {saving ? "Saving..." : "Change password"}
@@ -444,41 +530,76 @@ export default function VendorSettingsPage() {
             <label>Shop logo</label>
             <input
               type="file"
-              accept="image/*"
+              accept="image/*,.avif,.heic,.heif"
               onChange={(event) => setLogoFile(event.target.files?.[0] ?? null)}
             />
             <span className="muted">Upload a logo image instead of typing a link.</span>
           </div>
           <div className="field">
-            <label>Banner URL</label>
+            <label>Shop cover</label>
+            <input
+              type="file"
+              accept="image/*,.avif,.heic,.heif"
+              onChange={(event) => setBannerFile(event.target.files?.[0] ?? null)}
+            />
+            <span className="muted">Upload a cover image shown behind your shop card and shop profile.</span>
+          </div>
+        </div>
+        <div className="field">
+          <label>Cover image URL</label>
             <input
               value={bannerUrl}
               onChange={(event) => setBannerUrl(event.target.value)}
               placeholder="https://example.com/banner.jpg"
             />
-          </div>
         </div>
-        {(logoPreviewUrl || logoUrl) && (
-          <div className="card">
-            <strong>Logo preview</strong>
-            <div
-              style={{
-                width: "100%",
-                maxWidth: "220px",
-                borderRadius: "7px",
-                overflow: "hidden",
-                border: "1px solid var(--line)",
-                background: "#fff",
-              }}
-            >
-              <img
-                src={logoPreviewUrl ?? assetUrl(logoUrl)}
-                alt="Vendor logo preview"
-                style={{ display: "block", width: "100%", height: "auto", objectFit: "contain" }}
-              />
+        {(logoPreviewUrl || logoUrl || bannerPreviewUrl || bannerUrl) && (
+          <div className="form-grid two">
+            {(logoPreviewUrl || logoUrl) && (
+              <div className="card">
+                <strong>Logo preview</strong>
+                <div
+                  style={{
+                    width: "100%",
+                    maxWidth: "220px",
+                    borderRadius: "7px",
+                    overflow: "hidden",
+                    border: "1px solid var(--line)",
+                    background: "#fff",
+                  }}
+                >
+                  <img
+                    src={logoPreviewUrl ?? assetUrl(logoUrl)}
+                    alt="Vendor logo preview"
+                    style={{ display: "block", width: "100%", height: "auto", objectFit: "contain" }}
+                  />
+                </div>
+                {logoFile && <p className="muted">{logoFile.name}</p>}
+              </div>
+            )}
+            {(bannerPreviewUrl || bannerUrl) && (
+              <div className="card">
+                <strong>Cover preview</strong>
+                <div
+                  style={{
+                    width: "100%",
+                    aspectRatio: "16 / 7",
+                    borderRadius: "7px",
+                    overflow: "hidden",
+                    border: "1px solid var(--line)",
+                    background: "#f3f4f6",
+                  }}
+                >
+                  <img
+                    src={bannerPreviewUrl ?? assetUrl(bannerUrl)}
+                    alt="Vendor cover preview"
+                    style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                </div>
+                {bannerFile && <p className="muted">{bannerFile.name}</p>}
+              </div>
+            )}
             </div>
-            {logoFile && <p className="muted">{logoFile.name}</p>}
-          </div>
         )}
         <div className="field">
           <label>Shop description</label>
@@ -553,7 +674,7 @@ export default function VendorSettingsPage() {
           <div className="card">
             <strong>Branding status</strong>
             <p className="muted">{logoUrl ? "Logo image stored" : "No logo uploaded yet"}</p>
-            <p className="muted">{bannerUrl || "No banner URL"}</p>
+            <p className="muted">{bannerUrl ? "Cover image stored" : "No cover image yet"}</p>
           </div>
         )}
         <button className="button" type="button" disabled={saving} onClick={saveVendorProfile}>
@@ -565,7 +686,7 @@ export default function VendorSettingsPage() {
         <div>
           <h2 className="section-title">Team Access</h2>
           <p className="muted">
-            Invite Shop Holders or Employees, review active access, and manage pending invites for this shop.
+            Invite Shop Holders, Managers, or Employees, review active access, and manage pending invites for this shop.
           </p>
         </div>
 
@@ -581,8 +702,11 @@ export default function VendorSettingsPage() {
           <div className="field">
             <label>Role</label>
             <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as VendorAccessRole)}>
-              <option value="employee">Employee</option>
-              <option value="shop_holder">Shop Holder</option>
+              {inviteRoleOptions.map((role) => (
+                <option key={role} value={role}>
+                  {VENDOR_ROLE_LABELS[role]}
+                </option>
+              ))}
             </select>
           </div>
           <div className="field">
@@ -615,23 +739,28 @@ export default function VendorSettingsPage() {
                 <p className="muted">{member.email}</p>
               </div>
               <div className="vendor-team-meta">
-                <span className="chip">{member.role === "shop_holder" ? "Shop Holder" : "Employee"}</span>
+                <span className="chip">{VENDOR_ROLE_LABELS[member.role]}</span>
                 <span className={member.status === "active" ? "badge" : "badge warn"}>
                   {member.status === "active" ? "Active" : "Pending"}
                 </span>
                 {member.isPrimaryOwner ? <span className="badge">Primary owner</span> : null}
               </div>
               <div className="vendor-team-actions">
-                {!member.isPrimaryOwner ? (
+                {!member.isPrimaryOwner && canManageTeamRole(vendorAccessRole, member.role) ? (
                   <>
-                    <select
-                      value={member.role}
-                      onChange={(event) => void changeMemberRole(member.id, event.target.value as VendorAccessRole)}
-                      disabled={teamSaving !== null}
-                    >
-                      <option value="employee">Employee</option>
-                      <option value="shop_holder">Shop Holder</option>
-                    </select>
+                    {vendorAccessRole === "shop_holder" ? (
+                      <select
+                        value={member.role}
+                        onChange={(event) => void changeMemberRole(member.id, event.target.value as VendorAccessRole)}
+                        disabled={teamSaving !== null}
+                      >
+                        <option value="employee">Employee</option>
+                        <option value="manager">Manager</option>
+                        <option value="shop_holder">Shop Holder</option>
+                      </select>
+                    ) : (
+                      <span className="muted">Employee access</span>
+                    )}
                     <button
                       className="button-ghost"
                       type="button"
@@ -641,8 +770,10 @@ export default function VendorSettingsPage() {
                       {teamSaving === `remove-${member.id}` ? "Removing..." : "Remove"}
                     </button>
                   </>
-                ) : (
+                ) : member.isPrimaryOwner ? (
                   <span className="muted">Owner access stays fixed.</span>
+                ) : (
+                  <span className="muted">Only Shop Holders can change this access.</span>
                 )}
               </div>
             </div>
@@ -659,7 +790,7 @@ export default function VendorSettingsPage() {
               <div className="vendor-team-copy">
                 <strong>{invite.email}</strong>
                 <p className="muted">
-                  {invite.role === "shop_holder" ? "Shop Holder" : "Employee"}
+                  {VENDOR_ROLE_LABELS[invite.role]}
                   {invite.note ? ` · ${invite.note}` : ""}
                 </p>
               </div>
@@ -668,14 +799,18 @@ export default function VendorSettingsPage() {
                 <span className="muted">Sent {new Date(invite.lastSentAt).toLocaleString()}</span>
               </div>
               <div className="vendor-team-actions">
-                <button
-                  className="button-ghost"
-                  type="button"
-                  disabled={teamSaving !== null}
-                  onClick={() => void resendInvite(invite.id)}
-                >
-                  {teamSaving === `resend-${invite.id}` ? "Sending..." : "Resend"}
-                </button>
+                {canManageTeamRole(vendorAccessRole, invite.role) ? (
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    disabled={teamSaving !== null}
+                    onClick={() => void resendInvite(invite.id)}
+                  >
+                    {teamSaving === `resend-${invite.id}` ? "Sending..." : "Resend"}
+                  </button>
+                ) : (
+                  <span className="muted">Shop Holder only</span>
+                )}
               </div>
             </div>
           )) : <div className="empty">No pending invites.</div>}

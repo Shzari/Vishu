@@ -1,6 +1,6 @@
 # Vishu Database Structure
 
-Last updated: 2026-03-26
+Last updated: 2026-04-28
 
 This is the always-current SQL Server structure guide for the Vishu project. Use it together with `apps/api/src/database/schema.ts` whenever tables, columns, relations, or DB-backed workflows change.
 
@@ -32,15 +32,23 @@ This is the always-current SQL Server structure guide for the Vishu project. Use
 
 - `users`
   - shared login identity for customers, vendors, admins, and vendor team members
+  - `first_name` and `last_name` are canonical for new profile/registration work
+  - `full_name` is retained and backfilled as a compatibility field
   - guest checkout can now create an unactivated `customer` user automatically
 - `email_verifications`
-  - email verification tokens and usage state
+  - vendor email verification tokens and usage state
+- `customer_registration_verifications`
+  - 6-digit customer registration OTP hashes
+  - latest unused code verifies customer signup from `/verify?email=...`
+  - codes expire quickly and are marked used after success or resend
 - `password_resets`
   - password reset tokens and usage state
   - also used for customer account activation after guest checkout
 - `vendors`
   - one vendor shop profile per owner/shop
   - contains vendor business/profile fields
+  - `is_test` is a DB-only cleanup flag: `0` means real vendor, `1` means testing shop
+  - current real vendor is `EL-DO`; use `scripts/vendor-test-shops.sql` to review/delete test shops
 - `vendor_team_members`
   - shop-level access records
   - roles are `shop_holder` and `employee`
@@ -111,8 +119,14 @@ These tables replace the old generic master-data direction for marketplace struc
   - order header and customer/payment/shipping snapshot fields
   - guest checkout still stores guest snapshot fields on the order
   - guest orders now also link to `customer_id` by auto-creating or reusing a customer record by email
+  - Stripe hosted checkout orders store `stripe_checkout_session_id` and `stripe_payment_intent_id`
 - `order_items`
   - vendor-facing fulfillment rows and per-item revenue snapshots
+- `payment_checkout_sessions`
+  - persisted Stripe hosted checkout session state
+  - stores the checkout payload JSON until Stripe returns a paid session
+  - unique on `stripe_session_id`
+  - links to `orders.id` once completion creates the order
 
 ### Finance And Legacy Operations
 
@@ -139,6 +153,9 @@ These tables replace the old generic master-data direction for marketplace struc
 - `vendors` -> `vendor_requests`
 - `users` -> `vendor_team_members`
 - `orders` -> `order_items`
+- `users` -> `customer_registration_verifications`
+- `users` -> `payment_checkout_sessions`
+- `orders` -> `payment_checkout_sessions`
 
 ## Catalog Rules
 
@@ -174,6 +191,22 @@ These tables replace the old generic master-data direction for marketplace struc
 - if the same email already belongs to an unactivated customer, reuse that customer row
 - if the same email already belongs to an active customer, do not create a duplicate user
 - secure activation links are sent through the `password_resets` token flow
+
+## Auth And Password Rules
+
+- Customer signup uses `/auth/register`, then `/auth/verify/code` with a 6-digit OTP.
+- Customer verification resend uses `/auth/verification/resend` and issues a fresh OTP.
+- Vendor signup still uses email verification links through `email_verifications`.
+- Password reset tokens expire quickly, are single-use, and older active reset rows are marked used before a new one is created.
+- Passwords must include uppercase, lowercase, and a number, and avoid obvious sequences like `123`, `abc`, or `password`.
+
+## Stripe Checkout Rules
+
+- Public checkout payment mode/settings come from `platform_settings`.
+- Card payments use Stripe hosted Checkout, not manual saved-card UI.
+- Stripe secret keys in DB settings should be stored protected; env keys can override DB secrets.
+- `payment_checkout_sessions.checkout_payload_json` is the source used to create the order after Stripe returns `paid`.
+- Completion must be idempotent: if a session already has `order_id`, return the existing order snapshot.
 
 ## What Must Be Updated Together
 

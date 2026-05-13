@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { useAuth } from "@/components/providers";
 
 type AdminWorkspaceSection =
   | "dashboard"
@@ -47,9 +49,35 @@ export function AdminWorkspaceFrame({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { currentRole, loading, token } = useAuth();
+  const isAdminLogin = pathname === "/admin/login";
 
-  if (pathname === "/admin/login") {
+  useEffect(() => {
+    if (isAdminLogin) {
+      return;
+    }
+
+    if (loading) {
+      return;
+    }
+
+    if (!token || currentRole !== "admin") {
+      const nextPath = encodeURIComponent(pathname);
+      router.replace(`/admin/login?next=${nextPath}`);
+    }
+  }, [currentRole, isAdminLogin, loading, pathname, router, token]);
+
+  if (isAdminLogin) {
     return <>{children}</>;
+  }
+
+  if (loading) {
+    return <div className="message">Checking admin session...</div>;
+  }
+
+  if (!token || currentRole !== "admin") {
+    return <div className="message">Redirecting to admin login...</div>;
   }
 
   const activeSection = getActiveSection(pathname);

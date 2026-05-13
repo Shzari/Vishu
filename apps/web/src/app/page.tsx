@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { useCart } from "@/components/providers";
+import { useAuth, useCart } from "@/components/providers";
 import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { StorefrontCategoryNav } from "@/components/storefront-category-nav";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
@@ -12,6 +13,7 @@ import {
   getCatalogDepartmentDisplayLabel,
   getCatalogCategoriesForDepartment,
   getCatalogGenderLabel,
+  formatProductAttributeLabel,
 } from "@/lib/catalog";
 import { ProductMedia } from "@/components/product-media";
 import type {
@@ -22,6 +24,7 @@ import type {
 } from "@/lib/types";
 
 const NEW_ARRIVAL_LIMIT = 24;
+const NEW_ARRIVAL_DAYS = 30;
 const PRODUCTS_BEFORE_SHOP_ROW = 15;
 
 type BrowseMode = "catalog" | "new";
@@ -67,7 +70,19 @@ function applyCatalogFilters(
   });
 }
 
+function sortProductsByVendor(items: Product[]) {
+  return [...items].sort(
+    (left, right) =>
+      (left.vendor?.shopName?.trim() || "Vendor").localeCompare(
+        right.vendor?.shopName?.trim() || "Vendor",
+      ) ||
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+      left.title.localeCompare(right.title),
+  );
+}
+
 export default function HomePage() {
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [vendors, setVendors] = useState<PublicVendorSummary[]>([]);
   const [homepageHero, setHomepageHero] = useState<HomepageHeroConfig>({
@@ -82,6 +97,7 @@ export default function HomePage() {
   const [selectedQuickViewImage, setSelectedQuickViewImage] = useState<
     string | undefined
   >();
+  const [selectedQuickViewSizeId, setSelectedQuickViewSizeId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -98,6 +114,13 @@ export default function HomePage() {
   const [size, setSize] = useState("all");
   const [filtersHydrated, setFiltersHydrated] = useState(false);
   const { addItem } = useCart();
+  const { currentRole, loading: authLoading, profile } = useAuth();
+
+  useEffect(() => {
+    if (!authLoading && currentRole === "vendor") {
+      router.replace("/vendor/dashboard");
+    }
+  }, [authLoading, currentRole, router]);
 
   useEffect(() => {
     async function loadProducts() {
@@ -253,6 +276,11 @@ export default function HomePage() {
     () =>
       new Set(
         [...products]
+          .filter(
+            (product) =>
+              new Date(product.createdAt).getTime() >=
+              Date.now() - NEW_ARRIVAL_DAYS * 24 * 60 * 60 * 1000,
+          )
           .sort(
             (left, right) =>
               new Date(right.createdAt).getTime() -
@@ -330,7 +358,7 @@ export default function HomePage() {
       });
 
       if (browseMode !== "new") {
-        return visibleProducts;
+        return sortProductsByVendor(visibleProducts);
       }
 
       return [...visibleProducts].sort(
@@ -438,17 +466,20 @@ export default function HomePage() {
     search.trim().length > 0;
 
   const storefrontVendors = useMemo(() => {
-    const activeVendors = vendors.filter((vendor) => vendor.productCount > 0);
-    const relevantVendors = activeVendors.filter((vendor) => {
+    const relevantVendors = vendors.filter((vendor) => {
       const matchesDepartment =
-        department === "all" || vendor.departments.includes(department);
+        department === "all" ||
+        vendor.departments.length === 0 ||
+        vendor.departments.includes(department);
       const matchesCategory =
-        category === "all" || vendor.categories.includes(category);
+        category === "all" ||
+        vendor.categories.length === 0 ||
+        vendor.categories.includes(category);
 
       return matchesDepartment && matchesCategory;
     });
 
-    return [...(relevantVendors.length > 0 ? relevantVendors : activeVendors)]
+    return [...(relevantVendors.length > 0 ? relevantVendors : vendors)]
       .sort(
         (left, right) =>
           right.productCount - left.productCount ||
@@ -514,11 +545,41 @@ export default function HomePage() {
   function closeQuickView() {
     setQuickViewProduct(null);
     setSelectedQuickViewImage(undefined);
+    setSelectedQuickViewSizeId("");
   }
 
   function openQuickView(product: Product) {
     setQuickViewProduct(product);
     setSelectedQuickViewImage(product.images[0]);
+    setSelectedQuickViewSizeId(product.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "");
+  }
+
+  function getSelectedSize(product: Product) {
+    return product.sizeVariants.find((entry) => entry.id === selectedQuickViewSizeId) ?? null;
+  }
+
+  function addProductToCart(product: Product, sizeId?: string) {
+    if (currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id) {
+      return;
+    }
+
+    const selectedSize =
+      product.sizeVariants.find((entry) => entry.id === sizeId) ??
+      product.sizeVariants.find((entry) => entry.stock > 0) ??
+      null;
+
+    addItem({
+      productId: product.id,
+      vendorId: product.vendor?.id ?? null,
+      sizeId: selectedSize?.id ?? null,
+      title: product.title,
+      price: product.price,
+      image: product.images[0],
+      color: product.color ?? product.colors[0]?.name ?? null,
+      size: selectedSize?.label ?? product.size ?? null,
+      quantity: 1,
+      stock: selectedSize?.stock ?? product.stock,
+    });
   }
 
   function showPreviousHeroSlide() {
@@ -541,6 +602,7 @@ export default function HomePage() {
   }
 
   function renderProductCard(product: Product) {
+    const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
     return (
       <article key={product.id} className="product-card">
         <FavoriteStarButton product={product} className="product-card-favorite" />
@@ -603,26 +665,26 @@ export default function HomePage() {
               className="product-action-button product-action-button-secondary"
               onClick={() => openQuickView(product)}
             >
-              Quick view
+              View
             </button>
-            <button
-              type="button"
-              className="product-action-button button"
-              onClick={() =>
-                addItem({
-                  productId: product.id,
-                  title: product.title,
-                  price: product.price,
-                  image: product.images[0],
-                  color: product.color ?? product.colors[0]?.name ?? null,
-                  size: product.size ?? product.sizeVariants[0]?.label ?? null,
-                  quantity: 1,
-                  stock: product.stock,
-                })
-              }
-              disabled={product.stock === 0}
-            >
-              {product.stock === 0 ? "Sold out" : "Add to cart"}
+              <button
+                type="button"
+                className="product-action-button button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  addProductToCart(
+                    product,
+                    product.sizeVariants.find((entry) => entry.stock > 0)?.id,
+                  );
+                }}
+                disabled={product.stock === 0 || isOwnVendorProduct}
+              >
+              {product.stock === 0
+                ? "Sold out"
+                : isOwnVendorProduct
+                  ? "Your product"
+                : "Add to cart"}
             </button>
           </div>
         </div>
@@ -989,9 +1051,55 @@ export default function HomePage() {
                 </div>
                 <div className="product-stock detail-stock">
                   {quickViewProduct.stock > 0
-                    ? `In stock: ${quickViewProduct.stock}`
+                    ? getSelectedSize(quickViewProduct)
+                      ? `Selected size stock: ${getSelectedSize(quickViewProduct)?.stock ?? quickViewProduct.stock}`
+                      : `In stock: ${quickViewProduct.stock}`
                     : "Currently unavailable"}
                 </div>
+                {(quickViewProduct.sizeOptions?.length ?? quickViewProduct.sizeVariants.length) > 0 ? (
+                  <div className="product-size-picker">
+                    <span>Size</span>
+                    <div className="product-size-options">
+                      {(quickViewProduct.sizeOptions?.length
+                        ? quickViewProduct.sizeOptions
+                        : quickViewProduct.sizeVariants.map((variant) => ({
+                            ...variant,
+                            isAvailable: true,
+                          }))
+                      ).map((variant) => {
+                        const isUnavailable = !variant.isAvailable || variant.stock === 0;
+
+                        return (
+                          <button
+                            key={variant.id}
+                            type="button"
+                            className={[
+                              "product-size-option",
+                              selectedQuickViewSizeId === variant.id ? "selected" : "",
+                              isUnavailable ? "unavailable" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            disabled={isUnavailable}
+                            onClick={() => setSelectedQuickViewSizeId(variant.id)}
+                            aria-label={`${variant.label}${isUnavailable ? " unavailable" : ""}`}
+                          >
+                            {formatProductAttributeLabel(variant.label)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {getSelectedSize(quickViewProduct) ? (
+                  <p className="muted">
+                    {getSelectedSize(quickViewProduct)?.stock === 1
+                      ? "Only 1 left in this size."
+                      : `${getSelectedSize(quickViewProduct)?.stock ?? 0} available in this size.`}
+                  </p>
+                ) : (quickViewProduct.sizeOptions?.length ?? quickViewProduct.sizeVariants.length) > 0 ? (
+                  <p className="muted">Choose an available size before adding to cart.</p>
+                ) : null}
                 <p className="product-detail-copy">
                   {quickViewProduct.description}
                 </p>
@@ -1000,27 +1108,19 @@ export default function HomePage() {
                   <button
                     type="button"
                     className="button"
-                    onClick={() =>
-                      addItem({
-                        productId: quickViewProduct.id,
-                        title: quickViewProduct.title,
-                        price: quickViewProduct.price,
-                        image: quickViewProduct.images[0],
-                        color:
-                          quickViewProduct.color ??
-                          quickViewProduct.colors[0]?.name ??
-                          null,
-                        size:
-                          quickViewProduct.size ??
-                          quickViewProduct.sizeVariants[0]?.label ??
-                          null,
-                        quantity: 1,
-                        stock: quickViewProduct.stock,
-                      })
+                    onClick={() => addProductToCart(quickViewProduct, selectedQuickViewSizeId)}
+                    disabled={
+                      quickViewProduct.stock === 0 ||
+                      (currentRole === "vendor" && quickViewProduct.vendor?.id === profile?.vendor?.id) ||
+                      (quickViewProduct.sizeVariants.length > 0 &&
+                        !getSelectedSize(quickViewProduct))
                     }
-                    disabled={quickViewProduct.stock === 0}
                   >
-                    {quickViewProduct.stock === 0 ? "Sold Out" : "Add to Cart"}
+                    {quickViewProduct.stock === 0
+                      ? "Sold Out"
+                      : currentRole === "vendor" && quickViewProduct.vendor?.id === profile?.vendor?.id
+                        ? "Your product"
+                        : "Add to Cart"}
                   </button>
                   <Link
                     className="button-secondary"

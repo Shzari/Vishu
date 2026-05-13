@@ -3,6 +3,7 @@
 This repo is now prepared for a demo domain split:
 
 - storefront: `https://vishu.shop`
+- admin: `https://vishu.shop:8443/admin/login`
 - API: `https://api.vishu.shop`
 
 ## 1. DNS in GoDaddy
@@ -40,6 +41,8 @@ JWT_SECRET=replace-with-strong-secret
 JWT_EXPIRES_IN=7d
 CORS_ORIGIN=https://vishu.shop,https://www.vishu.shop
 APP_BASE_URL=https://vishu.shop
+ADMIN_BASE_URL=https://vishu.shop:8443
+ADMIN_PORT=8443
 MAIL_FROM=noreply@vishu.shop
 UPLOAD_DIR=uploads
 

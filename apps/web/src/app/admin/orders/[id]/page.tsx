@@ -59,7 +59,7 @@ export default function AdminOrderDetailPage() {
         <span className="chip">Order detail</span>
         <h1 className="hero-title">Order {detail.orderNumber}</h1>
         <p className="hero-copy">
-          Inspect customer identity, line items, vendor attribution, COD state, and commission details in one place.
+          Inspect customer identity, line items, vendor attribution, COD state, and platform fee details in one place.
         </p>
         <div className="chip-row" style={{ marginTop: "1rem" }}>
           <StatusBadge status={detail.status} />
@@ -103,7 +103,7 @@ export default function AdminOrderDetailPage() {
             </div>
             <div className="mini-stat">
               <strong>{formatCurrency(detail.items.reduce((sum, item) => sum + item.commission, 0))}</strong>
-              <span className="muted">Commission</span>
+              <span className="muted">Platform fee</span>
             </div>
             <div className="mini-stat">
               <strong>{formatCurrency(detail.items.reduce((sum, item) => sum + item.vendorEarnings, 0))}</strong>
@@ -161,7 +161,7 @@ export default function AdminOrderDetailPage() {
             <div className="order-summary-grid">
               <div className="mini-stat">
                 <strong>{formatCurrency(item.commission)}</strong>
-                <span className="muted">Commission</span>
+                <span className="muted">Platform fee</span>
               </div>
               <div className="mini-stat">
                 <strong>{formatCurrency(item.vendorEarnings)}</strong>
