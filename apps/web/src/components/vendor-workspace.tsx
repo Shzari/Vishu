@@ -1805,7 +1805,7 @@ export function VendorWorkspace({
                                   }))
                                 }
                               >
-                                {entry.name}
+                                {getCatalogDepartmentDisplayLabel(entry.name) || formatCatalogLabel(entry.name)}
                               </button>
                             );
                           })}
@@ -1828,7 +1828,7 @@ export function VendorWorkspace({
                           <option value="">Select category</option>
                           {availableFormCategories.map((entry) => (
                             <option key={entry.id} value={entry.id}>
-                              {entry.name}
+                              {formatCatalogLabel(entry.name)}
                             </option>
                           ))}
                         </select>
@@ -1987,13 +1987,23 @@ export function VendorWorkspace({
                       </div>
                       <div className="vendor-product-meta-card">
                         <span>Category</span>
-                        <strong>{selectedFormCategory?.name ?? "Choose category"}</strong>
+                        <strong>
+                          {selectedFormCategory
+                            ? formatCatalogLabel(selectedFormCategory.name)
+                            : "Choose category"}
+                        </strong>
                       </div>
                       <div className="vendor-product-meta-card">
                         <span>{getCatalogGenderLabel()}</span>
                         <strong>
                           {selectedFormGenderGroups.length
-                            ? selectedFormGenderGroups.map((entry) => entry.name).join(", ")
+                            ? selectedFormGenderGroups
+                                .map(
+                                  (entry) =>
+                                    getCatalogDepartmentDisplayLabel(entry.name) ||
+                                    formatCatalogLabel(entry.name),
+                                )
+                                .join(", ")
                             : "Optional"}
                         </strong>
                       </div>

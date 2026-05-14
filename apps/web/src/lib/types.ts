@@ -268,6 +268,7 @@ export interface AdminUserRow {
   created_at: string;
   vendor_id: string | null;
   shop_name: string | null;
+  support_phone?: string | null;
   platform_fee?: number | null;
   platform_fee_mode?: "dynamic" | "fixed" | null;
   fee_free_until?: string | null;
@@ -279,6 +280,7 @@ export interface AdminUserRow {
   fee_grace_ends_at?: string | null;
   vendor_active: boolean | null;
   vendor_verified: boolean | null;
+  vendor_login_otp_bypassed?: boolean | null;
 }
 
 export interface AdminOrderItem {

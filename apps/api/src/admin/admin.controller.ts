@@ -560,6 +560,27 @@ export class AdminController {
     return this.adminService.resendVendorVerification(req.user.sub, id);
   }
 
+  @Post('vendors/:id/verify')
+  verifyVendorManually(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.verifyVendorManually(req.user.sub, id);
+  }
+
+  @Patch('vendors/:id/otp-bypass')
+  setVendorOtpBypass(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() body: { isBypassed: boolean },
+  ) {
+    return this.adminService.updateVendorOtpBypass(
+      req.user.sub,
+      id,
+      body.isBypassed,
+    );
+  }
+
   @Patch('users/:id/activation')
   setUserActivation(
     @Req() req: { user: AuthenticatedUser },

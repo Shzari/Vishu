@@ -494,6 +494,7 @@ export class AuthService {
       vendor_id: string | null;
       vendor_is_active: boolean | null;
       vendor_is_test: boolean | null;
+      vendor_login_otp_bypassed: boolean | null;
       vendor_inactivity_disabled_at: Date | null;
       full_name: string | null;
     }>(
@@ -509,6 +510,7 @@ export class AuthService {
          v.id AS vendor_id,
          v.is_active AS vendor_is_active,
          v.is_test AS vendor_is_test,
+         v.login_otp_bypassed AS vendor_login_otp_bypassed,
          v.inactivity_disabled_at AS vendor_inactivity_disabled_at
        FROM users u
        LEFT JOIN vendors v ON v.user_id = u.id
@@ -572,7 +574,10 @@ export class AuthService {
     }
 
     if (user.role === 'vendor') {
-      if (user.vendor_is_test === true) {
+      if (
+        user.vendor_is_test === true ||
+        user.vendor_login_otp_bypassed === true
+      ) {
         await this.databaseService.query(
           `UPDATE vendors
            SET last_login_at = SYSDATETIME(),

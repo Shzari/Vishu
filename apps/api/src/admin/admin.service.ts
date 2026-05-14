@@ -2746,11 +2746,13 @@ export class AdminService {
       first_name: string | null;
       last_name: string | null;
       full_name: string | null;
+      phone_number: string | null;
       role: string;
       is_active: boolean;
       created_at: Date;
       vendor_id: string | null;
       shop_name: string | null;
+      support_phone: string | null;
       platform_fee: number | string | null;
       platform_fee_mode: 'dynamic' | 'fixed' | null;
       fee_free_until: Date | null;
@@ -2761,6 +2763,7 @@ export class AdminService {
       vendor_created_at: Date | null;
       vendor_active: boolean | null;
       vendor_verified: boolean | null;
+      vendor_login_otp_bypassed: boolean | null;
     }>(
         `SELECT
          u.id,
@@ -2768,11 +2771,13 @@ export class AdminService {
          u.first_name,
          u.last_name,
          u.full_name,
+         u.phone_number,
          u.role,
          u.is_active,
          u.created_at,
          v.id AS vendor_id,
          v.shop_name,
+         v.support_phone,
          v.platform_fee,
          v.platform_fee_mode,
          v.fee_free_until,
@@ -2782,7 +2787,8 @@ export class AdminService {
          v.reactivation_requested_at,
          v.created_at AS vendor_created_at,
          v.is_active AS vendor_active,
-         v.is_verified AS vendor_verified
+         v.is_verified AS vendor_verified,
+         v.login_otp_bypassed AS vendor_login_otp_bypassed
        FROM users u
        LEFT JOIN vendors v ON v.user_id = u.id
        ORDER BY u.created_at DESC${pagingClause}`,
@@ -3608,6 +3614,128 @@ export class AdminService {
     return { message: 'Vendor status updated' };
   }
 
+  async verifyVendorManually(adminUserId: string, vendorId: string) {
+    const vendorLookup = await this.databaseService.query<{
+      id: string;
+      shop_name: string;
+      user_id: string;
+      user_email: string;
+    }>(
+      `SELECT TOP 1
+         v.id,
+         v.shop_name,
+         v.user_id,
+         u.email AS user_email
+       FROM vendors v
+       INNER JOIN users u ON u.id = v.user_id
+       WHERE v.id = $1`,
+      [vendorId],
+    );
+
+    const vendor = vendorLookup.rows[0];
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE vendors
+         SET is_verified = 1,
+             admin_status = 'approved',
+             reactivation_requested_at = NULL,
+             inactivity_disabled_at = NULL,
+             updated_at = SYSDATETIME()
+         WHERE id = $1`,
+        [vendorId],
+      );
+
+      await client.query(
+        `UPDATE users
+         SET email_verified_at = COALESCE(email_verified_at, SYSDATETIME()),
+             updated_at = SYSDATETIME()
+         WHERE id = $1`,
+        [vendor.user_id],
+      );
+
+      await client.query(
+        `UPDATE email_verifications
+         SET used_at = COALESCE(used_at, SYSDATETIME())
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [vendor.user_id],
+      );
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'vendor_manually_verified',
+          entityType: 'vendor',
+          entityId: vendor.id,
+          entityLabel: vendor.shop_name,
+          description: `Manually verified vendor ${vendor.shop_name}.`,
+          metadata: {
+            vendorEmail: vendor.user_email,
+          },
+        },
+        client,
+      );
+    });
+
+    return { message: 'Vendor manually verified.' };
+  }
+
+  async updateVendorOtpBypass(
+    adminUserId: string,
+    vendorId: string,
+    isBypassed: boolean,
+  ) {
+    const vendorLookup = await this.databaseService.query<{
+      id: string;
+      shop_name: string;
+      user_email: string;
+    }>(
+      `SELECT TOP 1
+         v.id,
+         v.shop_name,
+         u.email AS user_email
+       FROM vendors v
+       INNER JOIN users u ON u.id = v.user_id
+       WHERE v.id = $1`,
+      [vendorId],
+    );
+
+    const vendor = vendorLookup.rows[0];
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    await this.databaseService.query(
+      `UPDATE vendors
+       SET login_otp_bypassed = $1,
+           updated_at = SYSDATETIME()
+       WHERE id = $2`,
+      [isBypassed, vendorId],
+    );
+
+    await this.recordAdminActivity(adminUserId, {
+      actionType: 'vendor_login_otp_bypass_updated',
+      entityType: 'vendor',
+      entityId: vendor.id,
+      entityLabel: vendor.shop_name,
+      description: `${isBypassed ? 'Enabled' : 'Disabled'} login OTP bypass for ${vendor.shop_name}.`,
+      metadata: {
+        isBypassed,
+        vendorEmail: vendor.user_email,
+      },
+    });
+
+    return {
+      message: isBypassed
+        ? 'Vendor login OTP bypass enabled.'
+        : 'Vendor login OTP required again.',
+    };
+  }
+
   async resendVendorVerification(adminUserId: string, vendorId: string) {
     const vendorLookup = await this.databaseService.query<{
       id: string;
@@ -4125,8 +4253,8 @@ export class AdminService {
       await sharp(sourcePath)
         .rotate()
         .resize(1080, 1350, {
-          fit: 'cover',
-          position: 'attention',
+          fit: 'contain',
+          background: '#f6f1eb',
         })
         .jpeg({ quality: 88, mozjpeg: true })
         .toFile(targetPath);

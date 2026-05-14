@@ -501,20 +501,13 @@ export class ProductsService {
        LEFT JOIN products p ON p.vendor_id = v.id
        WHERE ${this.publicVendorVisibilityClause('v')}
        GROUP BY v.id, v.shop_name, v.shop_description, v.logo_url, v.banner_url
-       HAVING COUNT(CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.id END) > 0
        ORDER BY COUNT(CASE WHEN ${this.publicProductVisibilityClause('p', 'v')} THEN p.id END) DESC, v.shop_name ASC${pagingClause}`,
       ),
       pagination
         ? this.databaseService.query<{ total: number }>(
             `SELECT COUNT(*) AS total
              FROM vendors v
-             WHERE ${this.publicVendorVisibilityClause('v')}
-               AND EXISTS (
-                 SELECT 1
-                 FROM products p
-                 WHERE p.vendor_id = v.id
-                   AND ${this.publicProductVisibilityClause('p', 'v')}
-               )`,
+             WHERE ${this.publicVendorVisibilityClause('v')}`,
           )
         : Promise.resolve({ rows: [] as { total: number }[] }),
     ]);
@@ -646,13 +639,7 @@ export class ProductsService {
          v.return_policy
        FROM vendors v
        WHERE v.id = $1
-         AND ${this.publicVendorVisibilityClause('v')}
-         AND EXISTS (
-           SELECT 1
-           FROM products p
-           WHERE p.vendor_id = v.id
-             AND ${this.publicProductVisibilityClause('p', 'v')}
-         )`,
+         AND ${this.publicVendorVisibilityClause('v')}`,
       [vendorId],
     );
 
@@ -3797,7 +3784,7 @@ export class ProductsService {
   private publicVendorVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
       AND ${vendorAlias}.is_verified = 1
-      AND ${vendorAlias}.is_test = 0`;
+      AND ${vendorAlias}.admin_status = 'approved'`;
   }
 
   private publicProductVisibilityClause(

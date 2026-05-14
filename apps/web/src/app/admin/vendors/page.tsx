@@ -128,6 +128,56 @@ export default function AdminVendorsPage() {
     }
   }
 
+  async function verifyVendorManually(vendorId: string) {
+    if (!token) return;
+
+    try {
+      setActiveAction(`manual-verify-${vendorId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/vendors/${vendorId}/verify`,
+        { method: "POST" },
+        token,
+      );
+      setMessage(response.message);
+      await loadVendors();
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Failed to verify vendor.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function toggleVendorOtpBypass(vendorId: string, isBypassed: boolean) {
+    if (!token) return;
+
+    try {
+      setActiveAction(`otp-bypass-${vendorId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/vendors/${vendorId}/otp-bypass`,
+        { method: "PATCH", body: JSON.stringify({ isBypassed }) },
+        token,
+      );
+      setMessage(response.message);
+      await loadVendors();
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Failed to update vendor OTP bypass.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   const vendors = useMemo(() => {
     const term = search.trim().toLowerCase();
 
@@ -261,7 +311,9 @@ export default function AdminVendorsPage() {
                           <strong>{vendor.shop_name ?? "Unnamed shop"}</strong>
                           <span className="muted">{vendor.email}</span>
                           <span className="muted">
-                            {vendor.phone_number ? `Mobile: ${vendor.phone_number}` : "No mobile number saved"}
+                            {vendor.support_phone || vendor.phone_number
+                              ? `Mobile: ${vendor.support_phone || vendor.phone_number}`
+                              : "No mobile number saved"}
                           </span>
                         </div>
                       </td>
@@ -275,6 +327,9 @@ export default function AdminVendorsPage() {
                         >
                           {vendor.vendor_verified ? "Verified" : "Unverified"}
                         </span>
+                        {vendor.vendor_login_otp_bypassed ? (
+                          <span className="muted">OTP bypass</span>
+                        ) : null}
                       </td>
                       <td>
                         <span
@@ -364,6 +419,37 @@ export default function AdminVendorsPage() {
                                 : vendor.vendor_active
                                   ? "Deactivate"
                                   : "Activate"}
+                            </button>
+                          ) : null}
+                          {vendor.vendor_id && !vendor.vendor_verified ? (
+                            <button
+                              className="button-ghost"
+                              type="button"
+                              disabled={activeAction !== null}
+                              onClick={() => void verifyVendorManually(vendor.vendor_id!)}
+                            >
+                              {activeAction === `manual-verify-${vendor.vendor_id}`
+                                ? "Saving..."
+                                : "Verify"}
+                            </button>
+                          ) : null}
+                          {vendor.vendor_id ? (
+                            <button
+                              className="button-ghost"
+                              type="button"
+                              disabled={activeAction !== null}
+                              onClick={() =>
+                                void toggleVendorOtpBypass(
+                                  vendor.vendor_id!,
+                                  !Boolean(vendor.vendor_login_otp_bypassed),
+                                )
+                              }
+                            >
+                              {activeAction === `otp-bypass-${vendor.vendor_id}`
+                                ? "Saving..."
+                                : vendor.vendor_login_otp_bypassed
+                                  ? "Require OTP"
+                                  : "Bypass OTP"}
                             </button>
                           ) : null}
                           <button

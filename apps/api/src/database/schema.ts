@@ -319,6 +319,7 @@ BEGIN
     bank_iban NVARCHAR(64) NULL,
     is_active BIT NOT NULL DEFAULT 0,
     is_verified BIT NOT NULL DEFAULT 0,
+    login_otp_bypassed BIT NOT NULL DEFAULT 0,
     admin_status NVARCHAR(30) NOT NULL DEFAULT 'approved',
     is_test BIT NOT NULL DEFAULT 0,
     approved_at DATETIME2 NULL,
@@ -335,6 +336,11 @@ END;
 IF COL_LENGTH('dbo.vendors', 'is_test') IS NULL
 BEGIN
   ALTER TABLE dbo.vendors ADD is_test BIT NOT NULL CONSTRAINT df_vendors_is_test DEFAULT 0;
+END;
+
+IF COL_LENGTH('dbo.vendors', 'login_otp_bypassed') IS NULL
+BEGIN
+  ALTER TABLE dbo.vendors ADD login_otp_bypassed BIT NOT NULL CONSTRAINT df_vendors_login_otp_bypassed DEFAULT 0;
 END;
 
 IF OBJECT_ID('dbo.vendor_team_members', 'U') IS NULL

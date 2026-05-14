@@ -731,7 +731,10 @@ export default function HomePage() {
             >
               <div className="storefront-promotion-frame">
                 <picture className="storefront-promotion-picture">
-                  {activeHeroSlide.mobileImageUrl ? (
+                  {activeHeroSlide.mobileImageUrl &&
+                  !activeHeroSlide.mobileImageUrl.includes(
+                    "promotion-mobile-auto-",
+                  ) ? (
                     <source
                       media="(max-width: 640px)"
                       srcSet={assetUrl(activeHeroSlide.mobileImageUrl)}
@@ -789,6 +792,10 @@ export default function HomePage() {
           ) : null}
         </section>
 
+      </section>
+
+      <section className="storefront-coming-soon" aria-label="Coming soon">
+        <span>COMING SOON</span>
       </section>
 
       <section id="posted-products" className="catalog-main">
