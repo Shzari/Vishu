@@ -281,6 +281,9 @@ export interface AdminUserRow {
   vendor_active: boolean | null;
   vendor_verified: boolean | null;
   vendor_login_otp_bypassed?: boolean | null;
+  vendor_product_count?: number | null;
+  vendor_listed_product_count?: number | null;
+  vendor_hidden_product_count?: number | null;
 }
 
 export interface AdminOrderItem {
@@ -764,6 +767,26 @@ export interface AdminVendorDetail {
     category: string;
     productCount: number;
   }[];
+  products: {
+    id: string;
+    title: string;
+    department: string;
+    category: string;
+    color: string | null;
+    size: string | null;
+    stock: number;
+    price: number;
+    productCode: string | null;
+    isListed: boolean;
+    adminStatus: string;
+    adminBlockReason: string | null;
+    adminBlockedAt: string | null;
+    imageUrl: string | null;
+    orderCount: number;
+    soldUnits: number;
+    createdAt: string;
+    updatedAt: string;
+  }[];
   recentOrderItems: {
     orderId: string;
     orderNumber: string;
@@ -954,9 +977,10 @@ export interface AccountSettingsProfile {
     businessAddress: string | null;
     returnPolicy: string | null;
     businessHours: string | null;
-    shippingNotes: string | null;
-    lowStockThreshold: number;
-    payoutSummary: {
+      shippingNotes: string | null;
+      lowStockThreshold: number;
+      twoFactorEnabled: boolean;
+      payoutSummary: {
       pendingBalance: number;
       shippedBalance: number;
       totalEarnings: number;

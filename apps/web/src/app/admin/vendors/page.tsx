@@ -128,6 +128,76 @@ export default function AdminVendorsPage() {
     }
   }
 
+  async function toggleVendorProducts(vendorId: string, isListed: boolean) {
+    if (!token) return;
+
+    try {
+      setActiveAction(`vendor-products-${vendorId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{
+        message: string;
+        totalProducts: number;
+        listedProducts: number;
+        hiddenProducts: number;
+      }>(
+        `/admin/vendors/${vendorId}/products-visibility`,
+        { method: "PATCH", body: JSON.stringify({ isListed }) },
+        token,
+      );
+      setMessage(
+        `${response.message} ${response.listedProducts}/${response.totalProducts} products visible.`,
+      );
+      await loadVendors();
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Failed to update vendor products.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function deleteVendor(vendorId: string, shopName?: string | null) {
+    if (!token) return;
+
+    const vendorLabel = shopName?.trim() || "this vendor";
+    if (
+      !window.confirm(
+        `Delete ${vendorLabel}? This permanently removes the vendor, products, payout records, and any orders connected to this vendor.`,
+      )
+    ) {
+      return;
+    }
+
+    const adminPassword = window.prompt("Enter your admin password to confirm deletion.");
+    if (!adminPassword) {
+      return;
+    }
+
+    try {
+      setActiveAction(`delete-${vendorId}`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/vendors/${vendorId}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({ adminPassword }),
+        },
+        token,
+      );
+      setMessage(response.message);
+      await loadVendors();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete vendor.");
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   async function verifyVendorManually(vendorId: string) {
     if (!token) return;
 
@@ -304,7 +374,13 @@ export default function AdminVendorsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {vendors.map((vendor) => (
+                  {vendors.map((vendor) => {
+                    const productCount = Number(vendor.vendor_product_count ?? 0);
+                    const listedProductCount = Number(vendor.vendor_listed_product_count ?? 0);
+                    const shouldShowProducts =
+                      productCount > 0 && listedProductCount === 0;
+
+                    return (
                     <tr key={vendor.id}>
                       <td>
                         <div className="admin-table-stack">
@@ -315,6 +391,11 @@ export default function AdminVendorsPage() {
                               ? `Mobile: ${vendor.support_phone || vendor.phone_number}`
                               : "No mobile number saved"}
                           </span>
+                          {vendor.vendor_id ? (
+                            <span className="muted">
+                              {listedProductCount}/{productCount} products visible
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td>
@@ -477,14 +558,44 @@ export default function AdminVendorsPage() {
                             </button>
                           ) : null}
                           {vendor.vendor_id ? (
+                            <button
+                              className="button-ghost"
+                              type="button"
+                              disabled={activeAction !== null || productCount === 0}
+                              onClick={() =>
+                                void toggleVendorProducts(
+                                  vendor.vendor_id!,
+                                  shouldShowProducts,
+                                )
+                              }
+                            >
+                              {activeAction === `vendor-products-${vendor.vendor_id}`
+                                ? "Saving..."
+                                : shouldShowProducts
+                                  ? "Show products"
+                                  : "Hide products"}
+                            </button>
+                          ) : null}
+                          {vendor.vendor_id ? (
                             <Link className="button-ghost" href={`/admin/vendors/${vendor.vendor_id}`}>
                               Open
                             </Link>
                           ) : null}
+                          {vendor.vendor_id ? (
+                            <button
+                              className="danger-button"
+                              type="button"
+                              disabled={activeAction !== null}
+                              onClick={() => void deleteVendor(vendor.vendor_id!, vendor.shop_name)}
+                            >
+                              {activeAction === `delete-${vendor.vendor_id}` ? "Deleting..." : "Delete"}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

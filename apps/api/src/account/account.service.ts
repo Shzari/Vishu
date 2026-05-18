@@ -38,6 +38,7 @@ import {
   UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
   UpdateVendorProfileDto,
+  UpdateVendorSecurityDto,
   UpsertAddressDto,
 } from './dto';
 
@@ -123,6 +124,7 @@ export class AccountService {
             business_hours: string | null;
             shipping_notes: string | null;
             low_stock_threshold: number;
+            login_otp_bypassed: boolean;
             bank_account_name: string | null;
             bank_name: string | null;
             bank_iban: string | null;
@@ -147,6 +149,7 @@ export class AccountService {
              v.business_hours,
              v.shipping_notes,
              v.low_stock_threshold,
+             v.login_otp_bypassed,
              v.bank_account_name,
              v.bank_name,
              v.bank_iban,
@@ -217,6 +220,8 @@ export class AccountService {
               businessHours: vendorDetails.rows[0].business_hours,
               shippingNotes: vendorDetails.rows[0].shipping_notes,
               lowStockThreshold: vendorDetails.rows[0].low_stock_threshold,
+              twoFactorEnabled:
+                !vendorDetails.rows[0].login_otp_bypassed,
               bankAccountName: canViewFinance
                 ? vendorDetails.rows[0].bank_account_name
                 : null,
@@ -1519,6 +1524,24 @@ export class AccountService {
         dto.bankIban?.trim().toUpperCase() || null,
         vendor.id,
       ],
+    );
+
+    return this.getSettings(userId);
+  }
+
+  async updateVendorSecurity(
+    userId: string,
+    dto: UpdateVendorSecurityDto,
+  ) {
+    const vendor =
+      await this.vendorAccessService.requireManagerAccess(userId);
+
+    await this.databaseService.query(
+      `UPDATE vendors
+       SET login_otp_bypassed = $1,
+           updated_at = SYSDATETIME()
+       WHERE id = $2`,
+      [!dto.twoFactorEnabled, vendor.id],
     );
 
     return this.getSettings(userId);

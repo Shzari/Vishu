@@ -1,7 +1,23 @@
 import {
+  ACCESSORY_CATEGORIES,
   formatCatalogLabel,
   getCatalogCategoriesForDepartment,
 } from "@/lib/catalog";
+
+export const ACCESSORY_NAV_LABELS: Record<
+  string,
+  string
+> = {
+  hat: "Hats",
+  belt: "Belts",
+  tie: "Ties",
+  scarf: "Scarves",
+  wallet: "Wallets",
+  glasses: "Glasses",
+  brooch: "Brooches",
+  bag: "Bags",
+  jewelry: "Jewelry",
+};
 
 export const STOREFRONT_NAV_GROUPS = [
   {
@@ -39,7 +55,6 @@ export const STOREFRONT_NAV_GROUPS = [
       "skirts",
       "leggings",
       "underwear",
-      "accessories",
     ],
   },
   {
@@ -76,9 +91,16 @@ export const STOREFRONT_NAV_GROUPS = [
       "underwear",
       "shoes",
       "blankets",
-      "accessories",
       "gift sets",
     ],
+  },
+  {
+    id: "accessories",
+    label: "ACCESSORIES",
+    department: "all",
+    available: true,
+    note: "Hats, belts, ties, bags, and finishing details.",
+    subcategories: ACCESSORY_CATEGORIES,
   },
 ] as const;
 
@@ -95,6 +117,10 @@ export function getStorefrontNavCategories(groupId: string) {
     return [];
   }
 
+  if (group.id === "accessories") {
+    return [...ACCESSORY_CATEGORIES];
+  }
+
   if (group.available && group.department) {
     return getCatalogCategoriesForDepartment(group.department);
   }
@@ -107,8 +133,21 @@ export function isStorefrontBrowseSelectionValid(
   category: string,
 ) {
   if (category === "all") {
+    if (department === "all") {
+      return true;
+    }
+
     return STOREFRONT_NAV_GROUPS.some(
-      (entry) => entry.available && entry.department === department,
+      (entry) =>
+        entry.available &&
+        entry.department === department &&
+        entry.id !== "accessories",
+    );
+  }
+
+  if (department === "all") {
+    return ACCESSORY_CATEGORIES.includes(
+      category as (typeof ACCESSORY_CATEGORIES)[number],
     );
   }
 
@@ -127,7 +166,19 @@ export function getStorefrontDepartmentTitle(department: string) {
   if (department === "women") return "Women";
   if (department === "kids") return "Kids";
   if (department === "babies") return "Babies";
+  if (department === "all") return "Accessories";
   return "";
+}
+
+export function formatStorefrontNavCategoryLabel(
+  groupId: string,
+  category: string,
+) {
+  if (groupId === "accessories") {
+    return ACCESSORY_NAV_LABELS[category] ?? formatCatalogLabel(category);
+  }
+
+  return formatCatalogLabel(category);
 }
 
 export function getStorefrontCategoryHeading(
@@ -136,6 +187,10 @@ export function getStorefrontCategoryHeading(
 ) {
   const departmentTitle = getStorefrontDepartmentTitle(department);
   const categoryTitle = formatCatalogLabel(category);
+
+  if (department === "all") {
+    return ACCESSORY_NAV_LABELS[category] ?? categoryTitle;
+  }
 
   if (department === "men") {
     return `Men's ${categoryTitle}`;

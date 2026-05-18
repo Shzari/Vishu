@@ -16,7 +16,6 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "suits",
     "shoes",
     "sportswear",
-    "accessories",
   ],
   women: [
     "tshirts",
@@ -37,7 +36,6 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "suits",
     "shoes",
     "sportswear",
-    "accessories",
   ],
   kids: [
     "tshirts",
@@ -60,12 +58,27 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "sleepwear",
     "shoes",
     "blankets",
-    "accessories",
   ],
 } as const;
 
+export const ACCESSORY_CATEGORIES = [
+  "hat",
+  "belt",
+  "tie",
+  "scarf",
+  "wallet",
+  "glasses",
+  "brooch",
+  "bag",
+  "jewelry",
+] as const;
+
 export const PRODUCT_CATEGORIES: string[] = [
-  ...new Set(Object.values(PRODUCT_CATEGORY_GROUPS).flat()),
+  ...new Set([
+    ...Object.values(PRODUCT_CATEGORY_GROUPS).flat(),
+    ...ACCESSORY_CATEGORIES,
+    "accessories",
+  ]),
 ] as string[];
 
 export const PRODUCT_COLOR_OPTIONS = [
@@ -314,6 +327,29 @@ export function getCatalogDepartmentDisplayLabel(department?: string | null) {
 
 export function isCatalogDepartmentVisible(department?: string | null) {
   return getCatalogDepartmentDisplayLabel(department).length > 0;
+}
+
+const ACCESSORY_CATEGORY_NAMES = new Set([
+  "accessory",
+  "accessories",
+  ...ACCESSORY_CATEGORIES,
+  "hats",
+  "belts",
+  "ties",
+  "scarves",
+  "wallets",
+  "brooches",
+  "bags",
+]);
+
+export function isAccessoryProduct(product: {
+  category?: string | null;
+  categoryRef?: { name?: string | null } | null;
+  subcategory?: { name?: string | null } | null;
+}) {
+  return [product.category, product.categoryRef?.name, product.subcategory?.name].some((value) =>
+    ACCESSORY_CATEGORY_NAMES.has(value?.trim().toLowerCase() ?? ""),
+  );
 }
 
 export function getCatalogGenderLabel(plural = false) {

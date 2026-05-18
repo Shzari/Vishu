@@ -147,6 +147,11 @@ export class UpdateVendorProfileDto {
   lowStockThreshold?: number;
 }
 
+export class UpdateVendorSecurityDto {
+  @IsBoolean()
+  twoFactorEnabled!: boolean;
+}
+
 export class CreateVendorTeamInviteDto {
   @IsEmail()
   email!: string;

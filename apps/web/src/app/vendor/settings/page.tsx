@@ -56,6 +56,7 @@ export default function VendorSettingsPage() {
   const [businessHours, setBusinessHours] = useState("");
   const [shippingNotes, setShippingNotes] = useState("");
   const [lowStockThreshold, setLowStockThreshold] = useState("5");
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
@@ -100,6 +101,7 @@ export default function VendorSettingsPage() {
       setBusinessHours(data.vendor?.businessHours ?? "");
       setShippingNotes(data.vendor?.shippingNotes ?? "");
       setLowStockThreshold(String(data.vendor?.lowStockThreshold ?? 5));
+      setTwoFactorEnabled(Boolean(data.vendor?.twoFactorEnabled));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load vendor settings.");
     } finally {
@@ -263,6 +265,40 @@ export default function VendorSettingsPage() {
       setMessage("Vendor shop profile updated.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update vendor shop profile.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveVendorSecurity(nextTwoFactorEnabled: boolean) {
+    if (!token) return;
+
+    try {
+      setSaving(true);
+      setMessage(null);
+      setError(null);
+      const next = await apiRequest<AccountSettingsProfile>(
+        "/account/vendor-security",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ twoFactorEnabled: nextTwoFactorEnabled }),
+        },
+        token,
+      );
+      setSettings(next);
+      setTwoFactorEnabled(Boolean(next.vendor?.twoFactorEnabled));
+      setMessage(
+        next.vendor?.twoFactorEnabled
+          ? "Two-factor authentication is now on."
+          : "Two-factor authentication is now off.",
+      );
+    } catch (saveError) {
+      setTwoFactorEnabled(!nextTwoFactorEnabled);
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to update two-factor authentication.",
+      );
     } finally {
       setSaving(false);
     }
@@ -475,6 +511,31 @@ export default function VendorSettingsPage() {
 
         <div className="form-card stack">
           <h2 className="section-title">Vendor Security</h2>
+          <div className="card">
+            <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <strong>Two-factor authentication</strong>
+                <p className="muted">
+                  {twoFactorEnabled
+                    ? "Vendor login requires an email OTP code."
+                    : "Vendor login does not ask for an email OTP code."}
+                </p>
+              </div>
+              <label className="vendor-row-check">
+                <input
+                  type="checkbox"
+                  checked={twoFactorEnabled}
+                  disabled={saving}
+                  onChange={(event) => {
+                    const nextValue = event.target.checked;
+                    setTwoFactorEnabled(nextValue);
+                    void saveVendorSecurity(nextValue);
+                  }}
+                />
+                <span>{twoFactorEnabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+          </div>
           <div className="field">
             <label>Current password</label>
             <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />

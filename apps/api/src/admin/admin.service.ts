@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -33,6 +34,7 @@ import {
   CatalogMasterDataMutationDto,
   CategoryMutationDto,
   ColorMutationDto,
+  ConfirmAdminPasswordDto,
   CreateAdminUserDto,
   GenderGroupMutationDto,
   ReviewCatalogRequestDto,
@@ -2788,7 +2790,16 @@ export class AdminService {
          v.created_at AS vendor_created_at,
          v.is_active AS vendor_active,
          v.is_verified AS vendor_verified,
-         v.login_otp_bypassed AS vendor_login_otp_bypassed
+         v.login_otp_bypassed AS vendor_login_otp_bypassed,
+         CASE WHEN v.id IS NULL THEN 0 ELSE (
+           SELECT COUNT(*) FROM products p WHERE p.vendor_id = v.id
+         ) END AS vendor_product_count,
+         CASE WHEN v.id IS NULL THEN 0 ELSE (
+           SELECT COUNT(*) FROM products p WHERE p.vendor_id = v.id AND p.is_listed = 1
+         ) END AS vendor_listed_product_count,
+         CASE WHEN v.id IS NULL THEN 0 ELSE (
+           SELECT COUNT(*) FROM products p WHERE p.vendor_id = v.id AND p.is_listed = 0
+         ) END AS vendor_hidden_product_count
        FROM users u
        LEFT JOIN vendors v ON v.user_id = u.id
        ORDER BY u.created_at DESC${pagingClause}`,
@@ -3059,7 +3070,7 @@ export class AdminService {
       record.fee_free_until,
     );
 
-    const [metrics, categoryRows, recentOrders, payoutHistory] =
+    const [metrics, categoryRows, productRows, recentOrders, payoutHistory] =
       await Promise.all([
         this.databaseService.query<{
           product_count: number;
@@ -3099,6 +3110,55 @@ export class AdminService {
          WHERE vendor_id = $1
          GROUP BY category
          ORDER BY product_count DESC, category ASC`,
+          [vendorId],
+        ),
+        this.databaseService.query<{
+          id: string;
+          title: string;
+          department: string;
+          category: string;
+          color: string | null;
+          size: string | null;
+          stock: number;
+          price: number | string;
+          product_code: string | null;
+          is_listed: boolean;
+          admin_status: string | null;
+          admin_block_reason: string | null;
+          admin_blocked_at: Date | null;
+          image_url: string | null;
+          order_count: number;
+          sold_units: number;
+          created_at: Date;
+          updated_at: Date;
+        }>(
+          `SELECT
+             p.id,
+             p.title,
+             p.department,
+             p.category,
+             p.color,
+             p.size,
+             p.stock,
+             p.price,
+             p.product_code,
+             p.is_listed,
+             p.admin_status,
+             p.admin_block_reason,
+             p.admin_blocked_at,
+             (
+               SELECT TOP 1 pi.image_url
+               FROM product_images pi
+               WHERE pi.product_id = p.id
+               ORDER BY pi.sort_order ASC
+             ) AS image_url,
+             (SELECT COUNT(*) FROM order_items oi WHERE oi.product_id = p.id) AS order_count,
+             (SELECT ISNULL(SUM(oi.quantity), 0) FROM order_items oi WHERE oi.product_id = p.id) AS sold_units,
+             p.created_at,
+             p.updated_at
+           FROM products p
+           WHERE p.vendor_id = $1
+           ORDER BY p.created_at DESC`,
           [vendorId],
         ),
         this.databaseService.query<{
@@ -3190,6 +3250,26 @@ export class AdminService {
         category: row.category,
         productCount: row.product_count,
       })),
+      products: productRows.rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        department: row.department,
+        category: row.category,
+        color: row.color,
+        size: row.size,
+        stock: row.stock,
+        price: Number(row.price),
+        productCode: row.product_code,
+        isListed: row.is_listed,
+        adminStatus: row.admin_status ?? 'approved',
+        adminBlockReason: row.admin_block_reason,
+        adminBlockedAt: row.admin_blocked_at,
+        imageUrl: row.image_url,
+        orderCount: row.order_count,
+        soldUnits: row.sold_units,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
       recentOrderItems: recentOrders.rows.map((row) => ({
         orderId: row.order_id,
         orderNumber: row.order_number ?? row.order_id,
@@ -3213,6 +3293,319 @@ export class AdminService {
         paidAt: row.paid_at,
       })),
     };
+  }
+
+  async deleteUser(
+    adminUserId: string,
+    userId: string,
+    dto: ConfirmAdminPasswordDto,
+  ) {
+    await this.assertAdminPassword(adminUserId, dto.adminPassword);
+
+    if (adminUserId === userId) {
+      throw new BadRequestException('You cannot delete your own admin account.');
+    }
+
+    const user = await this.databaseService.query<{
+      id: string;
+      email: string;
+      role: string;
+      vendor_id: string | null;
+      shop_name: string | null;
+    }>(
+      `SELECT TOP 1
+         u.id,
+         u.email,
+         u.role,
+         v.id AS vendor_id,
+         v.shop_name
+       FROM users u
+       LEFT JOIN vendors v ON v.user_id = u.id
+       WHERE u.id = $1`,
+      [userId],
+    );
+
+    const record = user.rows[0];
+    if (!record) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (record.role === 'admin') {
+      throw new BadRequestException('Admin accounts cannot be deleted here.');
+    }
+
+    if (record.vendor_id) {
+      return this.deleteVendorAccount({
+        adminUserId,
+        vendorId: record.vendor_id,
+        expectedUserId: userId,
+      });
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      await this.deleteCustomerOrderHistory(userId, client);
+      await client.query(
+        'UPDATE vendor_team_invites SET user_id = NULL WHERE user_id = $1',
+        [userId],
+      );
+      await client.query(
+        'DELETE FROM product_reviews WHERE customer_id = $1',
+        [userId],
+      );
+      await client.query(
+        'DELETE FROM vendor_reviews WHERE customer_id = $1',
+        [userId],
+      );
+      await client.query(
+        'DELETE FROM payment_checkout_sessions WHERE customer_id = $1',
+        [userId],
+      );
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+
+      await this.recordAdminActivity(
+        adminUserId,
+        {
+          actionType: 'user_deleted',
+          entityType: 'user',
+          entityId: userId,
+          entityLabel: record.email,
+          description: `Deleted customer account ${record.email}.`,
+          metadata: { email: record.email },
+        },
+        client,
+      );
+    });
+
+    return { message: 'Customer account deleted.' };
+  }
+
+  async deleteVendor(
+    adminUserId: string,
+    vendorId: string,
+    dto: ConfirmAdminPasswordDto,
+  ) {
+    await this.assertAdminPassword(adminUserId, dto.adminPassword);
+
+    return this.deleteVendorAccount({ adminUserId, vendorId });
+  }
+
+  private async assertAdminPassword(adminUserId: string, adminPassword: string) {
+    if (!adminPassword?.trim()) {
+      throw new UnauthorizedException('Admin password is required.');
+    }
+
+    const admin = await this.databaseService.query<{
+      id: string;
+      password_hash: string;
+      role: string;
+      is_active: boolean;
+    }>(
+      `SELECT TOP 1 id, password_hash, role, is_active
+       FROM users
+       WHERE id = $1`,
+      [adminUserId],
+    );
+
+    const record = admin.rows[0];
+    if (
+      !record ||
+      record.role !== 'admin' ||
+      !record.is_active ||
+      !(await bcrypt.compare(adminPassword, record.password_hash))
+    ) {
+      throw new UnauthorizedException('Admin password is incorrect.');
+    }
+  }
+
+  private async deleteVendorAccount(input: {
+    adminUserId: string;
+    vendorId: string;
+    expectedUserId?: string;
+  }) {
+    const vendor = await this.databaseService.query<{
+      id: string;
+      shop_name: string;
+      user_id: string;
+      user_email: string;
+      logo_url: string | null;
+      banner_url: string | null;
+    }>(
+      `SELECT TOP 1
+         v.id,
+         v.shop_name,
+         v.user_id,
+         u.email AS user_email,
+         v.logo_url,
+         v.banner_url
+       FROM vendors v
+       INNER JOIN users u ON u.id = v.user_id
+       WHERE v.id = $1`,
+      [input.vendorId],
+    );
+
+    const record = vendor.rows[0];
+    if (!record || (input.expectedUserId && record.user_id !== input.expectedUserId)) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const productMedia = await this.databaseService.query<{ image_url: string }>(
+      `SELECT pi.image_url
+       FROM product_images pi
+       INNER JOIN products p ON p.id = pi.product_id
+       WHERE p.vendor_id = $1`,
+      [input.vendorId],
+    );
+    const mediaToDelete = [
+      record.logo_url,
+      record.banner_url,
+      ...productMedia.rows.map((row) => row.image_url),
+    ].filter((value): value is string => Boolean(value));
+
+    await this.databaseService.withTransaction(async (client) => {
+      await this.deleteVendorOrderHistory(input.vendorId, client);
+      await this.deleteCustomerOrderHistory(record.user_id, client);
+      await client.query(
+        `DELETE ci
+         FROM cart_items ci
+         INNER JOIN products p ON p.id = ci.product_id
+         WHERE p.vendor_id = $1`,
+        [input.vendorId],
+      );
+      await client.query(
+        `DELETE cf
+         FROM customer_favorites cf
+         INNER JOIN products p ON p.id = cf.product_id
+         WHERE p.vendor_id = $1`,
+        [input.vendorId],
+      );
+      await client.query(
+        `DELETE pr
+         FROM product_reviews pr
+         INNER JOIN products p ON p.id = pr.product_id
+         WHERE p.vendor_id = $1`,
+        [input.vendorId],
+      );
+      await client.query(
+        `DELETE h
+         FROM homepage_hero_slides h
+         INNER JOIN products p ON p.id = h.product_id
+         WHERE p.vendor_id = $1`,
+        [input.vendorId],
+      );
+      await client.query(
+        'DELETE FROM payment_checkout_sessions WHERE customer_id = $1',
+        [record.user_id],
+      );
+      await client.query(
+        'UPDATE vendor_team_invites SET user_id = NULL WHERE user_id = $1',
+        [record.user_id],
+      );
+      await client.query(
+        'DELETE FROM product_reviews WHERE customer_id = $1',
+        [record.user_id],
+      );
+      await client.query(
+        'DELETE FROM vendor_reviews WHERE customer_id = $1',
+        [record.user_id],
+      );
+      await client.query('DELETE FROM users WHERE id = $1', [record.user_id]);
+
+      await this.recordAdminActivity(
+        input.adminUserId,
+        {
+          actionType: 'vendor_deleted',
+          entityType: 'vendor',
+          entityId: input.vendorId,
+          entityLabel: record.shop_name,
+          description: `Deleted vendor ${record.shop_name} and owner ${record.user_email}.`,
+          metadata: {
+            vendorId: input.vendorId,
+            ownerUserId: record.user_id,
+            ownerEmail: record.user_email,
+          },
+        },
+        client,
+      );
+    });
+
+    mediaToDelete.forEach((mediaUrl) => this.deleteStoredMedia(mediaUrl));
+
+    return { message: 'Vendor and linked owner account deleted.' };
+  }
+
+  private async deleteCustomerOrderHistory(
+    userId: string,
+    runner: QueryRunner,
+  ) {
+    await runner.query(
+      `DELETE FROM customer_return_requests
+       WHERE customer_id = $1
+          OR order_id IN (
+            SELECT id FROM orders
+            WHERE customer_id = $1 OR guest_claimed_by_user_id = $1
+          )`,
+      [userId],
+    );
+    await runner.query(
+      `DELETE FROM customer_support_tickets
+       WHERE customer_id = $1
+          OR order_id IN (
+            SELECT id FROM orders
+            WHERE customer_id = $1 OR guest_claimed_by_user_id = $1
+          )`,
+      [userId],
+    );
+    await runner.query(
+      `DELETE FROM payment_checkout_sessions
+       WHERE customer_id = $1
+          OR order_id IN (
+            SELECT id FROM orders
+            WHERE customer_id = $1 OR guest_claimed_by_user_id = $1
+          )`,
+      [userId],
+    );
+    await runner.query(
+      `DELETE FROM orders
+       WHERE customer_id = $1 OR guest_claimed_by_user_id = $1`,
+      [userId],
+    );
+  }
+
+  private async deleteVendorOrderHistory(
+    vendorId: string,
+    runner: QueryRunner,
+  ) {
+    await runner.query(
+      `DELETE FROM customer_return_requests
+       WHERE order_id IN (
+          SELECT DISTINCT order_id FROM order_items WHERE vendor_id = $1
+       )
+          OR order_item_id IN (
+            SELECT id FROM order_items WHERE vendor_id = $1
+          )`,
+      [vendorId],
+    );
+    await runner.query(
+      `DELETE FROM customer_support_tickets
+       WHERE order_id IN (
+          SELECT DISTINCT order_id FROM order_items WHERE vendor_id = $1
+       )`,
+      [vendorId],
+    );
+    await runner.query(
+      `DELETE FROM payment_checkout_sessions
+       WHERE order_id IN (
+          SELECT DISTINCT order_id FROM order_items WHERE vendor_id = $1
+       )`,
+      [vendorId],
+    );
+    await runner.query(
+      `DELETE FROM orders
+       WHERE id IN (
+          SELECT DISTINCT order_id FROM order_items WHERE vendor_id = $1
+       )`,
+      [vendorId],
+    );
   }
 
   async updateVendorPlatformFee(
@@ -3543,6 +3936,46 @@ export class AdminService {
     return deleted;
   }
 
+  async setProductBlock(
+    adminUserId: string,
+    productId: string,
+    isBlocked: boolean,
+    reason?: string | null,
+  ) {
+    const product = await this.databaseService.query<{
+      id: string;
+      title: string;
+      vendor_id: string;
+    }>('SELECT TOP 1 id, title, vendor_id FROM products WHERE id = $1', [
+      productId,
+    ]);
+
+    const record = product.rows[0];
+    if (!record) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const response = await this.productsService.adminSetProductBlock(
+      productId,
+      isBlocked,
+      reason,
+    );
+
+    await this.recordAdminActivity(adminUserId, {
+      actionType: isBlocked ? 'product_blocked' : 'product_unblocked',
+      entityType: 'product',
+      entityId: productId,
+      entityLabel: record.title,
+      description: `${isBlocked ? 'Blocked' : 'Unblocked'} product ${record.title}.`,
+      metadata: {
+        vendorId: record.vendor_id,
+        reason: isBlocked ? reason?.trim() || null : null,
+      },
+    });
+
+    return response;
+  }
+
   async updateVendorActivation(
     adminUserId: string,
     vendorId: string,
@@ -3612,6 +4045,88 @@ export class AdminService {
     });
 
     return { message: 'Vendor status updated' };
+  }
+
+  async updateVendorProductVisibility(
+    adminUserId: string,
+    vendorId: string,
+    isListed: boolean,
+  ) {
+    const vendorLookup = await this.databaseService.query<{
+      id: string;
+      shop_name: string;
+    }>(
+      `SELECT TOP 1 id, shop_name
+       FROM vendors
+       WHERE id = $1`,
+      [vendorId],
+    );
+
+    const vendor = vendorLookup.rows[0];
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const before = await this.databaseService.query<{
+      total_count: number;
+      listed_count: number;
+      hidden_count: number;
+    }>(
+      `SELECT
+         COUNT(*) AS total_count,
+         SUM(CASE WHEN is_listed = 1 THEN 1 ELSE 0 END) AS listed_count,
+         SUM(CASE WHEN is_listed = 0 THEN 1 ELSE 0 END) AS hidden_count
+       FROM products
+       WHERE vendor_id = $1`,
+      [vendorId],
+    );
+
+    await this.databaseService.query(
+      `UPDATE products
+       SET is_listed = $1,
+           updated_at = SYSDATETIME()
+       WHERE vendor_id = $2`,
+      [isListed, vendorId],
+    );
+
+    const after = await this.databaseService.query<{
+      total_count: number;
+      listed_count: number;
+      hidden_count: number;
+    }>(
+      `SELECT
+         COUNT(*) AS total_count,
+         SUM(CASE WHEN is_listed = 1 THEN 1 ELSE 0 END) AS listed_count,
+         SUM(CASE WHEN is_listed = 0 THEN 1 ELSE 0 END) AS hidden_count
+       FROM products
+       WHERE vendor_id = $1`,
+      [vendorId],
+    );
+
+    const beforeRow = before.rows[0];
+    const afterRow = after.rows[0];
+
+    await this.recordAdminActivity(adminUserId, {
+      actionType: 'vendor_products_visibility_updated',
+      entityType: 'vendor',
+      entityId: vendorId,
+      entityLabel: vendor.shop_name,
+      description: `${isListed ? 'Showed' : 'Hid'} products for vendor ${vendor.shop_name}.`,
+      metadata: {
+        isListed,
+        before: beforeRow,
+        after: afterRow,
+      },
+    });
+
+    return {
+      message: isListed
+        ? 'Vendor products are now visible.'
+        : 'Vendor products are now hidden.',
+      totalProducts: Number(afterRow?.total_count ?? 0),
+      listedProducts: Number(afterRow?.listed_count ?? 0),
+      hiddenProducts: Number(afterRow?.hidden_count ?? 0),
+    };
   }
 
   async verifyVendorManually(adminUserId: string, vendorId: string) {

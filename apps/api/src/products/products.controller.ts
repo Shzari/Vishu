@@ -90,6 +90,12 @@ export class ProductsController {
     return this.productsService.getPublicVendorById(id);
   }
 
+  @Public()
+  @Get('catalog/brands')
+  getPublicCatalogBrands() {
+    return this.productsService.listPublicCatalogBrands();
+  }
+
   @Roles('customer')
   @Get('vendors/:id/review-status')
   getCustomerVendorReviewStatus(

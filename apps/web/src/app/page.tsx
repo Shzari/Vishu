@@ -709,7 +709,6 @@ export default function HomePage() {
           mode={browseMode}
           currentDepartment={department}
           currentCategory={category}
-          vendors={vendors}
         />
 
         <section className="storefront-hero-stage storefront-promotion-stage">
@@ -977,7 +976,6 @@ export default function HomePage() {
                     )}
                   </div>
                   <strong>{vendor.shopName}</strong>
-                  <span>{vendor.productCount} products</span>
                   <div className="vendor-public-categories">
                     {vendor.categories.slice(0, 2).map((entry) => (
                       <em key={`${vendor.id}-${entry}`}>{formatCatalogLabel(entry)}</em>

@@ -216,10 +216,7 @@ export class AuthService {
     await this.ensureEmailAvailable(email);
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const token = generateOpaqueToken();
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
-
-    const vendorUser = await this.databaseService.withTransaction(
+    const registration = await this.databaseService.withTransaction(
       async (client) => {
         const createdUser = await client.query<{
           id: string;
@@ -228,42 +225,85 @@ export class AuthService {
         }>(
           `INSERT INTO users (email, first_name, last_name, full_name, phone_number, password_hash, role, email_verified_at)
          OUTPUT INSERTED.id, INSERTED.email, INSERTED.role
-         VALUES ($1, $2, $3, $4, $5, $6, 'vendor', NULL)`,
+         VALUES ($1, $2, $3, $4, $5, $6, 'vendor', SYSDATETIME())`,
           [email, firstName, lastName, fullName, phoneNumber, passwordHash],
         );
 
-        await client.query(
+        const createdVendor = await client.query<{
+          id: string;
+          shop_name: string;
+        }>(
           `INSERT INTO vendors (user_id, shop_name, is_active, is_verified)
-         VALUES ($1, $2, 0, 0)`,
+         OUTPUT INSERTED.id, INSERTED.shop_name
+         VALUES ($1, $2, 0, 1)`,
           [createdUser.rows[0].id, shopName],
         );
 
         await client.query(
           `INSERT INTO vendor_team_members (vendor_id, user_id, role, status, invited_by_user_id, joined_at)
-           SELECT TOP 1 id, $1, 'shop_holder', 'active', $1, SYSDATETIME()
-           FROM vendors
-           WHERE user_id = $1`,
-          [createdUser.rows[0].id],
+           VALUES ($1, $2, 'shop_holder', 'active', $2, SYSDATETIME())`,
+          [createdVendor.rows[0].id, createdUser.rows[0].id],
         );
 
-        await client.query(
-          `INSERT INTO email_verifications (user_id, token, expires_at)
-         VALUES ($1, $2, $3)`,
-          [createdUser.rows[0].id, hashOpaqueToken(token), expiresAt],
+        const admins = await client.query<{
+          id: string;
+          email: string;
+        }>(
+          `SELECT id, email
+           FROM users
+           WHERE role = 'admin'
+             AND is_active = 1`,
         );
 
-        return createdUser.rows[0];
+        for (const admin of admins.rows) {
+          await client.query(
+            `INSERT INTO admin_notifications (
+               admin_user_id,
+               vendor_id,
+               notification_type,
+               title,
+               body,
+               action_url
+             )
+             VALUES ($1, $2, 'vendor_pending_approval', $3, $4, $5)`,
+            [
+              admin.id,
+              createdVendor.rows[0].id,
+              'Vendor waiting for approval',
+              `${createdVendor.rows[0].shop_name} registered and is waiting for activation.`,
+              `/admin/vendors/${createdVendor.rows[0].id}`,
+            ],
+          );
+        }
+
+        return {
+          user: createdUser.rows[0],
+          vendor: createdVendor.rows[0],
+          adminEmails: admins.rows.map((admin) => admin.email),
+        };
       },
     );
 
-    this.queueMailTask(
-      () => this.mailService.sendVerificationEmail(vendorUser.email, token),
-      `vendor verification email for ${vendorUser.email}`,
-    );
+    try {
+      await this.mailService.sendAdminVendorApprovalAlert(
+        registration.adminEmails,
+        {
+          shopName: registration.vendor.shop_name,
+          vendorEmail: registration.user.email,
+          reviewUrl: `${this.configService.get<string>('APP_BASE_URL', 'http://localhost:3001')}/admin/vendors/${registration.vendor.id}`,
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Vendor ${registration.vendor.id} registered, but admin approval alert email could not be sent: ${
+          error instanceof Error ? error.message : 'Unknown mail error'
+        }`,
+      );
+    }
 
     return {
       message:
-        'Vendor account created. Verify your email and wait for admin approval.',
+        'Vendor account created. You can sign in and prepare products while waiting for admin activation.',
     };
   }
 

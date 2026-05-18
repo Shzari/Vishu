@@ -44,6 +44,20 @@ type ProductCreateResponse = {
   product: Product;
 };
 
+function formatVendorSizeTypeLabel(name: string) {
+  const normalized = name.trim().toLowerCase();
+  if (normalized === "babies" || normalized === "baby") return "Bebe";
+  if (normalized === "kids") return "Fëmijë";
+  if (normalized === "eu") return "Të rritur";
+  if (normalized === "shoe eu") return "Shoes";
+  return name;
+}
+
+function isVisibleVendorSizeType(name?: string | null) {
+  const normalized = name?.trim().toLowerCase() ?? "";
+  return normalized !== "clothing" && normalized !== "apparel";
+}
+
 export function VendorProductCreatePage() {
   const router = useRouter();
   const { token, loading } = useAuth();
@@ -242,6 +256,11 @@ export function VendorProductCreatePage() {
   );
 
   const resolvedSubcategory = selectedCategory?.subcategories[0] ?? null;
+
+  const visibleSizeTypes = useMemo(
+    () => catalogOptions?.sizeTypes.filter((sizeType) => isVisibleVendorSizeType(sizeType.name)) ?? [],
+    [catalogOptions],
+  );
 
   const selectedSizeType = useMemo(
     () => catalogOptions?.sizeTypes.find((sizeType) => sizeType.id === selectedSizeTypeId) ?? null,
@@ -608,12 +627,12 @@ export function VendorProductCreatePage() {
                       setSelectedSizeTypeId(event.target.value);
                       setSizeStocks({});
                     }}
-                    disabled={!catalogOptions?.sizeTypes.length}
+                    disabled={!visibleSizeTypes.length}
                   >
                     <option value="">No size variants</option>
-                    {catalogOptions?.sizeTypes.map((sizeType) => (
+                    {visibleSizeTypes.map((sizeType) => (
                       <option key={sizeType.id} value={sizeType.id}>
-                        {sizeType.name}
+                        {formatVendorSizeTypeLabel(sizeType.name)}
                       </option>
                     ))}
                   </select>

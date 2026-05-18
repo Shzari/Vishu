@@ -6,8 +6,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { algoliasearch } from 'algoliasearch';
-import { existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { join } from 'path';
+import convertHeic = require('heic-convert');
 import { AuthenticatedUser } from '../common/types';
 import {
   assertStoredImageFileMatchesMimeType,
@@ -134,6 +142,7 @@ interface ProductRow {
   price: number | string;
   stock: number;
   is_listed?: boolean;
+  admin_status?: string | null;
   department: string;
   category: string;
   color: string | null;
@@ -960,6 +969,20 @@ export class ProductsService {
     };
   }
 
+  async listPublicCatalogBrands() {
+    const result = await this.databaseService.query<{
+      id: string;
+      name: string;
+    }>(
+      `SELECT id, name
+       FROM brands
+       WHERE is_active = 1
+       ORDER BY sort_order ASC, name ASC`,
+    );
+
+    return result.rows.map((row) => ({ id: row.id, name: row.name }));
+  }
+
   async getVendorCatalogRequests(user: AuthenticatedUser) {
     const vendor = await this.getVendorForUser(user.sub);
 
@@ -1222,7 +1245,7 @@ export class ProductsService {
             normalizedDto.primaryUploadIndex,
           );
           for (const [index, file] of orderedFiles.entries()) {
-            const imageUrl = this.storeProductImage(
+            const imageUrl = await this.storeProductImage(
               vendor,
               selection.category,
               file,
@@ -1463,12 +1486,43 @@ export class ProductsService {
         }
 
         let primaryUploadedImageUrl: string | null = null;
+        const removedExistingImageUrls =
+          normalizedDto.replaceImages === true
+            ? []
+            : normalizedDto.removedExistingImageUrls ?? [];
+
+        let currentRemainingImageCount = currentImageRows.rows.length;
+
+        if (removedExistingImageUrls.length) {
+          const currentImageUrls = new Set(
+            currentImageRows.rows.map((row) => row.image_url),
+          );
+          const removableImageUrls = removedExistingImageUrls.filter((imageUrl) =>
+            currentImageUrls.has(imageUrl),
+          );
+          currentRemainingImageCount =
+            currentImageRows.rows.length - removableImageUrls.length;
+
+          if (currentRemainingImageCount + files.length === 0) {
+            throw new BadRequestException(
+              'Keep at least one product image or upload a replacement',
+            );
+          }
+
+          for (const imageUrl of removableImageUrls) {
+            await client.query(
+              'DELETE FROM product_images WHERE product_id = $1 AND image_url = $2',
+              [productId, imageUrl],
+            );
+            this.deleteStoredImage(imageUrl);
+          }
+        }
 
         if (files.length) {
           const shouldReplace = normalizedDto.replaceImages === true;
           const nextImageCount = shouldReplace
             ? files.length
-            : currentImageRows.rows.length + files.length;
+            : currentRemainingImageCount + files.length;
 
           this.assertImageCount(nextImageCount);
 
@@ -1484,7 +1538,7 @@ export class ProductsService {
 
           const baseSortOrder = shouldReplace
             ? 0
-            : currentImageRows.rows.length;
+            : currentRemainingImageCount;
           const category =
             selection?.category ??
             (await this.getProductCategory(client, productId));
@@ -1494,7 +1548,7 @@ export class ProductsService {
             normalizedDto.primaryUploadIndex,
           );
           for (const [index, file] of orderedFiles.entries()) {
-            const imageUrl = this.storeProductImage(vendor, category, file);
+            const imageUrl = await this.storeProductImage(vendor, category, file);
             if (index === 0 && normalizedDto.primaryUploadIndex !== undefined) {
               primaryUploadedImageUrl = imageUrl;
             }
@@ -1546,6 +1600,16 @@ export class ProductsService {
     this.assertVendorVerifiedForCatalog(vendor);
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
+    const product = await this.databaseService.query<{
+      admin_status: string | null;
+    }>('SELECT TOP 1 admin_status FROM products WHERE id = $1', [productId]);
+
+    if (product.rows[0]?.admin_status === 'blocked' && isListed) {
+      throw new ForbiddenException(
+        'This product is blocked by admin review and cannot be listed.',
+      );
+    }
+
     await this.databaseService.query(
       `UPDATE products
        SET is_listed = $1,
@@ -1556,6 +1620,43 @@ export class ProductsService {
 
     await this.syncProductToSearchIndexSafely(productId);
     return this.getVendorProductById(productId, vendor.id);
+  }
+
+  async adminSetProductBlock(
+    productId: string,
+    isBlocked: boolean,
+    reason?: string | null,
+  ) {
+    const existing = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM products WHERE id = $1',
+      [productId],
+    );
+
+    if (!existing.rows[0]) {
+      throw new NotFoundException('Product not found');
+    }
+
+    await this.databaseService.query(
+      `UPDATE products
+       SET admin_status = $1,
+           admin_block_reason = $2,
+           admin_blocked_at = CASE WHEN $3 = 1 THEN SYSDATETIME() ELSE NULL END,
+           is_listed = CASE WHEN $3 = 1 THEN 0 ELSE is_listed END,
+           updated_at = SYSDATETIME()
+       WHERE id = $4`,
+      [
+        isBlocked ? 'blocked' : 'approved',
+        isBlocked ? reason?.trim() || null : null,
+        isBlocked,
+        productId,
+      ],
+    );
+
+    await this.syncProductToSearchIndexSafely(productId);
+
+    return {
+      message: isBlocked ? 'Product blocked.' : 'Product unblocked.',
+    };
   }
 
   async bulkUpdateStock(user: AuthenticatedUser, dto: ProductBulkStockDto) {
@@ -3048,7 +3149,7 @@ export class ProductsService {
     }
   }
 
-  private storeProductImage(
+  private async storeProductImage(
     vendor: { id: string; shop_name: string },
     category: string,
     file: UploadedFile,
@@ -3067,7 +3168,12 @@ export class ProductsService {
       mkdirSync(targetDir, { recursive: true });
     }
 
-    const extension = getSafeImageExtensionForMimeType(file.mimetype);
+    const normalizedMimeType = file.mimetype.trim().toLowerCase();
+    const shouldConvertToJpeg =
+      normalizedMimeType === 'image/heic' || normalizedMimeType === 'image/heif';
+    const extension = shouldConvertToJpeg
+      ? '.jpg'
+      : getSafeImageExtensionForMimeType(file.mimetype);
     const fileName = `${Date.now()}-${Math.round(Math.random() * 1_000_000)}${extension}`;
     const targetPath = join(targetDir, fileName);
 
@@ -3076,7 +3182,31 @@ export class ProductsService {
     }
 
     assertStoredImageFileMatchesMimeType(file.path, file.mimetype);
-    renameSync(file.path, targetPath);
+    if (shouldConvertToJpeg) {
+      try {
+        const output = await convertHeic({
+          buffer: readFileSync(file.path),
+          format: 'JPEG',
+          quality: 0.9,
+        });
+        writeFileSync(
+          targetPath,
+          Buffer.isBuffer(output)
+            ? output
+            : Buffer.from(new Uint8Array(output)),
+        );
+      } catch {
+        throw new BadRequestException(
+          'HEIC/HEIF image could not be converted for product display',
+        );
+      } finally {
+        if (existsSync(file.path)) {
+          unlinkSync(file.path);
+        }
+      }
+    } else {
+      renameSync(file.path, targetPath);
+    }
     return `/media/vendors/${safeShop}-${vendor.id}/${safeCategory}/${fileName}`;
   }
 
@@ -3166,6 +3296,16 @@ export class ProductsService {
       replaceImages: dto.replaceImages,
       primaryUploadIndex: dto.primaryUploadIndex,
       primaryExistingImageUrl: dto.primaryExistingImageUrl?.trim(),
+      removedExistingImageUrls:
+        dto.removedExistingImageUrls === undefined
+          ? undefined
+          : [
+              ...new Set(
+                dto.removedExistingImageUrls
+                  .map((entry) => entry.trim())
+                  .filter(Boolean),
+              ),
+            ],
     };
   }
 
@@ -3784,7 +3924,8 @@ export class ProductsService {
   private publicVendorVisibilityClause(vendorAlias: string) {
     return `${vendorAlias}.is_active = 1
       AND ${vendorAlias}.is_verified = 1
-      AND ${vendorAlias}.admin_status = 'approved'`;
+      AND ${vendorAlias}.admin_status = 'approved'
+      AND ${vendorAlias}.is_test = 0`;
   }
 
   private publicProductVisibilityClause(
@@ -3792,6 +3933,7 @@ export class ProductsService {
     vendorAlias: string,
   ) {
     return `${productAlias}.is_listed = 1
+      AND ${productAlias}.admin_status = 'approved'
       AND ${this.publicVendorVisibilityClause(vendorAlias)}`;
   }
 

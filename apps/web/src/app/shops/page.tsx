@@ -103,7 +103,6 @@ export default function ShopsPage() {
             <div className="shop-card-body">
               <div className="shop-card-title-row">
                 <strong>{vendor.shopName}</strong>
-                <span>{vendor.productCount} items</span>
               </div>
               <RatingStars
                 value={vendor.ratingSummary.average}

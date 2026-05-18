@@ -9,6 +9,7 @@ import {
   formatCatalogLabel,
   formatProductAttributeLabel,
   getCatalogDepartmentDisplayLabel,
+  isAccessoryProduct,
   isCatalogDepartmentVisible,
 } from "@/lib/catalog";
 import { FavoriteStarButton } from "@/components/favorite-star-button";
@@ -293,6 +294,7 @@ export default function ProductDetailPage() {
   const activeReviewLockedText = isShopReviewModal ? shopReviewSupportText : productReviewSupportText;
   const selectedSize = product.sizeVariants.find((entry) => entry.id === selectedSizeId) ?? null;
   const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
+  const productIsAccessory = isAccessoryProduct(product);
   const displaySizeOptions = product.sizeOptions?.length ? product.sizeOptions : product.sizeVariants.map((variant) => ({
     ...variant,
     isAvailable: true,
@@ -305,12 +307,12 @@ export default function ProductDetailPage() {
       {
         productId: product.id,
         vendorId: product.vendor?.id ?? null,
-        sizeId: selectedSize?.id ?? null,
+        sizeId: productIsAccessory ? null : selectedSize?.id ?? null,
         title: product.title,
         price: product.price,
         image: product.images[0],
         color: product.color ?? product.colors[0]?.name ?? null,
-        size: selectedSize?.label ?? product.size ?? null,
+        size: productIsAccessory ? null : selectedSize?.label ?? product.size ?? null,
         quantity: 1,
         stock: selectedSize?.stock ?? product.stock,
       },
@@ -370,7 +372,7 @@ export default function ProductDetailPage() {
           <div className="product-stock detail-stock">
             {product.stock > 0 ? `In stock: ${product.stock}` : "Currently unavailable"}
           </div>
-          {displaySizeOptions.length > 0 ? (
+          {!productIsAccessory && displaySizeOptions.length > 0 ? (
             <div className="product-size-picker">
               <span>Size</span>
               <div className="product-size-options">
@@ -431,7 +433,7 @@ export default function ProductDetailPage() {
               type="button"
               className="button"
               onClick={addSelectedProductToCart}
-              disabled={product.stock === 0 || isOwnVendorProduct || (product.sizeVariants.length > 0 && !selectedSize)}
+              disabled={product.stock === 0 || isOwnVendorProduct || (!productIsAccessory && product.sizeVariants.length > 0 && !selectedSize)}
             >
               {product.stock === 0 ? "Sold Out" : isOwnVendorProduct ? "Your product" : "Add to Cart"}
             </button>
@@ -473,7 +475,7 @@ export default function ProductDetailPage() {
                 <strong>{formatProductAttributeLabel(product.color)}</strong>
               </div>
             ) : null}
-            {product.size ? (
+            {!productIsAccessory && product.size ? (
               <div className="meta-row">
                 <span>Size</span>
                 <strong>{formatProductAttributeLabel(product.size)}</strong>

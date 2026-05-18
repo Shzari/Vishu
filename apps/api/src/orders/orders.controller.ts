@@ -9,8 +9,11 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
+import { RateLimit } from '../common/decorators/rate-limit.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RateLimitGuard } from '../common/guards/rate-limit.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types';
 import {
@@ -31,6 +34,36 @@ import {
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
+  private firstHeaderValue(value: string | string[] | undefined) {
+    if (Array.isArray(value)) {
+      return value[0] ?? null;
+    }
+
+    return value ?? null;
+  }
+
+  private getClientIp(req: Request) {
+    const forwardedFor = this.firstHeaderValue(req.headers['x-forwarded-for']);
+    if (forwardedFor?.trim()) {
+      return forwardedFor.split(',')[0]?.trim() || null;
+    }
+
+    return req.socket.remoteAddress || req.ip || null;
+  }
+
+  private buildOrderSource(
+    req: Request,
+    checkoutSource: 'authenticated_checkout' | 'guest_checkout',
+  ) {
+    return {
+      checkoutSource,
+      ipAddress: this.getClientIp(req),
+      userAgent: this.firstHeaderValue(req.headers['user-agent']),
+      origin: this.firstHeaderValue(req.headers.origin),
+      referer: this.firstHeaderValue(req.headers.referer),
+    };
+  }
+
   @Public()
   @Get('checkout/payment-settings')
   getCheckoutPaymentSettings() {
@@ -39,11 +72,17 @@ export class OrdersController {
 
   @Roles('customer', 'vendor')
   @Post('orders')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ max: 5, windowMs: 1000 * 60 * 15 })
   createOrder(
-    @Req() req: { user: AuthenticatedUser },
+    @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: CreateOrderDto,
   ) {
-    return this.ordersService.createOrder(req.user.sub, dto);
+    return this.ordersService.createOrder(
+      req.user.sub,
+      dto,
+      this.buildOrderSource(req, 'authenticated_checkout'),
+    );
   }
 
   @Roles('customer', 'vendor')
@@ -69,8 +108,13 @@ export class OrdersController {
 
   @Public()
   @Post('orders/guest')
-  createGuestOrder(@Body() dto: CreateOrderDto) {
-    return this.ordersService.createGuestOrder(dto);
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ max: 3, windowMs: 1000 * 60 * 15 })
+  createGuestOrder(@Req() req: Request, @Body() dto: CreateOrderDto) {
+    return this.ordersService.createGuestOrder(
+      dto,
+      this.buildOrderSource(req, 'guest_checkout'),
+    );
   }
 
   @Public()
@@ -175,5 +219,15 @@ export class OrdersController {
       req.user.sub,
       id,
     );
+  }
+
+  @Roles('vendor')
+  @Patch('vendor/orders/:id/cancel')
+  cancelVendorOrder(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.ordersService.cancelVendorOrder(req.user.sub, id, body.reason);
   }
 }

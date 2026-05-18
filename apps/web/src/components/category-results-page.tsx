@@ -10,21 +10,23 @@ import { assetUrl, apiRequest, formatCurrency } from "@/lib/api";
 import {
   formatCatalogLabel,
   formatProductAttributeLabel,
-  getCatalogBrandFilterOptions,
   getCatalogDepartmentDisplayLabel,
   getCatalogSizeFilterOptions,
+  isAccessoryProduct,
 } from "@/lib/catalog";
 import {
   buildStorefrontCategoryHref,
+  formatStorefrontNavCategoryLabel,
   getStorefrontCategoryHeading,
   getStorefrontDepartmentTitle,
   getStorefrontNavCategories,
 } from "@/lib/storefront-nav";
 import { ProductMedia } from "@/components/product-media";
-import type { Product, PublicVendorSummary } from "@/lib/types";
+import type { Product } from "@/lib/types";
 
 type CategoryResultsMode = "category" | "new";
 type SortOption = "relevance" | "newest" | "price-low" | "price-high" | "title" | "vendor";
+type CatalogBrandOption = { id: string; name: string };
 
 const NEW_RESULTS_LIMIT = 48;
 const NEW_ARRIVAL_DAYS = 30;
@@ -80,6 +82,12 @@ function normalizeSizeOption(value: string) {
   return value.trim().toLowerCase();
 }
 
+function getProductCategoryKeys(product: Product) {
+  return [product.category, product.categoryRef?.name, product.subcategory?.name]
+    .map((value) => value?.trim().toLowerCase())
+    .filter((value): value is string => Boolean(value));
+}
+
 export function CategoryResultsPage({
   mode,
   department,
@@ -95,7 +103,7 @@ export function CategoryResultsPage({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
-  const [vendors, setVendors] = useState<PublicVendorSummary[]>([]);
+  const [catalogBrands, setCatalogBrands] = useState<CatalogBrandOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -136,9 +144,9 @@ export function CategoryResultsPage({
   useEffect(() => {
     async function loadProducts() {
       try {
-        const [productsResult, vendorsResult] = await Promise.allSettled([
+        const [productsResult, brandsResult] = await Promise.allSettled([
           apiRequest<Product[]>("/products"),
-          apiRequest<PublicVendorSummary[]>("/products/vendors"),
+          apiRequest<CatalogBrandOption[]>("/products/catalog/brands"),
         ]);
 
         if (productsResult.status !== "fulfilled") {
@@ -147,8 +155,8 @@ export function CategoryResultsPage({
 
         setProducts(productsResult.value);
 
-        if (vendorsResult.status === "fulfilled") {
-          setVendors(vendorsResult.value);
+        if (brandsResult.status === "fulfilled") {
+          setCatalogBrands(brandsResult.value);
         }
       } catch (loadError) {
         setError(
@@ -207,20 +215,32 @@ export function CategoryResultsPage({
         .slice(0, NEW_RESULTS_LIMIT);
     }
 
-    return listedProducts.filter(
-      (product) =>
+    return listedProducts.filter((product) => {
+      if (currentDepartment === "all") {
+        return isDepartmentBrowse
+          ? isAccessoryProduct(product)
+          : getProductCategoryKeys(product).includes(currentCategory);
+      }
+
+      return (
         product.department === currentDepartment &&
-        (isDepartmentBrowse || product.category === currentCategory),
-    );
+        (isDepartmentBrowse || product.category === currentCategory)
+      );
+    });
   }, [currentCategory, currentDepartment, isDepartmentBrowse, mode, products]);
 
   const relatedCategories = useMemo(
     () =>
-      mode === "category" ? getStorefrontNavCategories(currentDepartment) : [],
+      mode === "category"
+        ? getStorefrontNavCategories(
+            currentDepartment === "all" ? "accessories" : currentDepartment,
+          )
+        : [],
     [currentDepartment, mode],
   );
   const showGenderFilter =
     mode === "new" ||
+    currentDepartment === "all" ||
     currentDepartment === "kids" ||
     currentDepartment === "babies";
 
@@ -228,8 +248,8 @@ export function CategoryResultsPage({
     () => {
       const nextOptions = new Map<string, string>();
 
-      getCatalogBrandFilterOptions().forEach((entry) => {
-        nextOptions.set(entry.trim().toLowerCase(), entry);
+      catalogBrands.forEach((entry) => {
+        nextOptions.set(entry.name.trim().toLowerCase(), entry.name);
       });
 
       baseProducts
@@ -246,7 +266,7 @@ export function CategoryResultsPage({
         left.localeCompare(right),
       );
     },
-    [baseProducts],
+    [baseProducts, catalogBrands],
   );
 
   const genderOptions = useMemo(
@@ -522,7 +542,6 @@ export function CategoryResultsPage({
         mode={mode === "new" ? "new" : "catalog"}
         currentDepartment={currentDepartment}
         currentCategory={currentCategory}
-        vendors={vendors}
       />
 
       <div className="category-results-breadcrumb">
@@ -638,7 +657,10 @@ export function CategoryResultsPage({
                       }
                       onClick={() => setShowFilters(false)}
                     >
-                      {formatCatalogLabel(entry)}
+                      {formatStorefrontNavCategoryLabel(
+                        currentDepartment === "all" ? "accessories" : currentDepartment,
+                        entry,
+                      )}
                     </Link>
                   ))}
                 </div>

@@ -210,6 +210,27 @@ export class ProductUpdateDto {
   @IsOptional()
   @IsString()
   primaryExistingImageUrl?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsString({ each: true })
+  removedExistingImageUrls?: string[];
 }
 
 export class ProductListingDto {

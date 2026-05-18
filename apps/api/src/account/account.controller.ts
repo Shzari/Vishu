@@ -33,6 +33,7 @@ import {
   UpdateAccountProfileDto,
   UpdateEmailPreferencesDto,
   UpdatePaymentMethodDto,
+  UpdateVendorSecurityDto,
   VerifyPendingEmailChangeDto,
   UpdateVendorTeamMemberRoleDto,
   UpdateVendorBankDetailsDto,
@@ -252,6 +253,15 @@ export class AccountController {
       files?.logoImage?.[0],
       files?.bannerImage?.[0],
     );
+  }
+
+  @Patch('vendor-security')
+  @Roles('vendor')
+  updateVendorSecurity(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: UpdateVendorSecurityDto,
+  ) {
+    return this.accountService.updateVendorSecurity(req.user.sub, dto);
   }
 
   @Get('vendor-team')

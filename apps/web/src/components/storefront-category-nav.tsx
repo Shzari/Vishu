@@ -1,28 +1,24 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { assetUrl } from "@/lib/api";
 import { formatCatalogLabel } from "@/lib/catalog";
 import {
   STOREFRONT_NAV_GROUPS,
   buildStorefrontCategoryHref,
+  formatStorefrontNavCategoryLabel,
   getStorefrontNavCategories,
   getStorefrontNavGroup,
 } from "@/lib/storefront-nav";
-import type { PublicVendorSummary } from "@/lib/types";
 
 export function StorefrontCategoryNav({
   mode,
   currentDepartment,
   currentCategory,
-  vendors,
 }: {
   mode: "catalog" | "new";
   currentDepartment: string;
   currentCategory: string;
-  vendors: PublicVendorSummary[];
 }) {
   const router = useRouter();
   const [activeNavGroupId, setActiveNavGroupId] = useState<string | null>(null);
@@ -37,13 +33,6 @@ export function StorefrontCategoryNav({
   const activeNavCategories = useMemo(
     () => (activeNavGroup ? getStorefrontNavCategories(activeNavGroup.id) : []),
     [activeNavGroup],
-  );
-  const vendorMenuEntries = useMemo(
-    () =>
-      [...vendors].sort((left, right) =>
-        left.shopName.localeCompare(right.shopName),
-      ),
-    [vendors],
   );
 
   useEffect(() => {
@@ -113,7 +102,10 @@ export function StorefrontCategoryNav({
         {STOREFRONT_NAV_GROUPS.map((group) => {
           const isActive =
             mode === "catalog" &&
-            currentDepartment === group.id;
+            (currentDepartment === group.id ||
+              (group.id === "accessories" &&
+                currentDepartment === "all" &&
+                currentCategory !== "all"));
 
           return (
             <button
@@ -137,7 +129,9 @@ export function StorefrontCategoryNav({
                 }
               }}
               onClick={() =>
-                isMobileNav && group.department
+                isMobileNav &&
+                group.department &&
+                group.id !== "accessories"
                   ? browseDepartment(group.department)
                   : previewNavGroup(group.id)
               }
@@ -146,81 +140,17 @@ export function StorefrontCategoryNav({
             </button>
           );
         })}
-
-        <button
-          type="button"
-          role="tab"
-          aria-selected={false}
-          className="storefront-department-tab"
-          onMouseEnter={() => {
-            if (!isMobileNav) {
-              previewNavGroup("vendors");
-            }
-          }}
-          onFocus={() => {
-            if (!isMobileNav) {
-              previewNavGroup("vendors");
-            }
-          }}
-          onClick={() => {
-            previewNavGroup("vendors");
-          }}
-        >
-          <span>Vendors</span>
-        </button>
       </div>
 
       <div
         className={
-          isNavMenuOpen && (activeNavGroupId === "vendors" || activeNavGroup)
+          isNavMenuOpen && activeNavGroup
             ? "storefront-submenu-panel is-open"
             : "storefront-submenu-panel"
         }
-        aria-hidden={
-          !isNavMenuOpen || (!activeNavGroup && activeNavGroupId !== "vendors")
-        }
+        aria-hidden={!isNavMenuOpen || !activeNavGroup}
       >
-        {activeNavGroupId === "vendors" ? (
-          <div
-            className="storefront-submenu-list storefront-submenu-list-vendors"
-            role="tabpanel"
-            aria-label="Vendor shops"
-          >
-            {vendorMenuEntries.length === 0 ? (
-              <div className="storefront-submenu-note">
-                Public shops will appear here as vendors go live.
-              </div>
-            ) : (
-              vendorMenuEntries.map((vendor) => {
-                const vendorImage = vendor.logoUrl ?? vendor.bannerUrl ?? undefined;
-
-                return (
-                  <Link
-                    key={vendor.id}
-                    href={`/shops/${vendor.id}`}
-                    className="storefront-submenu-link storefront-submenu-link-vendor"
-                    onClick={closeNavGroupPreview}
-                  >
-                    <span
-                      className="storefront-submenu-vendor-image"
-                      style={
-                        vendorImage
-                          ? {
-                              backgroundImage: `url(${assetUrl(vendorImage)})`,
-                            }
-                          : undefined
-                      }
-                      aria-hidden="true"
-                    >
-                      {vendorImage ? null : vendor.shopName.slice(0, 1)}
-                    </span>
-                    <span>{vendor.shopName}</span>
-                  </Link>
-                );
-              })
-            )}
-          </div>
-        ) : activeNavGroup ? (
+        {activeNavGroup ? (
           <div
             className="storefront-submenu-list"
             role="tabpanel"
@@ -258,7 +188,7 @@ export function StorefrontCategoryNav({
                   }
                   disabled={!canBrowse}
                 >
-                  <span>{formatCatalogLabel(entry)}</span>
+                  <span>{formatStorefrontNavCategoryLabel(activeNavGroup.id, entry)}</span>
                   <strong>&gt;</strong>
                 </button>
               );

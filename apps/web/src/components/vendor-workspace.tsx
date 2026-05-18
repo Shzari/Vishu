@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "@/components/providers";
+import { useAuth, useLanguage } from "@/components/providers";
 import { ProductMedia } from "@/components/product-media";
 import { RequireRole } from "@/components/require-role";
 import { StatusBadge } from "@/components/status-badge";
@@ -105,6 +105,20 @@ type EnrichedProduct = Product & {
   isOutOfStock: boolean;
   isLowStock: boolean;
 };
+
+const accessoryTypeLabelsSq = new Map<string, string>([
+  ["wallet", "Kulet"],
+  ["glasses", "Syze"],
+  ["brooch", "Brosh"],
+]);
+
+function formatAccessoryTypeLabel(value: string, language: "en" | "sq") {
+  const label = formatCatalogLabel(value);
+  if (language !== "sq") {
+    return label;
+  }
+  return accessoryTypeLabelsSq.get(label.trim().toLowerCase()) ?? label;
+}
 
 function ProductPhotoUploader({
   inputRef,
@@ -332,9 +346,27 @@ function isShoesCategoryName(name?: string | null) {
   return name?.trim().toLowerCase() === "shoes";
 }
 
+function isAccessoriesCategoryName(name?: string | null) {
+  return name?.trim().toLowerCase() === "accessories";
+}
+
 function isShoeSizeTypeName(name?: string | null) {
   const normalized = name?.trim().toLowerCase() ?? "";
   return normalized.includes("shoe") && normalized.includes("eu");
+}
+
+function getSizeTypeDisplayLabel(name?: string | null) {
+  const normalized = name?.trim().toLowerCase() ?? "";
+  if (normalized === "babies" || normalized === "baby") return "Bebe";
+  if (normalized === "kids") return "Fëmijë";
+  if (normalized === "eu") return "Të rritur";
+  if (normalized === "shoe eu") return "Shoes";
+  return name ?? "";
+}
+
+function isVisibleVendorSizeType(name?: string | null) {
+  const normalized = name?.trim().toLowerCase() ?? "";
+  return normalized !== "clothing" && normalized !== "apparel";
 }
 
 function getNextVendorActions(status: string) {
@@ -371,6 +403,10 @@ function canVendorCancelRequestedOrder(order: VendorOrdersResponse) {
 
 function hasCustomerCancelRequest(order: VendorOrdersResponse) {
   return order.cancelRequest?.status === "requested";
+}
+
+function canVendorCancelOrder(order: VendorOrdersResponse) {
+  return order.status === "pending" && order.cancelRequest?.status !== "requested";
 }
 
 function orderNeedsVendorAttention(order: VendorOrdersResponse) {
@@ -539,6 +575,7 @@ export function VendorWorkspace({
 }) {
   const router = useRouter();
   const { token, profile, currentRole, refreshProfile } = useAuth();
+  const { language } = useLanguage();
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<VendorOrdersResponse[]>([]);
   const [vendorWorkspace, setVendorWorkspace] = useState<VendorProductsResponse["vendor"] | null>(null);
@@ -551,6 +588,7 @@ export function VendorWorkspace({
   const [files, setFiles] = useState<File[]>([]);
   const [primaryImageKey, setPrimaryImageKey] = useState<string>("");
   const [replaceImages, setReplaceImages] = useState(false);
+  const [removedExistingImageUrls, setRemovedExistingImageUrls] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState("");
   const [productSort, setProductSort] = useState("newest");
   const [stockFilter, setStockFilter] = useState(section === "inventory" ? "low_stock" : "all");
@@ -621,10 +659,12 @@ export function VendorWorkspace({
       setActiveAction(editingProductId ? `save-${editingProductId}` : "create-product");
       const resolvedSubcategoryId = selectedFormSubcategory?.id ?? form.subcategoryId;
       const selectedGenderIds = form.genderGroupIds.length ? form.genderGroupIds : [""];
-      const selectedSizeVariants = form.sizeIds.map((sizeId) => ({
-        sizeId,
-        stock: Number(form.sizeStocks[sizeId] || 0),
-      }));
+      const selectedSizeVariants = selectedFormIsAccessories
+        ? []
+        : form.sizeIds.map((sizeId) => ({
+            sizeId,
+            stock: Number(form.sizeStocks[sizeId] || 0),
+          }));
       const resolvedStock = selectedSizeVariants.length
         ? String(
             selectedSizeVariants.reduce(
@@ -654,7 +694,7 @@ export function VendorWorkspace({
         body.append("categoryId", form.categoryId);
         body.append("subcategoryId", resolvedSubcategoryId);
         if (genderGroupId) body.append("genderGroupId", genderGroupId);
-        if (form.sizeTypeId) body.append("sizeTypeId", form.sizeTypeId);
+        if (!selectedFormIsAccessories && form.sizeTypeId) body.append("sizeTypeId", form.sizeTypeId);
         body.append("colorIds", JSON.stringify(form.colorIds));
         body.append(
           "sizeVariants",
@@ -662,6 +702,9 @@ export function VendorWorkspace({
         );
         if (editingProductId) {
           body.append("replaceImages", String(replaceImages));
+          if (!replaceImages && removedExistingImageUrls.length) {
+            body.append("removedExistingImageUrls", JSON.stringify(removedExistingImageUrls));
+          }
         }
         if (primaryImageKey.startsWith("upload:")) {
           body.append("primaryUploadIndex", primaryImageKey.replace("upload:", ""));
@@ -706,14 +749,18 @@ export function VendorWorkspace({
     }
   }
 
-  async function submitCatalogRequest(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitCatalogRequest(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
     if (!token) return;
 
     try {
       setActiveAction("catalog-request");
       setMessage(null);
       setError(null);
+      const requestType = catalogRequestForm.requestType;
+      const accessoryCategory = availableFormCategories.find((entry) =>
+        isAccessoriesCategoryName(entry.name),
+      );
       const response = await apiRequest<{
         message: string;
         requests: VendorCatalogRequest[];
@@ -722,22 +769,20 @@ export function VendorWorkspace({
         {
           method: "POST",
           body: JSON.stringify({
-            requestType: catalogRequestForm.requestType,
+            requestType,
             requestedValue: catalogRequestForm.requestedValue,
             note: catalogRequestForm.note || undefined,
             categoryId:
-              catalogRequestForm.requestType === "subcategory" ||
-              catalogRequestForm.requestType === "category"
-                ? form.categoryId || undefined
-                : undefined,
+              requestType === "subcategory"
+                ? accessoryCategory?.id || selectedFormCategory?.id || form.categoryId || undefined
+                : requestType === "category"
+                  ? form.categoryId || undefined
+                  : undefined,
             subcategoryId:
-              catalogRequestForm.requestType === "subcategory"
-                ? form.subcategoryId || undefined
+              requestType === "subcategory"
+                ? selectedFormSubcategory?.id || form.subcategoryId || undefined
                 : undefined,
-            sizeTypeId:
-              catalogRequestForm.requestType === "size"
-                ? form.sizeTypeId || undefined
-                : undefined,
+            sizeTypeId: requestType === "size" ? form.sizeTypeId || undefined : undefined,
           }),
         },
         token,
@@ -863,6 +908,42 @@ export function VendorWorkspace({
       await loadWorkspace();
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : "Customer cancellation approval failed.");
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function cancelVendorOrder(orderId: string) {
+    if (!token) return;
+
+    const reason = window.prompt(
+      "Why are you cancelling this order? Example: wrong address, unreachable customer, incorrect email.",
+      "",
+    );
+    if (reason === null) {
+      return;
+    }
+
+    if (!window.confirm("Cancel this pending order and restock inventory?")) {
+      return;
+    }
+
+    try {
+      setActiveAction(`order-${orderId}-vendor-cancel`);
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/vendor/orders/${orderId}/cancel`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ reason: reason.trim() || undefined }),
+        },
+        token,
+      );
+      setMessage(response.message);
+      await loadWorkspace();
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Order cancellation failed.");
     } finally {
       setActiveAction(null);
     }
@@ -1181,6 +1262,10 @@ export function VendorWorkspace({
     () => catalogOptions?.sizeTypes ?? [],
     [catalogOptions],
   );
+  const visibleFormSizeTypes = useMemo(
+    () => availableFormSizeTypes.filter((entry) => isVisibleVendorSizeType(entry.name)),
+    [availableFormSizeTypes],
+  );
   const availableFormSizes = useMemo(
     () =>
       availableFormSizeTypes.find((entry) => entry.id === form.sizeTypeId)?.sizes ??
@@ -1205,7 +1290,17 @@ export function VendorWorkspace({
       null,
     [availableFormSizeTypes],
   );
+  const defaultSizeType = useMemo(
+    () =>
+      visibleFormSizeTypes.find(
+        (entry) => entry.name.trim().toLowerCase() === "eu",
+      ) ??
+      visibleFormSizeTypes[0] ??
+      null,
+    [visibleFormSizeTypes],
+  );
   const selectedFormIsShoes = isShoesCategoryName(selectedFormCategory?.name);
+  const selectedFormIsAccessories = isAccessoriesCategoryName(selectedFormCategory?.name);
   const selectedFormSubcategory = useMemo(
     () =>
       availableFormSubcategories.find((entry) => entry.id === form.subcategoryId) ??
@@ -1233,10 +1328,6 @@ export function VendorWorkspace({
       ),
     [form.sizeIds, form.sizeStocks],
   );
-  const recentCatalogRequests = useMemo(
-    () => catalogRequests.slice(0, 6),
-    [catalogRequests],
-  );
   const selectedFilePreviews = useMemo(() => {
     return files.map((file, index) => ({
       key: `upload:${index}`,
@@ -1262,13 +1353,17 @@ export function VendorWorkspace({
     }
 
     const existingPrimaryKey =
-      editingProduct && !replaceImages && editingProduct.images[0]
-        ? `existing:${editingProduct.images[0]}`
+      editingProduct && !replaceImages
+        ? editingProduct.images
+            .filter((image) => !removedExistingImageUrls.includes(image))
+            .map((image) => `existing:${image}`)[0] ?? ""
         : "";
     const uploadPrimaryKey = files.length ? "upload:0" : "";
     const validKeys = new Set([
       ...(editingProduct && !replaceImages
-        ? editingProduct.images.map((image) => `existing:${image}`)
+        ? editingProduct.images
+            .filter((image) => !removedExistingImageUrls.includes(image))
+            .map((image) => `existing:${image}`)
         : []),
       ...files.map((_, index) => `upload:${index}`),
     ]);
@@ -1276,7 +1371,7 @@ export function VendorWorkspace({
     if (!primaryImageKey || !validKeys.has(primaryImageKey)) {
       setPrimaryImageKey(existingPrimaryKey || uploadPrimaryKey);
     }
-  }, [editingProduct, files, primaryImageKey, productComposerActive, replaceImages]);
+  }, [editingProduct, files, primaryImageKey, productComposerActive, removedExistingImageUrls, replaceImages]);
 
   useEffect(() => {
     if (
@@ -1321,6 +1416,33 @@ export function VendorWorkspace({
       }));
     }
   }, [form.sizeTypeId, selectedFormIsShoes, shoeSizeType]);
+
+  useEffect(() => {
+    if (selectedFormIsShoes || selectedFormIsAccessories || form.sizeTypeId || !defaultSizeType) {
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      sizeTypeId: defaultSizeType.id,
+      sizeIds: [],
+      sizeStocks: {},
+    }));
+  }, [defaultSizeType, form.sizeTypeId, selectedFormIsAccessories, selectedFormIsShoes]);
+
+  useEffect(() => {
+    if (
+      selectedFormIsAccessories &&
+      (form.sizeTypeId || form.sizeIds.length || Object.keys(form.sizeStocks).length)
+    ) {
+      setForm((current) => ({
+        ...current,
+        sizeTypeId: "",
+        sizeIds: [],
+        sizeStocks: {},
+      }));
+    }
+  }, [form.sizeIds, form.sizeStocks, form.sizeTypeId, selectedFormIsAccessories]);
 
   useEffect(() => {
     const availableIds = new Set(availableFormSizes.map((entry) => entry.id));
@@ -1374,6 +1496,7 @@ export function VendorWorkspace({
     }
     setPrimaryImageKey("");
     setReplaceImages(false);
+    setRemovedExistingImageUrls([]);
     setProductModalOpen(false);
   }
 
@@ -1387,6 +1510,7 @@ export function VendorWorkspace({
     }
     setPrimaryImageKey(product.images[0] ? `existing:${product.images[0]}` : "");
     setReplaceImages(false);
+    setRemovedExistingImageUrls([]);
     setForm({
       title: product.title,
       description: product.description,
@@ -1447,6 +1571,32 @@ export function VendorWorkspace({
     });
   }
 
+  function removeExistingProductImage(imageUrl: string) {
+    if (!editingProduct || replaceImages) {
+      return;
+    }
+
+    const remainingImages = editingProduct.images.filter(
+      (image) => image !== imageUrl && !removedExistingImageUrls.includes(image),
+    );
+
+    if (remainingImages.length + files.length === 0) {
+      setError("Keep at least one product image or upload a replacement.");
+      return;
+    }
+
+    setError(null);
+    setRemovedExistingImageUrls((current) =>
+      current.includes(imageUrl) ? current : [...current, imageUrl],
+    );
+    setPrimaryImageKey((current) => {
+      if (current !== `existing:${imageUrl}`) {
+        return current;
+      }
+      return remainingImages[0] ? `existing:${remainingImages[0]}` : files.length ? "upload:0" : "";
+    });
+  }
+
   function isBrowserPreviewableProductImage(file: File) {
     return ["image/avif", "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(file.type);
   }
@@ -1457,6 +1607,7 @@ export function VendorWorkspace({
     const visibleActions = getVisibleVendorActions(order);
     const hasCancellationRequest = hasCustomerCancelRequest(order);
     const canApproveCancellation = canVendorCancelRequestedOrder(order);
+    const canCancelOrder = canVendorCancelOrder(order);
 
     return (
       <div key={order.id} className={orderNeedsVendorAttention(order) ? "card vendor-response-order-card" : "card"}>
@@ -1526,7 +1677,7 @@ export function VendorWorkspace({
             ))
           : null}
         <div className="inline-actions">
-          {visibleActions.length === 0 && !canApproveCancellation ? (
+          {visibleActions.length === 0 && !canApproveCancellation && !canCancelOrder ? (
             <span className="muted">
               {hasCancellationRequest
                 ? "Customer requested cancellation. Do not ship this order; contact the customer or admin before continuing."
@@ -1552,6 +1703,16 @@ export function VendorWorkspace({
               onClick={() => void cancelRequestedOrder(order.id)}
             >
               {activeAction === `order-${order.id}-cancel` ? "Approving..." : "Approve customer cancellation"}
+            </button>
+          ) : null}
+          {canCancelOrder ? (
+            <button
+              className="danger-button"
+              type="button"
+              disabled={activeAction !== null}
+              onClick={() => void cancelVendorOrder(order.id)}
+            >
+              {activeAction === `order-${order.id}-vendor-cancel` ? "Cancelling..." : "Cancel order"}
             </button>
           ) : null}
           {!hasCancellationRequest ? (
@@ -1833,6 +1994,75 @@ export function VendorWorkspace({
                           ))}
                         </select>
                       </div>
+                      {selectedFormIsAccessories ? (
+                        <div className="field">
+                          <label>Accessory type</label>
+                          <select
+                            value={form.subcategoryId}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                subcategoryId: event.target.value,
+                              }))
+                            }
+                          >
+                            {availableFormSubcategories.map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                {formatAccessoryTypeLabel(entry.name, language)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="vendor-catalog-request-card">
+                      <div>
+                        <strong>Missing</strong>
+                        <p className="muted">Request a missing catalog option from admin.</p>
+                      </div>
+                      <div className="form-grid two">
+                        <div className="field">
+                          <label>Mungesë</label>
+                          <select
+                            value={catalogRequestForm.requestType}
+                            onChange={(event) =>
+                              setCatalogRequestForm((current) => ({
+                                ...current,
+                                requestType: event.target.value as VendorCatalogRequest["requestType"],
+                              }))
+                            }
+                          >
+                            <option value="brand">Brand</option>
+                            <option value="category">Category</option>
+                            <option value="subcategory">Accessory</option>
+                            <option value="color">Color</option>
+                          </select>
+                        </div>
+                        <div className="field">
+                          <label>Missing value</label>
+                          <input
+                            value={catalogRequestForm.requestedValue}
+                            onChange={(event) =>
+                              setCatalogRequestForm((current) => ({
+                                ...current,
+                                requestedValue: event.target.value,
+                              }))
+                            }
+                            placeholder="Enter what is missing"
+                          />
+                        </div>
+                      </div>
+                      <div className="inline-actions">
+                        <button
+                          className="button-secondary"
+                          type="button"
+                          disabled={activeAction !== null || !catalogRequestForm.requestedValue.trim()}
+                          onClick={() => void submitCatalogRequest()}
+                        >
+                          {activeAction === "catalog-request" ? "Submitting..." : "Submit request"}
+                        </button>
+                        <span className="chip">{catalogRequests.length} requests</span>
+                      </div>
                     </div>
                   </section>
 
@@ -1877,97 +2107,106 @@ export function VendorWorkspace({
                           })}
                         </div>
                       </div>
-                      <div className="field vendor-size-type-field">
-                        <label>Select size</label>
-                        <select
-                          value={form.sizeTypeId}
-                          disabled={selectedFormIsShoes}
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              sizeTypeId: event.target.value,
-                              sizeIds: [],
-                              sizeStocks: {},
-                            }))
-                          }
-                        >
-                          <option value="">Choose a size type</option>
-                          {availableFormSizeTypes.map((entry) => (
-                            <option key={entry.id} value={entry.id}>
-                              {entry.name}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedFormIsShoes ? (
-                          <span className="muted">EU shoe sizes</span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="form-grid two">
-                      <div className="field">
-                        <label>
-                          {selectedFormSizeType
-                            ? `${selectedFormSizeType.name} sizes`
-                            : "Sizes"}
-                        </label>
-                        <div className="vendor-size-grid" role="group" aria-label="Product sizes">
-                          {availableFormSizes.map((entry) => {
-                            const selected = form.sizeIds.includes(entry.id);
-                            return (
-                              <div
-                                key={entry.id}
-                                className={`vendor-size-stock-option${selected ? " selected" : ""}`}
-                              >
+                      {!selectedFormIsAccessories ? (
+                        <div className="field vendor-size-type-field">
+                          <label>Size type</label>
+                          <div className="vendor-choice-grid" role="group" aria-label="Product size type">
+                            {visibleFormSizeTypes.map((entry) => {
+                              const selected = form.sizeTypeId === entry.id;
+                              return (
                                 <button
+                                  key={entry.id}
                                   type="button"
-                                  className={`vendor-size-option${selected ? " selected" : ""}`}
+                                  className={`vendor-choice-option${selected ? " selected" : ""}`}
                                   aria-pressed={selected}
+                                  disabled={selectedFormIsShoes}
                                   onClick={() =>
                                     setForm((current) => ({
                                       ...current,
-                                      sizeIds: selected
-                                        ? current.sizeIds.filter((id) => id !== entry.id)
-                                        : [...current.sizeIds, entry.id],
-                                      sizeStocks: selected
-                                        ? Object.fromEntries(
-                                            Object.entries(current.sizeStocks).filter(
-                                              ([id]) => id !== entry.id,
-                                            ),
-                                          )
-                                        : {
-                                            ...current.sizeStocks,
-                                            [entry.id]: current.sizeStocks[entry.id] ?? "0",
-                                          },
+                                      sizeTypeId: entry.id,
+                                      sizeIds: [],
+                                      sizeStocks: {},
                                     }))
                                   }
                                 >
-                                  {entry.label}
+                                  {getSizeTypeDisplayLabel(entry.name)}
                                 </button>
-                                {selected ? (
-                                  <label>
-                                    <span>Stock</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={form.sizeStocks[entry.id] ?? "0"}
-                                      onChange={(event) =>
-                                        setForm((current) => ({
-                                          ...current,
-                                          sizeStocks: {
-                                            ...current.sizeStocks,
-                                            [entry.id]: event.target.value,
-                                          },
-                                        }))
-                                      }
-                                    />
-                                  </label>
-                                ) : null}
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
+                          {selectedFormIsShoes ? (
+                            <span className="muted">EU shoe sizes</span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    {!selectedFormIsAccessories ? (
+                      <div className="form-grid two">
+                        <div className="field">
+                          <label>
+                            {selectedFormSizeType
+                              ? `${getSizeTypeDisplayLabel(selectedFormSizeType.name)} sizes`
+                              : "Sizes"}
+                          </label>
+                          <div className="vendor-size-grid" role="group" aria-label="Product sizes">
+                            {availableFormSizes.map((entry) => {
+                              const selected = form.sizeIds.includes(entry.id);
+                              return (
+                                <div
+                                  key={entry.id}
+                                  className={`vendor-size-stock-option${selected ? " selected" : ""}`}
+                                >
+                                  <button
+                                    type="button"
+                                    className={`vendor-size-option${selected ? " selected" : ""}`}
+                                    aria-pressed={selected}
+                                    onClick={() =>
+                                      setForm((current) => ({
+                                        ...current,
+                                        sizeIds: selected
+                                          ? current.sizeIds.filter((id) => id !== entry.id)
+                                          : [...current.sizeIds, entry.id],
+                                        sizeStocks: selected
+                                          ? Object.fromEntries(
+                                              Object.entries(current.sizeStocks).filter(
+                                                ([id]) => id !== entry.id,
+                                              ),
+                                            )
+                                          : {
+                                              ...current.sizeStocks,
+                                              [entry.id]: current.sizeStocks[entry.id] ?? "0",
+                                            },
+                                      }))
+                                    }
+                                  >
+                                    {entry.label}
+                                  </button>
+                                  {selected ? (
+                                    <label>
+                                      <span>Stock</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={form.sizeStocks[entry.id] ?? "0"}
+                                        onChange={(event) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            sizeStocks: {
+                                              ...current.sizeStocks,
+                                              [entry.id]: event.target.value,
+                                            },
+                                          }))
+                                        }
+                                      />
+                                    </label>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : null}
                   </section>
                 </div>
 
@@ -2010,9 +2249,13 @@ export function VendorWorkspace({
                       <div className="vendor-product-meta-card">
                         <span>Size setup</span>
                         <strong>
-                          {selectedFormSizes.length
+                          {selectedFormIsAccessories
+                            ? "Not required"
+                            : selectedFormSizes.length
                             ? selectedFormSizes.map((entry) => entry.label).join(", ")
-                            : selectedFormSize?.label ?? selectedFormSizeType?.name ?? "Choose size details"}
+                            : (selectedFormSize?.label ??
+                                getSizeTypeDisplayLabel(selectedFormSizeType?.name)) ||
+                              "Choose size details"}
                         </strong>
                       </div>
                     </div>
@@ -2042,6 +2285,7 @@ export function VendorWorkspace({
                           onChange={(event) => {
                             const checked = event.target.checked;
                             setReplaceImages(checked);
+                            setRemovedExistingImageUrls([]);
                             setPrimaryImageKey(
                               checked
                                 ? files.length
@@ -2059,11 +2303,13 @@ export function VendorWorkspace({
                       </label>
                     ) : null}
 
-                    {editingProduct && !replaceImages && editingProduct.images.length > 0 ? (
+                    {editingProduct &&
+                    !replaceImages &&
+                    editingProduct.images.some((image) => !removedExistingImageUrls.includes(image)) ? (
                       <div className="vendor-preview-group">
                         <div className="vendor-preview-heading">Current images</div>
                         <div className="preview-grid">
-                          {editingProduct.images.map((image) => (
+                          {editingProduct.images.filter((image) => !removedExistingImageUrls.includes(image)).map((image) => (
                             <div key={image} className="preview-card">
                               <ProductMedia
                                 image={assetUrl(image)}
@@ -2071,6 +2317,14 @@ export function VendorWorkspace({
                                 subtitle="Current image"
                                 className="card-image"
                               />
+                              <button
+                                className="preview-remove-button"
+                                type="button"
+                                aria-label="Remove saved image"
+                                onClick={() => removeExistingProductImage(image)}
+                              >
+                                Remove
+                              </button>
                               <button
                                 className={`thumbnail-select-button${primaryImageKey === `existing:${image}` ? " selected" : ""}`}
                                 type="button"
@@ -2166,112 +2420,6 @@ export function VendorWorkspace({
                   </form>
                 </div>
               </div>
-            ) : null}
-            {productComposerMode !== "page" ? (
-            <section className="form-card stack">
-              <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <h2 className="section-title">Missing catalog option?</h2>
-                  <p className="muted">
-                    Request a missing brand, category, size, or color. Admin will
-                    review the request, then create the real value manually in Settings if approved.
-                  </p>
-                </div>
-                <span className="chip">{catalogRequests.length} requests</span>
-              </div>
-              <form className="stack" onSubmit={submitCatalogRequest}>
-                <div className="form-grid two">
-                  <div className="field">
-                    <label>Request type</label>
-                    <select
-                      value={catalogRequestForm.requestType}
-                      onChange={(event) =>
-                        setCatalogRequestForm((current) => ({
-                          ...current,
-                          requestType: event.target.value as VendorCatalogRequest["requestType"],
-                        }))
-                      }
-                    >
-                      <option value="brand">Brand</option>
-                      <option value="category">Category</option>
-                      <option value="size">Size</option>
-                      <option value="color">Color</option>
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label>Requested value</label>
-                    <input
-                      value={catalogRequestForm.requestedValue}
-                      onChange={(event) =>
-                        setCatalogRequestForm((current) => ({
-                          ...current,
-                          requestedValue: event.target.value,
-                        }))
-                      }
-                      placeholder="Enter the missing option"
-                    />
-                  </div>
-                </div>
-                <div className="field">
-                  <label>Optional note</label>
-                  <textarea
-                    rows={3}
-                    value={catalogRequestForm.note}
-                    onChange={(event) =>
-                      setCatalogRequestForm((current) => ({
-                        ...current,
-                        note: event.target.value,
-                      }))
-                    }
-                    placeholder="Optional context for admin"
-                  />
-                </div>
-                <div className="inline-actions">
-                  <button className="button-secondary" type="submit">
-                    {activeAction === "catalog-request"
-                      ? "Submitting..."
-                      : "Submit request"}
-                  </button>
-                </div>
-              </form>
-              {recentCatalogRequests.length === 0 ? (
-                <div className="empty">No catalog requests submitted yet.</div>
-              ) : (
-                <div className="vendor-request-list">
-                  {recentCatalogRequests.map((request) => (
-                    <div key={request.id} className="vendor-request-row">
-                      <div className="vendor-request-copy">
-                        <strong>{request.requestedValue}</strong>
-                        <p className="muted">
-                          {formatCatalogLabel(request.requestType)}
-                          {request.categoryName ? ` · ${request.categoryName}` : ""}
-                          {request.subcategoryName ? ` · ${request.subcategoryName}` : ""}
-                          {request.sizeTypeName ? ` · ${request.sizeTypeName}` : ""}
-                        </p>
-                        <p className="muted">
-                          {new Date(request.createdAt).toLocaleString()}
-                          {request.note ? ` · ${request.note}` : ""}
-                        </p>
-                        {request.adminNote ? (
-                          <p className="muted">Admin note: {request.adminNote}</p>
-                        ) : null}
-                      </div>
-                      <span
-                        className={
-                          request.status === "pending"
-                            ? "badge warn"
-                            : request.status === "approved"
-                              ? "badge"
-                              : "badge danger"
-                        }
-                      >
-                        {request.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
             ) : null}
             {productComposerMode !== "page" ? (
             <section className="form-card stack">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
@@ -11,13 +11,14 @@ import type { AdminUserDetail } from "@/lib/types";
 
 export default function AdminUserDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { token, currentRole } = useAuth();
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [actionSaving, setActionSaving] = useState<"activation" | "reset" | "vendorActivation" | null>(null);
+  const [actionSaving, setActionSaving] = useState<"activation" | "reset" | "vendorActivation" | "delete" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,6 +165,44 @@ export default function AdminUserDetailPage() {
     );
   }
 
+  async function handleDeleteUser() {
+    if (!token || !detail) return;
+
+    const targetLabel = detail.vendor?.shopName || displayName;
+    if (
+      !window.confirm(
+        `Delete ${targetLabel}? This permanently removes the account and any connected orders, returns, support tickets, and saved account data.`,
+      )
+    ) {
+      return;
+    }
+
+    const adminPassword = window.prompt("Enter your admin password to confirm deletion.");
+    if (!adminPassword) {
+      return;
+    }
+
+    try {
+      setActionSaving("delete");
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/users/${params.id}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({ adminPassword }),
+        },
+        token,
+      );
+      setMessage(response.message);
+      router.push(detail.vendor ? "/admin/vendors" : "/admin/customers");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this account.");
+    } finally {
+      setActionSaving(null);
+    }
+  }
+
   const displayName =
     [detail.firstName, detail.lastName].filter(Boolean).join(" ") ||
     detail.fullName ||
@@ -240,7 +279,15 @@ export default function AdminUserDetailPage() {
               disabled={actionSaving !== null}
               onClick={() => void handlePasswordReset()}
             >
-              {actionSaving === "reset" ? "Sending..." : "Send reset email"}
+              {actionSaving === "reset" ? "Sending..." : "Reset password"}
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={actionSaving !== null}
+              onClick={() => void handleDeleteUser()}
+            >
+              {actionSaving === "delete" ? "Deleting..." : detail.vendor ? "Delete vendor account" : "Delete customer"}
             </button>
           </div>
           <div className="stack">

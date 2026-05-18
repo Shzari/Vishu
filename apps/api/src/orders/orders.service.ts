@@ -123,6 +123,14 @@ interface GuestCustomerResolution {
   sendActivationEmail: boolean;
 }
 
+interface OrderRequestMetadata {
+  checkoutSource: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  origin: string | null;
+  referer: string | null;
+}
+
 interface OrderListRow {
   id: string;
   order_number: string | null;
@@ -233,12 +241,19 @@ export class OrdersService {
     return product;
   };
 
-  async createOrder(customerId: string, dto: CreateOrderDto) {
-    return this.createOrderFromCheckout(customerId, dto);
+  async createOrder(
+    customerId: string,
+    dto: CreateOrderDto,
+    requestMetadata?: OrderRequestMetadata,
+  ) {
+    return this.createOrderFromCheckout(customerId, dto, { requestMetadata });
   }
 
-  async createGuestOrder(dto: CreateOrderDto) {
-    return this.createOrderFromCheckout(null, dto);
+  async createGuestOrder(
+    dto: CreateOrderDto,
+    requestMetadata?: OrderRequestMetadata,
+  ) {
+    return this.createOrderFromCheckout(null, dto, { requestMetadata });
   }
 
   async getCheckoutPaymentSettings() {
@@ -341,6 +356,7 @@ export class OrdersService {
       forceCardPayment?: boolean;
       stripeSessionId?: string | null;
       stripePaymentIntentId?: string | null;
+      requestMetadata?: OrderRequestMetadata;
     },
   ) {
     const lowStockAlerts: {
@@ -465,10 +481,11 @@ export class OrdersService {
            payment_method_id, payment_card_nickname, payment_cardholder_name,
            payment_card_brand, payment_card_last4,
            stripe_checkout_session_id, stripe_payment_intent_id,
+           checkout_source, source_ip_address, source_user_agent, source_origin, source_referer,
            payment_method, payment_status, status
          )
          OUTPUT INSERTED.id, INSERTED.created_at
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'pending')`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, 'pending')`,
           [
             linkedCustomerId,
             isGuestCheckout ? checkout.email : null,
@@ -493,6 +510,21 @@ export class OrdersService {
             savedPaymentMethod?.last4 ?? null,
             options?.stripeSessionId ?? null,
             options?.stripePaymentIntentId ?? null,
+            options?.requestMetadata?.checkoutSource ??
+              (isGuestCheckout ? 'guest_checkout' : 'authenticated_checkout'),
+            this.truncateOrderSourceValue(
+              options?.requestMetadata?.ipAddress,
+              64,
+            ),
+            this.truncateOrderSourceValue(
+              options?.requestMetadata?.userAgent,
+              512,
+            ),
+            this.truncateOrderSourceValue(options?.requestMetadata?.origin, 255),
+            this.truncateOrderSourceValue(
+              options?.requestMetadata?.referer,
+              1000,
+            ),
             paymentMethod,
             paymentStatus,
           ],
@@ -634,6 +666,15 @@ export class OrdersService {
     }
 
     return placedOrder;
+  }
+
+  private truncateOrderSourceValue(value: string | null | undefined, max: number) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    return trimmed.slice(0, max);
   }
 
   async getCustomerCart(customerId: string) {
@@ -1201,6 +1242,160 @@ export class OrdersService {
     }
 
     return { message: 'Order cancelled and customer notified.' };
+  }
+
+  async cancelVendorOrder(userId: string, orderId: string, reason?: string) {
+    const vendor = await this.getVendorByUserId(userId);
+    if (!vendor.is_active || !vendor.is_verified) {
+      throw new ForbiddenException('Vendor account is not active');
+    }
+
+    const orderLookup = await this.databaseService.query<{
+      id: string;
+      order_number: string | null;
+      status: OrderStatus;
+      payment_method: PaymentMethod;
+      customer_email: string | null;
+      customer_name: string | null;
+    }>(
+      `SELECT TOP 1
+         o.id,
+         o.order_number,
+         o.status,
+         o.payment_method,
+         COALESCE(u.email, o.guest_email) AS customer_email,
+         COALESCE(
+           NULLIF(LTRIM(RTRIM(CONCAT(ISNULL(u.first_name, ''), ' ', ISNULL(u.last_name, '')))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(u.full_name, ''))), ''),
+           NULLIF(LTRIM(RTRIM(ISNULL(o.shipping_full_name, ''))), '')
+         ) AS customer_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.customer_id
+       INNER JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.id = $1 AND oi.vendor_id = $2`,
+      [orderId, vendor.id],
+    );
+
+    const order = orderLookup.rows[0];
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const vendorItems = await this.databaseService.query<{
+      id: string;
+      status: OrderStatus;
+      product_id: string;
+      selected_size_id: string | null;
+      quantity: number;
+    }>(
+      `SELECT id, status, product_id, selected_size_id, quantity
+       FROM order_items
+       WHERE order_id = $1 AND vendor_id = $2`,
+      [orderId, vendor.id],
+    );
+
+    if (!vendorItems.rows.length) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (!vendorItems.rows.every((item) => item.status === 'pending')) {
+      throw new BadRequestException(
+        'Only pending vendor order items can be cancelled',
+      );
+    }
+
+    let orderFullyCancelled = false;
+
+    await this.databaseService.withTransaction(async (client) => {
+      for (const item of vendorItems.rows) {
+        await client.query(
+          `UPDATE products
+           SET stock = stock + $1,
+               updated_at = SYSDATETIME()
+           WHERE id = $2`,
+          [item.quantity, item.product_id],
+        );
+        if (item.selected_size_id) {
+          await client.query(
+            `UPDATE product_sizes
+             SET stock = stock + $1,
+                 updated_at = SYSDATETIME()
+             WHERE product_id = $2
+               AND size_id = $3`,
+            [item.quantity, item.product_id, item.selected_size_id],
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE order_items
+         SET status = 'cancelled',
+             shipping_carrier = NULL,
+             tracking_number = NULL,
+             shipped_at = NULL,
+             updated_at = SYSDATETIME()
+         WHERE order_id = $1 AND vendor_id = $2`,
+        [orderId, vendor.id],
+      );
+
+      await this.syncOrderStatus(client, orderId);
+
+      const nextOrder = await client.query<{ status: OrderStatus }>(
+        'SELECT TOP 1 status FROM orders WHERE id = $1',
+        [orderId],
+      );
+      orderFullyCancelled = nextOrder.rows[0]?.status === 'cancelled';
+
+      if (orderFullyCancelled && order.payment_method === 'cash_on_delivery') {
+        await client.query(
+          `UPDATE orders
+           SET payment_status = 'cod_refused',
+               cancel_request_status = CASE
+                 WHEN cancel_request_status = 'requested' THEN 'approved'
+                 ELSE cancel_request_status
+               END,
+               cancel_request_note = COALESCE($1, cancel_request_note),
+               updated_at = SYSDATETIME()
+           WHERE id = $2`,
+          [reason?.trim() || null, orderId],
+        );
+      } else if (orderFullyCancelled) {
+        await client.query(
+          `UPDATE orders
+           SET cancel_request_status = CASE
+                 WHEN cancel_request_status = 'requested' THEN 'approved'
+                 ELSE cancel_request_status
+               END,
+               cancel_request_note = COALESCE($1, cancel_request_note),
+               updated_at = SYSDATETIME()
+           WHERE id = $2`,
+          [reason?.trim() || null, orderId],
+        );
+      }
+    });
+
+    if (orderFullyCancelled && order.customer_email) {
+      try {
+        await this.mailService.sendOrderCancelledEmail({
+          email: order.customer_email,
+          fullName: order.customer_name,
+          orderNumber: order.order_number ?? order.id,
+          cancelNote: reason?.trim() || 'Cancelled by the vendor.',
+        });
+      } catch (emailError) {
+        this.logger.warn(
+          `Order ${order.order_number ?? order.id} was cancelled by vendor, but customer email failed: ${
+            emailError instanceof Error ? emailError.message : String(emailError)
+          }`,
+        );
+      }
+    }
+
+    return {
+      message: orderFullyCancelled
+        ? 'Order cancelled and inventory restocked.'
+        : 'Vendor items cancelled and inventory restocked.',
+    };
   }
 
   async requestCustomerCancel(

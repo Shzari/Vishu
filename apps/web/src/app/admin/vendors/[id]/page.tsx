@@ -1,16 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { useAuth } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
-import { apiRequest, formatCurrency } from "@/lib/api";
+import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import type { AdminVendorDetail } from "@/lib/types";
 
 export default function AdminVendorDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { token, currentRole } = useAuth();
   const [detail, setDetail] = useState<AdminVendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,10 +22,11 @@ export default function AdminVendorDetailPage() {
   const [platformFee, setPlatformFee] = useState("1.00");
   const [feeFreeEnabled, setFeeFreeEnabled] = useState(false);
   const [feeFreeUntil, setFeeFreeUntil] = useState("");
-  const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | null>(
+  const [accountSaving, setAccountSaving] = useState<"vendor" | "user" | "reset" | "delete" | null>(
     null,
   );
   const [feeSaving, setFeeSaving] = useState(false);
+  const [productAction, setProductAction] = useState<string | null>(null);
   const feeGraceLabel = detail?.feeGraceEndsAt
     ? new Date(detail.feeGraceEndsAt).toLocaleDateString()
     : null;
@@ -35,6 +37,7 @@ export default function AdminVendorDetailPage() {
     ? new Date(detail.lastLoginAt).toLocaleString()
     : "No login recorded";
   const ownerMobileNumber = detail?.user.phoneNumber?.trim() || detail?.user.supportPhone?.trim() || "";
+  const vendorProducts = detail?.products ?? [];
 
   useEffect(() => {
     if (!token || currentRole !== "admin") {
@@ -154,6 +157,45 @@ export default function AdminVendorDetailPage() {
     }
   }
 
+  async function handleDeleteVendor() {
+    if (!token || !detail) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete ${detail.shopName}? This permanently removes the vendor, products, payout records, and any orders connected to this vendor.`,
+      )
+    ) {
+      return;
+    }
+
+    const adminPassword = window.prompt("Enter your admin password to confirm deletion.");
+    if (!adminPassword) {
+      return;
+    }
+
+    try {
+      setAccountSaving("delete");
+      setAccountMessage(null);
+      setAccountError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/vendors/${params.id}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({ adminPassword }),
+        },
+        token,
+      );
+      setAccountMessage(response.message);
+      router.push("/admin/vendors");
+    } catch (deleteError) {
+      setAccountError(deleteError instanceof Error ? deleteError.message : "Failed to delete vendor.");
+    } finally {
+      setAccountSaving(null);
+    }
+  }
+
   async function handleUpdatePlatformFee() {
     if (!token) {
       return;
@@ -202,6 +244,43 @@ export default function AdminVendorDetailPage() {
       );
     } finally {
       setFeeSaving(false);
+    }
+  }
+
+  async function handleProductBlock(productId: string, isBlocked: boolean) {
+    if (!token) {
+      return;
+    }
+
+    const reason = isBlocked
+      ? window.prompt("Why is this product being blocked?")
+      : null;
+
+    if (isBlocked && reason === null) {
+      return;
+    }
+
+    try {
+      setProductAction(`block-${productId}`);
+      setAccountMessage(null);
+      setAccountError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/products/${productId}/block`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            isBlocked,
+            reason: reason?.trim() || undefined,
+          }),
+        },
+        token,
+      );
+      await refreshDetail();
+      setAccountMessage(response.message);
+    } catch (actionError) {
+      setAccountError(actionError instanceof Error ? actionError.message : "Failed to update product.");
+    } finally {
+      setProductAction(null);
     }
   }
 
@@ -310,7 +389,15 @@ export default function AdminVendorDetailPage() {
                   disabled={accountSaving !== null}
                   onClick={() => void handlePasswordReset()}
                 >
-                  {accountSaving === "reset" ? "Sending..." : "Send reset email"}
+                  {accountSaving === "reset" ? "Sending..." : "Reset password"}
+                </button>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={accountSaving !== null}
+                  onClick={() => void handleDeleteVendor()}
+                >
+                  {accountSaving === "delete" ? "Deleting..." : "Delete vendor"}
                 </button>
               </div>
               <div className="mini-stats">
@@ -402,6 +489,101 @@ export default function AdminVendorDetailPage() {
                   {feeSaving ? "Saving..." : "Save fee settings"}
                 </button>
               </div>
+            </section>
+
+            <section className="form-card stack">
+              <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h2 className="section-title">Vendor products</h2>
+                  <p className="muted">
+                    All catalog items currently owned by this vendor.
+                  </p>
+                </div>
+                <span className="chip">{vendorProducts.length} products</span>
+              </div>
+              {vendorProducts.length === 0 ? (
+                <div className="empty">This vendor has not added products yet.</div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="admin-simple-table">
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Status</th>
+                        <th>Stock</th>
+                        <th>Sold</th>
+                        <th>Price</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vendorProducts.map((product) => (
+                        <tr key={product.id}>
+                          <td>
+                            <div className="inline-actions" style={{ alignItems: "center", flexWrap: "nowrap" }}>
+                              {product.imageUrl ? (
+                                <img
+                                  src={assetUrl(product.imageUrl)}
+                                  alt=""
+                                  style={{ width: 48, height: 60, objectFit: "cover", borderRadius: 6 }}
+                                />
+                              ) : null}
+                              <div className="admin-table-stack">
+                                <strong>{product.title}</strong>
+                                <span className="muted">
+                                  {product.productCode || "Code pending"}
+                                </span>
+                                <span className="muted">
+                                  {product.department} | {product.category}
+                                  {product.color ? ` | ${product.color}` : ""}
+                                  {product.size ? ` | ${product.size}` : ""}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={product.adminStatus === "blocked" ? "admin-status-pill rejected" : product.isListed ? "admin-status-pill active" : "admin-status-pill inactive"}>
+                              {product.adminStatus === "blocked" ? "Blocked" : product.isListed ? "Visible" : "Hidden"}
+                            </span>
+                            {product.adminBlockReason ? (
+                              <p className="muted">{product.adminBlockReason}</p>
+                            ) : null}
+                          </td>
+                          <td>{product.stock}</td>
+                          <td>
+                            <div className="admin-table-stack">
+                              <strong>{product.soldUnits}</strong>
+                              <span className="muted">{product.orderCount} orders</span>
+                            </div>
+                          </td>
+                          <td>{formatCurrency(product.price)}</td>
+                          <td>{new Date(product.updatedAt).toLocaleDateString()}</td>
+                          <td>
+                            <div className="admin-table-actions">
+                              <Link className="button-ghost" href={`/products/${product.id}`} target="_blank">
+                                Open product
+                              </Link>
+                              <button
+                                className={product.adminStatus === "blocked" ? "button-secondary" : "danger-button"}
+                                type="button"
+                                disabled={productAction !== null}
+                                onClick={() => void handleProductBlock(product.id, product.adminStatus !== "blocked")}
+                              >
+                                {productAction === `block-${product.id}`
+                                  ? "Saving..."
+                                  : product.adminStatus === "blocked"
+                                    ? "Unblock"
+                                    : "Block"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
 
             <section className="form-card stack">

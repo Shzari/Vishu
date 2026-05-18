@@ -34,6 +34,7 @@ import {
   CatalogMasterDataMutationDto,
   CategoryMutationDto,
   ColorMutationDto,
+  ConfirmAdminPasswordDto,
   CreateAdminUserDto,
   GenderGroupMutationDto,
   PromotionMutationDto,
@@ -432,6 +433,15 @@ export class AdminController {
     return this.adminService.getUserById(id);
   }
 
+  @Delete('users/:id')
+  deleteUser(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ConfirmAdminPasswordDto,
+  ) {
+    return this.adminService.deleteUser(req.user.sub, id, dto);
+  }
+
   @Patch('users/:id/contact')
   updateUserContact(
     @Req() req: { user: AuthenticatedUser },
@@ -504,6 +514,15 @@ export class AdminController {
     return this.adminService.getVendorById(id);
   }
 
+  @Delete('vendors/:id')
+  deleteVendor(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: ConfirmAdminPasswordDto,
+  ) {
+    return this.adminService.deleteVendor(req.user.sub, id, dto);
+  }
+
   @Patch('vendors/:id/platform-fee')
   updateVendorPlatformFee(
     @Param('id') id: string,
@@ -539,6 +558,20 @@ export class AdminController {
     return this.adminService.deleteProduct(req.user.sub, id);
   }
 
+  @Patch('products/:id/block')
+  setProductBlock(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() body: { isBlocked: boolean; reason?: string | null },
+  ) {
+    return this.adminService.setProductBlock(
+      req.user.sub,
+      id,
+      body.isBlocked,
+      body.reason,
+    );
+  }
+
   @Patch('vendors/:id/activation')
   setVendorActivation(
     @Req() req: { user: AuthenticatedUser },
@@ -549,6 +582,19 @@ export class AdminController {
       req.user.sub,
       id,
       body.isActive,
+    );
+  }
+
+  @Patch('vendors/:id/products-visibility')
+  setVendorProductVisibility(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() body: { isListed: boolean },
+  ) {
+    return this.adminService.updateVendorProductVisibility(
+      req.user.sub,
+      id,
+      body.isListed,
     );
   }
 

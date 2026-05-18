@@ -41,6 +41,12 @@ export class CreateAdminUserDto {
   password!: string;
 }
 
+export class ConfirmAdminPasswordDto {
+  @IsString()
+  @MinLength(1)
+  adminPassword!: string;
+}
+
 export class UpdatePlatformSettingsDto {
   @IsOptional()
   @IsString()

@@ -318,8 +318,8 @@ BEGIN
     bank_name NVARCHAR(255) NULL,
     bank_iban NVARCHAR(64) NULL,
     is_active BIT NOT NULL DEFAULT 0,
-    is_verified BIT NOT NULL DEFAULT 0,
-    login_otp_bypassed BIT NOT NULL DEFAULT 0,
+    is_verified BIT NOT NULL DEFAULT 1,
+    login_otp_bypassed BIT NOT NULL DEFAULT 1,
     admin_status NVARCHAR(30) NOT NULL DEFAULT 'approved',
     is_test BIT NOT NULL DEFAULT 0,
     approved_at DATETIME2 NULL,
@@ -338,9 +338,49 @@ BEGIN
   ALTER TABLE dbo.vendors ADD is_test BIT NOT NULL CONSTRAINT df_vendors_is_test DEFAULT 0;
 END;
 
+IF EXISTS (
+  SELECT 1
+  FROM sys.default_constraints
+  WHERE parent_object_id = OBJECT_ID('dbo.vendors')
+    AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('dbo.vendors'), 'is_verified', 'ColumnId')
+    AND definition IN ('((0))', '(0)')
+)
+BEGIN
+  DECLARE @vendorVerifiedDefaultName SYSNAME;
+  SELECT @vendorVerifiedDefaultName = name
+  FROM sys.default_constraints
+  WHERE parent_object_id = OBJECT_ID('dbo.vendors')
+    AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('dbo.vendors'), 'is_verified', 'ColumnId');
+
+  DECLARE @dropVendorVerifiedDefaultSql NVARCHAR(MAX) =
+    N'ALTER TABLE dbo.vendors DROP CONSTRAINT ' + QUOTENAME(@vendorVerifiedDefaultName);
+  EXEC sp_executesql @dropVendorVerifiedDefaultSql;
+  ALTER TABLE dbo.vendors ADD CONSTRAINT df_vendors_is_verified DEFAULT 1 FOR is_verified;
+END;
+
 IF COL_LENGTH('dbo.vendors', 'login_otp_bypassed') IS NULL
 BEGIN
-  ALTER TABLE dbo.vendors ADD login_otp_bypassed BIT NOT NULL CONSTRAINT df_vendors_login_otp_bypassed DEFAULT 0;
+  ALTER TABLE dbo.vendors ADD login_otp_bypassed BIT NOT NULL CONSTRAINT df_vendors_login_otp_bypassed DEFAULT 1;
+END;
+
+IF EXISTS (
+  SELECT 1
+  FROM sys.default_constraints
+  WHERE parent_object_id = OBJECT_ID('dbo.vendors')
+    AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('dbo.vendors'), 'login_otp_bypassed', 'ColumnId')
+    AND definition IN ('((0))', '(0)')
+)
+BEGIN
+  DECLARE @otpBypassDefaultName SYSNAME;
+  SELECT @otpBypassDefaultName = name
+  FROM sys.default_constraints
+  WHERE parent_object_id = OBJECT_ID('dbo.vendors')
+    AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('dbo.vendors'), 'login_otp_bypassed', 'ColumnId');
+
+  DECLARE @dropOtpBypassDefaultSql NVARCHAR(MAX) =
+    N'ALTER TABLE dbo.vendors DROP CONSTRAINT ' + QUOTENAME(@otpBypassDefaultName);
+  EXEC sp_executesql @dropOtpBypassDefaultSql;
+  ALTER TABLE dbo.vendors ADD CONSTRAINT df_vendors_login_otp_bypassed DEFAULT 1 FOR login_otp_bypassed;
 END;
 
 IF OBJECT_ID('dbo.vendor_team_members', 'U') IS NULL
@@ -690,6 +730,9 @@ BEGIN
     color NVARCHAR(80) NULL,
     size NVARCHAR(80) NULL,
     product_code NVARCHAR(80) NULL,
+    admin_status NVARCHAR(30) NOT NULL DEFAULT 'approved',
+    admin_block_reason NVARCHAR(500) NULL,
+    admin_blocked_at DATETIME2 NULL,
     low_stock_alert_sent_at DATETIME2 NULL,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
     updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
@@ -699,6 +742,21 @@ END;
 IF COL_LENGTH('dbo.products', 'is_listed') IS NULL
 BEGIN
   ALTER TABLE dbo.products ADD is_listed BIT NOT NULL CONSTRAINT df_products_is_listed DEFAULT 1;
+END;
+
+IF COL_LENGTH('dbo.products', 'admin_status') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD admin_status NVARCHAR(30) NOT NULL CONSTRAINT df_products_admin_status DEFAULT 'approved';
+END;
+
+IF COL_LENGTH('dbo.products', 'admin_block_reason') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD admin_block_reason NVARCHAR(500) NULL;
+END;
+
+IF COL_LENGTH('dbo.products', 'admin_blocked_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.products ADD admin_blocked_at DATETIME2 NULL;
 END;
 
 IF COL_LENGTH('dbo.products', 'department') IS NULL
@@ -897,7 +955,8 @@ SELECT seed.name, 1, seed.sort_order
 FROM (
   VALUES
     ('underwear', 130),
-    ('Shoes', 140)
+    ('Shoes', 140),
+    ('accessories', 150)
 ) AS seed(name, sort_order)
 WHERE NOT EXISTS (
   SELECT 1
@@ -934,7 +993,14 @@ SELECT c.id, seed.name, 1, seed.sort_order
 FROM (
   VALUES
     ('underwear', 'underwear', 0),
-    ('Shoes', 'Shoes', 0)
+    ('Shoes', 'Shoes', 0),
+    ('accessories', 'Hat', 10),
+    ('accessories', 'Belt', 20),
+    ('accessories', 'Tie', 30),
+    ('accessories', 'Scarf', 40),
+    ('accessories', 'Wallet', 50),
+    ('accessories', 'Glasses', 60),
+    ('accessories', 'Brooch', 70)
 ) AS seed(category_name, name, sort_order)
 INNER JOIN dbo.categories c
   ON LOWER(LTRIM(RTRIM(c.name))) = LOWER(LTRIM(RTRIM(seed.category_name)))
@@ -944,6 +1010,15 @@ WHERE NOT EXISTS (
   WHERE sc.category_id = c.id
     AND LOWER(LTRIM(RTRIM(sc.name))) = LOWER(LTRIM(RTRIM(seed.name)))
 );
+
+UPDATE sc
+SET is_active = 0,
+    sort_order = 999,
+    updated_at = SYSDATETIME()
+FROM dbo.subcategories sc
+INNER JOIN dbo.categories c ON c.id = sc.category_id
+WHERE LOWER(LTRIM(RTRIM(c.name))) = 'accessories'
+  AND LOWER(LTRIM(RTRIM(sc.name))) = 'accessories';
 
 INSERT INTO dbo.brands (name, is_active, sort_order)
 SELECT source.name, 1, MIN(source.sort_order)
@@ -955,15 +1030,60 @@ FROM (
   UNION ALL
   SELECT name, sort_order
   FROM (VALUES
+    ('No brand', 0),
     ('Nike', 10),
-    ('Puma', 20),
-    ('Adidas', 30),
-    ('Hugo Boss', 40),
-    ('Lacoste', 50)
+    ('Adidas', 20),
+    ('Puma', 30),
+    ('Reebok', 40),
+    ('New Balance', 50),
+    ('Converse', 60),
+    ('Vans', 70),
+    ('Zara', 80),
+    ('H&M', 90),
+    ('Mango', 100),
+    ('Bershka', 110),
+    ('Pull&Bear', 120),
+    ('Stradivarius', 130),
+    ('New Yorker', 140),
+    ('Springfield', 150),
+    ('Terranova', 160),
+    ('Reserved', 170),
+    ('Tommy Hilfiger', 180),
+    ('Calvin Klein', 190),
+    ('Levi''s', 200),
+    ('Guess', 210),
+    ('Jack & Jones', 220),
+    ('Only', 230),
+    ('Vero Moda', 240),
+    ('Under Armour', 250),
+    ('Skechers', 260),
+    ('Geox', 270),
+    ('Benetton', 280),
+    ('Okaidi', 290),
+    ('OVS', 300),
+    ('LC Waikiki', 310),
+    ('Koton', 320),
+    ('Mavi', 330),
+    ('DeFacto', 340),
+    ('Colin''s', 350),
+    ('LTB', 360),
+    ('D''S Damat', 370),
+    ('KiÄŸÄ±lÄ±', 380),
+    ('Sarar', 390),
+    ('Network', 400),
+    ('Vakko', 410),
+    ('Ipekyol', 420),
+    ('Twist', 430),
+    ('Dagi', 440),
+    ('Flo', 450),
+    ('Hugo Boss', 460),
+    ('Lacoste', 470)
   ) AS default_brands(name, sort_order)
 ) AS source
 WHERE NOT EXISTS (
-  SELECT 1 FROM dbo.brands b WHERE b.name = source.name
+  SELECT 1
+  FROM dbo.brands b
+  WHERE LOWER(LTRIM(RTRIM(b.name))) = LOWER(LTRIM(RTRIM(source.name)))
 )
 GROUP BY source.name;
 
@@ -975,9 +1095,52 @@ GROUP BY source.name;
   UNION
   SELECT LOWER(LTRIM(RTRIM(name)))
   FROM (VALUES
+    ('No brand'),
     ('Nike'),
-    ('Puma'),
     ('Adidas'),
+    ('Puma'),
+    ('Reebok'),
+    ('New Balance'),
+    ('Converse'),
+    ('Vans'),
+    ('Zara'),
+    ('H&M'),
+    ('Mango'),
+    ('Bershka'),
+    ('Pull&Bear'),
+    ('Stradivarius'),
+    ('New Yorker'),
+    ('Springfield'),
+    ('Terranova'),
+    ('Reserved'),
+    ('Tommy Hilfiger'),
+    ('Calvin Klein'),
+    ('Levi''s'),
+    ('Guess'),
+    ('Jack & Jones'),
+    ('Only'),
+    ('Vero Moda'),
+    ('Under Armour'),
+    ('Skechers'),
+    ('Geox'),
+    ('Benetton'),
+    ('Okaidi'),
+    ('OVS'),
+    ('LC Waikiki'),
+    ('Koton'),
+    ('Mavi'),
+    ('DeFacto'),
+    ('Colin''s'),
+    ('LTB'),
+    ('D''S Damat'),
+    ('KiÄŸÄ±lÄ±'),
+    ('Sarar'),
+    ('Network'),
+    ('Vakko'),
+    ('Ipekyol'),
+    ('Twist'),
+    ('Dagi'),
+    ('Flo'),
     ('Hugo Boss'),
     ('Lacoste')
   ) AS default_brands(name)
@@ -1006,9 +1169,52 @@ INNER JOIN vendor_named_brands vnb ON vnb.id = p.brand_id;
   UNION
   SELECT LOWER(LTRIM(RTRIM(name)))
   FROM (VALUES
+    ('No brand'),
     ('Nike'),
-    ('Puma'),
     ('Adidas'),
+    ('Puma'),
+    ('Reebok'),
+    ('New Balance'),
+    ('Converse'),
+    ('Vans'),
+    ('Zara'),
+    ('H&M'),
+    ('Mango'),
+    ('Bershka'),
+    ('Pull&Bear'),
+    ('Stradivarius'),
+    ('New Yorker'),
+    ('Springfield'),
+    ('Terranova'),
+    ('Reserved'),
+    ('Tommy Hilfiger'),
+    ('Calvin Klein'),
+    ('Levi''s'),
+    ('Guess'),
+    ('Jack & Jones'),
+    ('Only'),
+    ('Vero Moda'),
+    ('Under Armour'),
+    ('Skechers'),
+    ('Geox'),
+    ('Benetton'),
+    ('Okaidi'),
+    ('OVS'),
+    ('LC Waikiki'),
+    ('Koton'),
+    ('Mavi'),
+    ('DeFacto'),
+    ('Colin''s'),
+    ('LTB'),
+    ('D''S Damat'),
+    ('KiÄŸÄ±lÄ±'),
+    ('Sarar'),
+    ('Network'),
+    ('Vakko'),
+    ('Ipekyol'),
+    ('Twist'),
+    ('Dagi'),
+    ('Flo'),
     ('Hugo Boss'),
     ('Lacoste')
   ) AS default_brands(name)
@@ -1050,7 +1256,8 @@ FROM (
     ('Orange', 100),
     ('Brown', 110),
     ('Beige', 120),
-    ('Mixed Colors', 130)
+    ('Gold', 130),
+    ('Mixed Colors', 140)
   ) AS default_colors(name, sort_order)
 ) AS source
 WHERE NOT EXISTS (
@@ -1073,7 +1280,8 @@ GROUP BY source.name;
     ('Orange', 100),
     ('Brown', 110),
     ('Beige', 120),
-    ('Mixed Colors', 130)
+    ('Gold', 130),
+    ('Mixed Colors', 140)
   ) AS default_colors(name, sort_order)
 )
 UPDATE c
@@ -1098,6 +1306,7 @@ INNER JOIN color_sort_order
     ('Orange', 'Orange'),
     ('Brown', 'Brown'),
     ('Beige', 'Beige'),
+    ('Gold', 'Gold'),
     ('Mixed Colors', 'Mixed Colors')
   ) AS default_colors(name, display_name)
 )
@@ -1127,6 +1336,7 @@ INNER JOIN color_display_names
     ('Orange'),
     ('Brown'),
     ('Beige'),
+    ('Gold'),
     ('Mixed Colors')
   ) AS default_colors(name)
 )
@@ -1923,6 +2133,11 @@ BEGIN
     payment_card_last4 NVARCHAR(4) NULL,
     stripe_checkout_session_id NVARCHAR(255) NULL,
     stripe_payment_intent_id NVARCHAR(255) NULL,
+    checkout_source NVARCHAR(40) NULL,
+    source_ip_address NVARCHAR(64) NULL,
+    source_user_agent NVARCHAR(512) NULL,
+    source_origin NVARCHAR(255) NULL,
+    source_referer NVARCHAR(1000) NULL,
     payment_method NVARCHAR(30) NOT NULL DEFAULT 'cash_on_delivery' CHECK (payment_method IN ('cash_on_delivery', 'card')),
     payment_status NVARCHAR(30) NOT NULL DEFAULT 'cod_pending' CHECK (payment_status IN ('cod_pending', 'paid', 'cod_collected', 'cod_refused')),
     confirmed_at DATETIME2 NULL,
@@ -2030,6 +2245,21 @@ IF COL_LENGTH('dbo.orders', 'stripe_checkout_session_id') IS NULL
 
 IF COL_LENGTH('dbo.orders', 'stripe_payment_intent_id') IS NULL
   ALTER TABLE dbo.orders ADD stripe_payment_intent_id NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'checkout_source') IS NULL
+  ALTER TABLE dbo.orders ADD checkout_source NVARCHAR(40) NULL;
+
+IF COL_LENGTH('dbo.orders', 'source_ip_address') IS NULL
+  ALTER TABLE dbo.orders ADD source_ip_address NVARCHAR(64) NULL;
+
+IF COL_LENGTH('dbo.orders', 'source_user_agent') IS NULL
+  ALTER TABLE dbo.orders ADD source_user_agent NVARCHAR(512) NULL;
+
+IF COL_LENGTH('dbo.orders', 'source_origin') IS NULL
+  ALTER TABLE dbo.orders ADD source_origin NVARCHAR(255) NULL;
+
+IF COL_LENGTH('dbo.orders', 'source_referer') IS NULL
+  ALTER TABLE dbo.orders ADD source_referer NVARCHAR(1000) NULL;
 
 IF COL_LENGTH('dbo.orders', 'confirmed_at') IS NULL
   ALTER TABLE dbo.orders ADD confirmed_at DATETIME2 NULL;
@@ -2487,6 +2717,31 @@ END;
 IF COL_LENGTH('dbo.orders', 'cod_updated_at') IS NULL
 BEGIN
   ALTER TABLE dbo.orders ADD cod_updated_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'checkout_source') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD checkout_source NVARCHAR(40) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'source_ip_address') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD source_ip_address NVARCHAR(64) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'source_user_agent') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD source_user_agent NVARCHAR(512) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'source_origin') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD source_origin NVARCHAR(255) NULL;
+END;
+
+IF COL_LENGTH('dbo.orders', 'source_referer') IS NULL
+BEGIN
+  ALTER TABLE dbo.orders ADD source_referer NVARCHAR(1000) NULL;
 END;
 
 IF COL_LENGTH('dbo.orders', 'cancel_request_status') IS NULL

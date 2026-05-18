@@ -11,6 +11,7 @@ import {
   formatCatalogLabel,
   formatProductAttributeLabel,
   getCatalogDepartmentDisplayLabel,
+  isAccessoryProduct,
   isCatalogDepartmentVisible,
 } from "@/lib/catalog";
 import { ProductMedia } from "@/components/product-media";
@@ -94,8 +95,9 @@ export function ProductDetailClient() {
     product.sizeVariants.find((entry) => entry.id === selectedSizeId) ??
     product.sizeOptions?.find((entry) => entry.id === selectedSizeId) ??
     null;
+  const productIsAccessory = isAccessoryProduct(product);
   const selectedStock = selectedSize?.stock ?? product.stock;
-  const requiresSizeSelection = productSizeOptions.length > 0;
+  const requiresSizeSelection = !productIsAccessory && productSizeOptions.length > 0;
   const canAddToCart =
     product.stock > 0 && (!requiresSizeSelection || Boolean(selectedSize && selectedStock > 0));
   const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
@@ -107,12 +109,12 @@ export function ProductDetailClient() {
       {
         productId: product.id,
         vendorId: product.vendor?.id ?? null,
-        sizeId: selectedSize?.id ?? null,
+        sizeId: productIsAccessory ? null : selectedSize?.id ?? null,
         title: product.title,
         price: product.price,
         image: product.images[0],
         color: product.color ?? product.colors[0]?.name ?? null,
-        size: selectedSize?.label ?? product.size ?? null,
+        size: productIsAccessory ? null : selectedSize?.label ?? product.size ?? null,
         quantity: 1,
         stock: selectedStock,
       },
@@ -173,7 +175,7 @@ export function ProductDetailClient() {
                 : `In stock: ${product.stock}`
               : "Currently unavailable"}
           </div>
-          {productSizeOptions.length > 0 ? (
+          {!productIsAccessory && productSizeOptions.length > 0 ? (
             <div className="product-size-picker">
               <span>Select size</span>
               <div className="product-size-options">
@@ -269,7 +271,7 @@ export function ProductDetailClient() {
                 <strong>{formatProductAttributeLabel(product.color)}</strong>
               </div>
             )}
-            {product.size && (
+            {!productIsAccessory && product.size && (
               <div className="meta-row">
                 <span>Size</span>
                 <strong>{formatProductAttributeLabel(product.size)}</strong>

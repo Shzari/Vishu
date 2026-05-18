@@ -12,6 +12,7 @@ import {
   formatProductAttributeLabel,
   getCatalogDepartmentDisplayLabel,
   getCatalogGenderLabel,
+  isAccessoryProduct,
 } from "@/lib/catalog";
 import type { Product, PublicVendorDetail } from "@/lib/types";
 
@@ -318,7 +319,9 @@ export function ShopDetailClient() {
                   <div className="product-subline">
                     {[
                       product.color ? formatCatalogLabel(product.color) : null,
-                      product.size ? String(product.size).toUpperCase() : null,
+                      !isAccessoryProduct(product) && product.size
+                        ? String(product.size).toUpperCase()
+                        : null,
                       getCatalogDepartmentDisplayLabel(product.department),
                     ]
                       .filter(Boolean)
@@ -353,15 +356,16 @@ export function ShopDetailClient() {
                           null;
                         addItem({
                           productId: product.id,
-                          sizeId: variant?.id ?? null,
+                          sizeId: isAccessoryProduct(product) ? null : variant?.id ?? null,
                           title: product.title,
                           price: product.price,
                           image: product.images[0],
                           color: product.color ?? product.colors[0]?.name ?? null,
-                          size:
-                            product.size ??
-                            variant?.label ??
-                            null,
+                          size: isAccessoryProduct(product)
+                            ? null
+                            : product.size ??
+                              variant?.label ??
+                              null,
                           quantity: 1,
                           stock: variant?.stock ?? product.stock,
                         });
@@ -430,7 +434,7 @@ export function ShopDetailClient() {
                     onClick={() =>
                       addItem({
                         productId: quickViewProduct.id,
-                        sizeId: quickViewProduct.sizeVariants[0]?.id ?? null,
+                        sizeId: isAccessoryProduct(quickViewProduct) ? null : quickViewProduct.sizeVariants[0]?.id ?? null,
                         title: quickViewProduct.title,
                         price: quickViewProduct.price,
                         image: quickViewProduct.images[0],
@@ -438,10 +442,11 @@ export function ShopDetailClient() {
                           quickViewProduct.color ??
                           quickViewProduct.colors[0]?.name ??
                           null,
-                        size:
-                          quickViewProduct.size ??
-                          quickViewProduct.sizeVariants[0]?.label ??
-                          null,
+                        size: isAccessoryProduct(quickViewProduct)
+                          ? null
+                          : quickViewProduct.size ??
+                            quickViewProduct.sizeVariants[0]?.label ??
+                            null,
                         quantity: 1,
                         stock: quickViewProduct.stock,
                       })
@@ -474,7 +479,7 @@ export function ShopDetailClient() {
                       <strong>{formatProductAttributeLabel(quickViewProduct.color)}</strong>
                     </div>
                   ) : null}
-                  {quickViewProduct.size ? (
+                  {!isAccessoryProduct(quickViewProduct) && quickViewProduct.size ? (
                     <div className="meta-row">
                       <span>Size</span>
                       <strong>{formatProductAttributeLabel(quickViewProduct.size)}</strong>
