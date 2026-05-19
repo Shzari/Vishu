@@ -73,10 +73,13 @@ export class AuthService {
       const existingUser = existing.rows[0];
       if (existingUser.role === 'customer' && !existingUser.email_verified_at) {
         const passwordHash = await bcrypt.hash(dto.password, 10);
-        const otp = this.generateCustomerRegistrationOtp();
-
-        await this.databaseService.withTransaction(async (client) => {
-          await client.query(
+        const updatedUser = await this.databaseService.withTransaction(
+          async (client) => {
+            const updated = await client.query<{
+              id: string;
+              email: string;
+              role: 'customer';
+            }>(
             `UPDATE users
              SET first_name = $1,
                  last_name = $2,
@@ -84,58 +87,35 @@ export class AuthService {
                  phone_number = COALESCE($4, phone_number),
                  password_hash = $5,
                  is_active = 1,
+                 email_verified_at = COALESCE(email_verified_at, SYSDATETIME()),
                  updated_at = SYSDATETIME()
+             OUTPUT INSERTED.id, INSERTED.email, INSERTED.role
              WHERE id = $6`,
-            [
-              firstName,
-              lastName,
-              fullName,
-              phoneNumber,
-              passwordHash,
-              existingUser.id,
-            ],
-          );
+              [
+                firstName,
+                lastName,
+                fullName,
+                phoneNumber,
+                passwordHash,
+                existingUser.id,
+              ],
+            );
 
-          await client.query(
-            `UPDATE customer_registration_verifications
+            await client.query(
+              `UPDATE customer_registration_verifications
              SET used_at = COALESCE(used_at, SYSDATETIME())
              WHERE user_id = $1
                AND used_at IS NULL`,
-            [existingUser.id],
-          );
+              [existingUser.id],
+            );
 
-          await client.query(
-            `INSERT INTO customer_registration_verifications (
-               user_id,
-               code_hash,
-               expires_at
-             )
-             VALUES ($1, $2, $3)`,
-            [
-              existingUser.id,
-              hashOpaqueToken(otp),
-              new Date(
-                Date.now() +
-                  1000 * 60 * AuthService.CUSTOMER_REGISTRATION_OTP_MINUTES,
-              ),
-            ],
-          );
-        });
-
-        this.queueMailTask(
-          () => this.mailService.sendCustomerRegistrationOtp({
-            email,
-            fullName,
-            code: otp,
-            expiresInMinutes: AuthService.CUSTOMER_REGISTRATION_OTP_MINUTES,
-          }),
-          `customer activation email for ${email}`,
+            return updated.rows[0];
+          },
         );
 
         return {
-          email,
-          message:
-            'Customer account created. Enter the 6-digit verification code we sent to your email.',
+          message: 'Customer account created. You can start shopping now.',
+          ...this.buildAuthResponse(updatedUser),
         };
       }
 
@@ -145,7 +125,6 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const otp = this.generateCustomerRegistrationOtp();
     const createdUser = await this.databaseService.withTransaction(
       async (client) => {
         const result = await client.query<{
@@ -155,45 +134,17 @@ export class AuthService {
         }>(
           `INSERT INTO users (email, first_name, last_name, full_name, phone_number, password_hash, role, email_verified_at)
            OUTPUT INSERTED.id, INSERTED.email, INSERTED.role
-           VALUES ($1, $2, $3, $4, $5, $6, 'customer', NULL)`,
+           VALUES ($1, $2, $3, $4, $5, $6, 'customer', SYSDATETIME())`,
           [email, firstName, lastName, fullName, phoneNumber, passwordHash],
-        );
-
-        await client.query(
-          `INSERT INTO customer_registration_verifications (
-             user_id,
-             code_hash,
-             expires_at
-           )
-           VALUES ($1, $2, $3)`,
-          [
-            result.rows[0].id,
-            hashOpaqueToken(otp),
-            new Date(
-              Date.now() +
-                1000 * 60 * AuthService.CUSTOMER_REGISTRATION_OTP_MINUTES,
-            ),
-          ],
         );
 
         return result.rows[0];
       },
     );
 
-    this.queueMailTask(
-      () => this.mailService.sendCustomerRegistrationOtp({
-        email,
-        fullName,
-        code: otp,
-        expiresInMinutes: AuthService.CUSTOMER_REGISTRATION_OTP_MINUTES,
-      }),
-      `customer activation email for ${email}`,
-    );
-
     return {
-      email: createdUser.email,
-      message:
-        'Customer account created. Enter the 6-digit verification code we sent to your email.',
+      message: 'Customer account created. You can start shopping now.',
+      ...this.buildAuthResponse(createdUser),
     };
   }
 
@@ -577,8 +528,13 @@ export class AuthService {
     }
 
     if (user.role === 'customer' && !user.email_verified_at) {
-      throw new UnauthorizedException(
-        'Verify your email with the 6-digit code we sent before signing in.',
+      await this.databaseService.query(
+        `UPDATE users
+         SET email_verified_at = SYSDATETIME(),
+             updated_at = SYSDATETIME()
+         WHERE id = $1
+           AND email_verified_at IS NULL`,
+        [user.id],
       );
     }
 

@@ -49,8 +49,13 @@ export class AuthController {
   @Post('register')
   @UseGuards(RateLimitGuard)
   @RateLimit({ max: 5, windowMs: 1000 * 60 * 15 })
-  register(@Body() dto: RegisterCustomerDto) {
-    return this.authService.registerCustomer(dto);
+  async register(
+    @Body() dto: RegisterCustomerDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.registerCustomer(dto);
+    setAuthCookie(response, result.accessToken, this.configService);
+    return result;
   }
 
   @Public()

@@ -2059,7 +2059,7 @@ export default function AccountPage() {
                         : "product-stock-line product-stock-line-empty"
                     }
                   >
-                    {product.stock > 0 ? `${product.stock} available now` : "Currently unavailable"}
+                    {product.stock > 0 ? "Available now" : "Currently unavailable"}
                   </div>
                 </div>
                 <div className="product-card-foot">

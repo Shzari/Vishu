@@ -114,16 +114,30 @@ export default function ShopsPage() {
                 {vendor.shopDescription?.slice(0, 110) || "Open this shop to see its current marketplace catalog."}
               </p>
               <div className="shop-card-meta">
-                <span>{visibleCategories.length} categories</span>
-                <span>{vendor.departments.map((entry) => formatCatalogLabel(entry)).slice(0, 2).join(" / ") || "All styles"}</span>
+                <span>
+                  {vendor.productCount > 0
+                    ? `${visibleCategories.length} categories`
+                    : "Coming soon"}
+                </span>
+                <span>
+                  {vendor.productCount > 0
+                    ? vendor.departments.map((entry) => formatCatalogLabel(entry)).slice(0, 2).join(" / ") || "All styles"
+                    : "0 products"}
+                </span>
               </div>
               <div className="shop-card-tags">
-                {visibleCategories.slice(0, 2).map((entry) => (
-                  <span key={`${vendor.id}-${entry}`} className="chip">
-                    {formatCatalogLabel(entry)}
-                  </span>
-                ))}
-                {visibleCategories.length > 2 ? <span className="chip">+{visibleCategories.length - 2} more</span> : null}
+                {vendor.productCount > 0 ? (
+                  <>
+                    {visibleCategories.slice(0, 2).map((entry) => (
+                      <span key={`${vendor.id}-${entry}`} className="chip">
+                        {formatCatalogLabel(entry)}
+                      </span>
+                    ))}
+                    {visibleCategories.length > 2 ? <span className="chip">+{visibleCategories.length - 2} more</span> : null}
+                  </>
+                ) : (
+                  <span className="chip">No products yet</span>
+                )}
               </div>
             </div>
           </Link>

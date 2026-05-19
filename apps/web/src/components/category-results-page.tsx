@@ -850,7 +850,7 @@ export function CategoryResultsPage({
                         }
                       >
                         {product.stock > 0
-                          ? `${product.stock} available now`
+                          ? "Available now"
                           : "Currently unavailable"}
                       </div>
                     </div>

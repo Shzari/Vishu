@@ -572,6 +572,14 @@ export class AdminController {
     );
   }
 
+  @Patch('products/:id/approve')
+  approveProduct(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+  ) {
+    return this.adminService.approveProduct(req.user.sub, id);
+  }
+
   @Patch('vendors/:id/activation')
   setVendorActivation(
     @Req() req: { user: AuthenticatedUser },

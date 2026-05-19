@@ -13,7 +13,7 @@ import {
   type DragEvent,
   type FormEvent,
 } from "react";
-import { useAuth } from "@/components/providers";
+import { useAuth, useLanguage } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { VendorWorkspaceShell } from "@/components/vendor-workspace-shell";
 import { apiRequest } from "@/lib/api";
@@ -61,6 +61,7 @@ function isVisibleVendorSizeType(name?: string | null) {
 export function VendorProductCreatePage() {
   const router = useRouter();
   const { token, loading } = useAuth();
+  const { language } = useLanguage();
   const [catalogOptions, setCatalogOptions] = useState<VendorCatalogOptions | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -371,8 +372,13 @@ export function VendorProductCreatePage() {
       return;
     }
 
-    if (!Number.isInteger(stockNumber) || stockNumber < 0) {
-      setError("Enter a valid stock amount.");
+    const stockRequiredMessage =
+      language === "sq"
+        ? "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok."
+        : "Stock can't be 0. Enter how many pieces you have in stock.";
+
+    if (!stock.trim() || !Number.isInteger(stockNumber) || stockNumber < 1) {
+      setError(stockRequiredMessage);
       return;
     }
 
@@ -388,6 +394,11 @@ export function VendorProductCreatePage() {
 
     if (!selectedColorIds.length) {
       setError("Select at least one color.");
+      return;
+    }
+
+    if (selectedSizeTypeId && !sizeVariants.length) {
+      setError(stockRequiredMessage);
       return;
     }
 
@@ -433,7 +444,7 @@ export function VendorProductCreatePage() {
         token,
       );
 
-      setStatus("Product created.");
+      setStatus("Product sent for admin review.");
       router.push("/vendor/products");
       router.refresh();
     } catch (nextError) {
@@ -502,10 +513,10 @@ export function VendorProductCreatePage() {
                       value={stock}
                       onChange={(event) => setStock(event.target.value)}
                       inputMode="numeric"
-                      min="0"
+                      min="1"
                       step="1"
                       type="number"
-                      placeholder="0"
+                      placeholder="1"
                     />
                   </label>
 
@@ -645,7 +656,7 @@ export function VendorProductCreatePage() {
                         <span>{size.label}</span>
                         <input
                           type="number"
-                          min="0"
+                          min="1"
                           step="1"
                           inputMode="numeric"
                           value={sizeStocks[size.id] ?? ""}
@@ -655,7 +666,7 @@ export function VendorProductCreatePage() {
                               [size.id]: event.target.value,
                             }))
                           }
-                          placeholder="0"
+                          placeholder="1"
                         />
                       </label>
                     ))}

@@ -417,10 +417,6 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const switchVendorMode = (mode: "vendor" | "shop") => {
-    router.push(mode === "vendor" ? "/vendor/dashboard" : "/");
-  };
-
   const markVendorNotificationRead = (notificationId: string) => {
     if (!token) return;
     setVendorSystemNotifications((current) =>
@@ -555,23 +551,21 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
 
             {isVendor ? (
               <div className="vendor-shop-toggle" aria-label="Choose vendor or shopping mode">
-                <button
-                  type="button"
+                <Link
+                  href="/vendor/dashboard"
                   className={isVendorRoute ? "active" : ""}
-                  aria-pressed={isVendorRoute}
-                  onClick={() => switchVendorMode("vendor")}
+                  aria-current={isVendorRoute ? "page" : undefined}
                 >
                   Vendor
-                </button>
+                </Link>
                 <span aria-hidden="true">/</span>
-                <button
-                  type="button"
+                <Link
+                  href="/"
                   className={!isVendorRoute ? "active" : ""}
-                  aria-pressed={!isVendorRoute}
-                  onClick={() => switchVendorMode("shop")}
+                  aria-current={!isVendorRoute ? "page" : undefined}
                 >
                   Shop
-                </button>
+                </Link>
               </div>
             ) : null}
           </div>

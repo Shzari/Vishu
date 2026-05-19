@@ -16,12 +16,13 @@ const VENDOR_WORKSPACE_LINKS: Array<{
   id: VendorWorkspaceSection;
   label: string;
   href: string;
+  noTranslate?: boolean;
 }> = [
   { id: "dashboard", label: "Dashboard", href: "/vendor/dashboard" },
   { id: "orders", label: "Orders", href: "/vendor/orders" },
   { id: "products", label: "Products", href: "/vendor/products" },
   { id: "earnings", label: "Earnings", href: "/vendor/earnings" },
-  { id: "settings", label: "Settings", href: "/vendor/settings" },
+  { id: "settings", label: "Settings", href: "/vendor/settings", noTranslate: true },
 ];
 
 export function VendorWorkspaceShell({
@@ -30,6 +31,7 @@ export function VendorWorkspaceShell({
   eyebrow,
   description,
   actions,
+  noTranslateTitle,
   children,
 }: {
   section: VendorWorkspaceSection;
@@ -37,6 +39,7 @@ export function VendorWorkspaceShell({
   eyebrow?: string;
   description?: string;
   actions?: React.ReactNode;
+  noTranslateTitle?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -71,7 +74,7 @@ export function VendorWorkspaceShell({
                       : "vendor-sidebar-link"
                   }
                 >
-                  <span>{link.label}</span>
+                  <span data-no-translate={link.noTranslate ? true : undefined}>{link.label}</span>
                 </Link>
               );
             })}
@@ -82,7 +85,7 @@ export function VendorWorkspaceShell({
           <section className="vendor-page-head">
             <div className="vendor-page-copy">
               {eyebrow ? <span className="vendor-page-eyebrow">{eyebrow}</span> : null}
-              <h1 className="vendor-page-title">{title}</h1>
+              <h1 className="vendor-page-title" data-no-translate={noTranslateTitle ? true : undefined}>{title}</h1>
               {description ? (
                 <p className="vendor-page-description">{description}</p>
               ) : null}

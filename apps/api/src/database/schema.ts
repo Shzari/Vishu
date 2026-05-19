@@ -730,7 +730,7 @@ BEGIN
     color NVARCHAR(80) NULL,
     size NVARCHAR(80) NULL,
     product_code NVARCHAR(80) NULL,
-    admin_status NVARCHAR(30) NOT NULL DEFAULT 'approved',
+    admin_status NVARCHAR(30) NOT NULL DEFAULT 'under_review',
     admin_block_reason NVARCHAR(500) NULL,
     admin_blocked_at DATETIME2 NULL,
     low_stock_alert_sent_at DATETIME2 NULL,
@@ -746,7 +746,7 @@ END;
 
 IF COL_LENGTH('dbo.products', 'admin_status') IS NULL
 BEGIN
-  ALTER TABLE dbo.products ADD admin_status NVARCHAR(30) NOT NULL CONSTRAINT df_products_admin_status DEFAULT 'approved';
+  ALTER TABLE dbo.products ADD admin_status NVARCHAR(30) NOT NULL CONSTRAINT df_products_admin_status DEFAULT 'under_review';
 END;
 
 IF COL_LENGTH('dbo.products', 'admin_block_reason') IS NULL
@@ -954,6 +954,8 @@ INSERT INTO dbo.categories (name, is_active, sort_order)
 SELECT seed.name, 1, seed.sort_order
 FROM (
   VALUES
+    ('Beach', 120),
+    ('Set', 125),
     ('underwear', 130),
     ('Shoes', 140),
     ('accessories', 150)
@@ -992,6 +994,8 @@ INSERT INTO dbo.subcategories (category_id, name, is_active, sort_order)
 SELECT c.id, seed.name, 1, seed.sort_order
 FROM (
   VALUES
+    ('Beach', 'Beach', 0),
+    ('Set', 'Set', 0),
     ('underwear', 'underwear', 0),
     ('Shoes', 'Shoes', 0),
     ('accessories', 'Hat', 10),

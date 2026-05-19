@@ -9,6 +9,19 @@ import { RequireRole } from "@/components/require-role";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
 import type { AdminVendorDetail } from "@/lib/types";
 
+function getProductReviewStatus(product: AdminVendorDetail["products"][number]) {
+  if (product.adminStatus === "blocked") {
+    return { className: "admin-status-pill rejected", label: "Blocked" };
+  }
+  if (product.adminStatus === "under_review") {
+    return { className: "admin-status-pill pending", label: "Needs review" };
+  }
+  if (!product.isListed) {
+    return { className: "admin-status-pill inactive", label: "Approved hidden" };
+  }
+  return { className: "admin-status-pill active", label: "Approved visible" };
+}
+
 export default function AdminVendorDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -284,6 +297,29 @@ export default function AdminVendorDetailPage() {
     }
   }
 
+  async function handleProductApprove(productId: string) {
+    if (!token) {
+      return;
+    }
+
+    try {
+      setProductAction(`approve-${productId}`);
+      setAccountMessage(null);
+      setAccountError(null);
+      const response = await apiRequest<{ message: string }>(
+        `/admin/products/${productId}/approve`,
+        { method: "PATCH" },
+        token,
+      );
+      await refreshDetail();
+      setAccountMessage(response.message);
+    } catch (actionError) {
+      setAccountError(actionError instanceof Error ? actionError.message : "Failed to approve product.");
+    } finally {
+      setProductAction(null);
+    }
+  }
+
   if (loading) {
     return (
       <RequireRole requiredRole="admin">
@@ -496,7 +532,7 @@ export default function AdminVendorDetailPage() {
                 <div>
                   <h2 className="section-title">Vendor products</h2>
                   <p className="muted">
-                    All catalog items currently owned by this vendor.
+                    Review every vendor upload before it can appear publicly.
                   </p>
                 </div>
                 <span className="chip">{vendorProducts.length} products</span>
@@ -518,7 +554,9 @@ export default function AdminVendorDetailPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {vendorProducts.map((product) => (
+                      {vendorProducts.map((product) => {
+                        const reviewStatus = getProductReviewStatus(product);
+                        return (
                         <tr key={product.id}>
                           <td>
                             <div className="inline-actions" style={{ alignItems: "center", flexWrap: "nowrap" }}>
@@ -543,8 +581,8 @@ export default function AdminVendorDetailPage() {
                             </div>
                           </td>
                           <td>
-                            <span className={product.adminStatus === "blocked" ? "admin-status-pill rejected" : product.isListed ? "admin-status-pill active" : "admin-status-pill inactive"}>
-                              {product.adminStatus === "blocked" ? "Blocked" : product.isListed ? "Visible" : "Hidden"}
+                            <span className={reviewStatus.className}>
+                              {reviewStatus.label}
                             </span>
                             {product.adminBlockReason ? (
                               <p className="muted">{product.adminBlockReason}</p>
@@ -564,6 +602,16 @@ export default function AdminVendorDetailPage() {
                               <Link className="button-ghost" href={`/products/${product.id}`} target="_blank">
                                 Open product
                               </Link>
+                              {product.adminStatus !== "approved" ? (
+                                <button
+                                  className="button-secondary"
+                                  type="button"
+                                  disabled={productAction !== null}
+                                  onClick={() => void handleProductApprove(product.id)}
+                                >
+                                  {productAction === `approve-${product.id}` ? "Approving..." : "Approve"}
+                                </button>
+                              ) : null}
                               <button
                                 className={product.adminStatus === "blocked" ? "button-secondary" : "danger-button"}
                                 type="button"
@@ -579,7 +627,8 @@ export default function AdminVendorDetailPage() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -29,7 +29,7 @@ export class ProductMutationDto {
 
   @Type(() => Number)
   @IsInt()
-  @Min(0)
+  @Min(1)
   stock!: number;
 
   @IsString()
@@ -139,7 +139,7 @@ export class ProductUpdateDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(0)
+  @Min(1)
   stock?: number;
 
   @IsOptional()
@@ -247,7 +247,7 @@ export class ProductBulkStockDto {
 
   @Type(() => Number)
   @IsInt()
-  @Min(0)
+  @Min(1)
   stock!: number;
 }
 

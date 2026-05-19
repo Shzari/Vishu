@@ -673,11 +673,26 @@ export function VendorWorkspace({
             ),
           )
         : form.stock;
+      const resolvedStockNumber = Number(resolvedStock);
+      const stockRequiredMessage =
+        language === "sq"
+          ? "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok."
+          : "Stock can't be 0. Enter how many pieces you have in stock.";
       const imageFilesForSubmission = files.length
         ? files
         : selectedProductImageFilesRef.current.length
           ? selectedProductImageFilesRef.current
           : Array.from(productImageInputRef.current?.files ?? []);
+
+      if (!resolvedStock.trim() || !Number.isInteger(resolvedStockNumber) || resolvedStockNumber < 1) {
+        setError(stockRequiredMessage);
+        return;
+      }
+
+      if (!selectedFormIsAccessories && form.sizeTypeId && selectedSizeVariants.length === 0) {
+        setError(stockRequiredMessage);
+        return;
+      }
 
       if (!editingProductId && imageFilesForSubmission.length === 0) {
         setError("Select at least one product photo before creating the product.");
@@ -733,10 +748,10 @@ export function VendorWorkspace({
       resetProductForm();
       setMessage(
         editingProductId
-          ? "Product updated."
+          ? "Product updated and sent for admin review."
           : selectedGenderIds.length > 1
-            ? `${selectedGenderIds.length} product listings created.`
-            : "Product created.",
+            ? `${selectedGenderIds.length} product listings sent for admin review.`
+            : "Product sent for admin review.",
       );
       await loadWorkspace();
       if (productComposerMode === "page") {
@@ -815,16 +830,23 @@ export function VendorWorkspace({
     }
   }
 
-  async function toggleProductListing(productId: string, isListed: boolean) {
+  async function toggleProductListing(product: Product, isListed: boolean) {
     if (!token) return;
+    const requestsAdminReview = isListed && product.adminStatus !== "approved";
     try {
-      setActiveAction(`listing-${productId}`);
+      setActiveAction(`listing-${product.id}`);
       await apiRequest(
-        `/products/${productId}/listing`,
+        `/products/${product.id}/listing`,
         { method: "PATCH", body: JSON.stringify({ isListed }) },
         token,
       );
-      setMessage(isListed ? "Product is visible in the shop." : "Product hidden from the public shop.");
+      setMessage(
+        requestsAdminReview
+          ? "Product sent to admin for review."
+          : isListed
+            ? "Product is visible in the shop."
+            : "Product hidden from the public shop.",
+      );
       await loadWorkspace();
     } catch (listingError) {
       setError(listingError instanceof Error ? listingError.message : "Listing update failed.");
@@ -849,6 +871,16 @@ export function VendorWorkspace({
 
   async function applyBulkStockUpdate() {
     if (!token || selectedProductIds.length === 0 || bulkStockValue.trim().length === 0) return;
+    const nextStock = Number(bulkStockValue);
+    if (!Number.isInteger(nextStock) || nextStock < 1) {
+      setError(
+        language === "sq"
+          ? "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok."
+          : "Stock can't be 0. Enter how many pieces you have in stock.",
+      );
+      return;
+    }
+
     try {
       setActiveAction("bulk-stock");
       await apiRequest(
@@ -857,7 +889,7 @@ export function VendorWorkspace({
           method: "PATCH",
           body: JSON.stringify({
             productIds: selectedProductIds,
-            stock: Number(bulkStockValue),
+            stock: nextStock,
           }),
         },
         token,
@@ -1114,6 +1146,7 @@ export function VendorWorkspace({
         return {
           ...product,
           isListed: product.isListed ?? true,
+          adminStatus: product.adminStatus ?? "approved",
           soldUnits: metrics.soldUnits,
           orderCount: metrics.orderCount,
           revenue: metrics.revenue,
@@ -1138,6 +1171,19 @@ export function VendorWorkspace({
         : products.filter((product) => product.department === departmentFilter);
     return [...new Set(baseProducts.map((product) => product.category))].sort();
   }, [departmentFilter, products]);
+
+  function getVendorProductVisibilityLabel(product: Product) {
+    if (product.adminStatus === "blocked") return "Blocked by admin";
+    if (product.adminStatus === "under_review") return "Waiting admin review";
+    return product.isListed ? "Listed" : "Hidden";
+  }
+
+  function getVendorProductListingActionLabel(product: Product) {
+    if (activeAction === `listing-${product.id}`) return "Saving...";
+    if (product.adminStatus === "under_review") return "Waiting review";
+    if (product.adminStatus !== "approved" && !product.isListed) return "Request review";
+    return product.isListed ? "Hide" : "Show";
+  }
 
   const filteredProducts = useMemo(
     () =>
@@ -1907,7 +1953,9 @@ export function VendorWorkspace({
                         <label>{form.sizeIds.length ? "Total stock" : "Stock"}</label>
                         <input
                           type="number"
-                          placeholder="0"
+                          min="1"
+                          step="1"
+                          placeholder="1"
                           value={
                             form.sizeIds.length
                               ? String(selectedSizeTotalStock)
@@ -2174,7 +2222,7 @@ export function VendorWorkspace({
                                             )
                                           : {
                                               ...current.sizeStocks,
-                                              [entry.id]: current.sizeStocks[entry.id] ?? "0",
+                                              [entry.id]: current.sizeStocks[entry.id] ?? "1",
                                             },
                                       }))
                                     }
@@ -2186,8 +2234,9 @@ export function VendorWorkspace({
                                       <span>Stock</span>
                                       <input
                                         type="number"
-                                        min="0"
-                                        value={form.sizeStocks[entry.id] ?? "0"}
+                                        min="1"
+                                        step="1"
+                                        value={form.sizeStocks[entry.id] ?? ""}
                                         onChange={(event) =>
                                           setForm((current) => ({
                                             ...current,
@@ -2425,13 +2474,13 @@ export function VendorWorkspace({
             <section className="form-card stack">
               <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><h2 className="section-title">Product list</h2><p className="muted">Search and filter your catalog, then edit or manage each product from its own row.</p></div><span className="chip">{filteredProducts.length} shown</span></div>
               <div className="vendor-product-toolbar"><div className="field"><label>Search products</label><input placeholder="Title, code, gender, category, color, size" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} /></div><div className="field"><label>Sort by</label><select value={productSort} onChange={(event) => setProductSort(event.target.value)}><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="price-low">Price ↑</option><option value="price-high">Price ↓</option><option value="title">A-Z</option><option value="most-ordered">Orders ↓</option></select></div><div className="field"><label>Listing filter</label><select value={listingFilter} onChange={(event) => setListingFilter(event.target.value)}><option value="all">Listed and hidden</option><option value="listed">Listed only</option><option value="hidden">Hidden only</option></select></div><div className="field"><label>{getCatalogGenderLabel()}</label><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="all">All {getCatalogGenderLabel(true).toLowerCase()}</option>{vendorDepartments.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div><div className="field"><label>Category</label><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{vendorCategories.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div></div>
-              {filteredProducts.length === 0 ? <div className="empty">{products.length === 0 ? "No products yet. Add your first product to start building the shop." : "No matching products yet."}</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">{product.isListed ? "Listed" : "Hidden"}</span><span className="muted">Stock {product.stock}</span><span className="muted">{formatCurrency(product.price)}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div><div className="vendor-product-expanded"><div className="vendor-product-preview"><ProductMedia image={assetUrl(product.images[0])} title={product.title} subtitle={`${formatCatalogLabel(product.department)} ${formatCatalogLabel(product.category)}`} className="card-image" /></div><div className="vendor-product-content"><div className="stack" style={{ gap: "0.2rem" }}><strong>{product.title}</strong><p className="muted">{formatCatalogLabel(product.department)} | {formatCatalogLabel(product.category)}{product.color ? ` | ${formatProductAttributeLabel(product.color)}` : ""}{product.size ? ` | ${formatProductAttributeLabel(product.size)}` : ""}</p></div><div className="vendor-product-metrics"><span>{product.isListed ? "Public listing active" : "Hidden from customers"}</span><span>Price {formatCurrency(product.price)}</span><span>Stock {product.stock}</span><span>Sold {product.soldUnits}</span><span>Orders {product.orderCount}</span>{vendorCanViewFinance ? <span>Earnings {formatCurrency(product.revenue)}</span> : null}</div></div><div className="vendor-product-actions"><button className="button-secondary" type="button" disabled={activeAction !== null} onClick={() => startEditProduct(product)}>Edit</button><button className="button-ghost" type="button" disabled={activeAction !== null} onClick={() => duplicateProduct(product.id)}>{activeAction === `duplicate-${product.id}` ? "Duplicating..." : "Duplicate"}</button><button className="button-ghost" type="button" disabled={activeAction !== null} onClick={() => toggleProductListing(product.id, !product.isListed)}>{activeAction === `listing-${product.id}` ? "Saving..." : product.isListed ? "Hide" : "Show"}</button><button className="danger-button" type="button" disabled={activeAction !== null} onClick={() => deleteProduct(product.id)}>{activeAction === `delete-${product.id}` ? "Deleting..." : "Delete"}</button></div></div></div>)}
+              {filteredProducts.length === 0 ? <div className="empty">{products.length === 0 ? "No products yet. Add your first product to start building the shop." : "No matching products yet."}</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">{getVendorProductVisibilityLabel(product)}</span>{product.adminBlockReason ? <span className="muted">{product.adminBlockReason}</span> : null}<span className="muted">Stock {product.stock}</span><span className="muted">{formatCurrency(product.price)}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div><div className="vendor-product-expanded"><div className="vendor-product-preview"><ProductMedia image={assetUrl(product.images[0])} title={product.title} subtitle={`${formatCatalogLabel(product.department)} ${formatCatalogLabel(product.category)}`} className="card-image" /></div><div className="vendor-product-content"><div className="stack" style={{ gap: "0.2rem" }}><strong>{product.title}</strong><p className="muted">{formatCatalogLabel(product.department)} | {formatCatalogLabel(product.category)}{product.color ? ` | ${formatProductAttributeLabel(product.color)}` : ""}{product.size ? ` | ${formatProductAttributeLabel(product.size)}` : ""}</p></div><div className="vendor-product-metrics"><span>{product.adminStatus === "approved" && product.isListed ? "Public listing active" : "Hidden from customers"}</span><span>Price {formatCurrency(product.price)}</span><span>Stock {product.stock}</span><span>Sold {product.soldUnits}</span><span>Orders {product.orderCount}</span>{vendorCanViewFinance ? <span>Earnings {formatCurrency(product.revenue)}</span> : null}</div></div><div className="vendor-product-actions"><button className="button-secondary" type="button" disabled={activeAction !== null} onClick={() => startEditProduct(product)}>Edit</button><button className="button-ghost" type="button" disabled={activeAction !== null} onClick={() => duplicateProduct(product.id)}>{activeAction === `duplicate-${product.id}` ? "Duplicating..." : "Duplicate"}</button><button className="button-ghost" type="button" disabled={activeAction !== null || product.adminStatus === "under_review"} onClick={() => toggleProductListing(product, !product.isListed)}>{getVendorProductListingActionLabel(product)}</button><button className="danger-button" type="button" disabled={activeAction !== null} onClick={() => deleteProduct(product.id)}>{activeAction === `delete-${product.id}` ? "Deleting..." : "Delete"}</button></div></div></div>)}
             </section>
             ) : null}
           </>
         ) : null}
 
-        {section === "inventory" ? <><section className="form-card stack"><div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><h2 className="section-title">Stock controls</h2><p className="muted">Focus only on stock levels, low-stock alerts, out-of-stock items, and bulk quantity updates.</p></div><span className="chip">Threshold {lowStockThreshold === 0 ? "off" : lowStockThreshold}</span></div><div className="vendor-product-toolbar"><div className="field"><label>Search products</label><input placeholder="Title, code, color, size" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} /></div><div className="field"><label>Stock filter</label><select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}><option value="all">All stock states</option><option value="low_stock">Low stock</option><option value="out_of_stock">Out of stock</option><option value="in_stock">In stock</option></select></div><div className="field"><label>{getCatalogGenderLabel()}</label><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="all">All {getCatalogGenderLabel(true).toLowerCase()}</option>{vendorDepartments.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div><div className="field"><label>Category</label><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{vendorCategories.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div></div></section><section className="form-card stack"><div className="card vendor-bulk-actions"><div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><strong>Bulk stock update</strong><p className="muted">Select products below, set one shared stock value, and update them together.</p></div><span className="chip">{selectedProductIds.length} selected</span></div><div className="inline-actions"><button className="button-secondary" type="button" onClick={() => setSelectedProductIds(filteredProducts.map((product) => product.id))} disabled={filteredProducts.length === 0}>Select shown</button><button className="button-ghost" type="button" onClick={() => setSelectedProductIds([])} disabled={selectedProductIds.length === 0}>Clear selection</button></div><div className="inline-actions" style={{ alignItems: "end" }}><div className="field" style={{ minWidth: "180px" }}><label>New stock for selected</label><input type="number" min="0" value={bulkStockValue} onChange={(event) => setBulkStockValue(event.target.value)} placeholder="e.g. 12" /></div><button className="button" type="button" disabled={selectedProductIds.length === 0 || bulkStockValue.trim().length === 0} onClick={() => void applyBulkStockUpdate()}>{activeAction === "bulk-stock" ? "Updating..." : "Apply stock update"}</button></div></div>{filteredProducts.length === 0 ? <div className="empty">No stock-managed products for this filter.</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><label className="vendor-row-check"><input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={(event) => setSelectedProductIds((current) => event.target.checked ? [...current, product.id] : current.filter((entry) => entry !== product.id))} /></label><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">Stock {product.stock}</span><span className="muted">Sold {product.soldUnits}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div></div>)}</section></> : null}
+        {section === "inventory" ? <><section className="form-card stack"><div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><h2 className="section-title">Stock controls</h2><p className="muted">Focus only on stock levels, low-stock alerts, out-of-stock items, and bulk quantity updates.</p></div><span className="chip">Threshold {lowStockThreshold === 0 ? "off" : lowStockThreshold}</span></div><div className="vendor-product-toolbar"><div className="field"><label>Search products</label><input placeholder="Title, code, color, size" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} /></div><div className="field"><label>Stock filter</label><select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}><option value="all">All stock states</option><option value="low_stock">Low stock</option><option value="out_of_stock">Out of stock</option><option value="in_stock">In stock</option></select></div><div className="field"><label>{getCatalogGenderLabel()}</label><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="all">All {getCatalogGenderLabel(true).toLowerCase()}</option>{vendorDepartments.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div><div className="field"><label>Category</label><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{vendorCategories.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div></div></section><section className="form-card stack"><div className="card vendor-bulk-actions"><div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><strong>Bulk stock update</strong><p className="muted">Select products below, set one shared stock value, and update them together.</p></div><span className="chip">{selectedProductIds.length} selected</span></div><div className="inline-actions"><button className="button-secondary" type="button" onClick={() => setSelectedProductIds(filteredProducts.map((product) => product.id))} disabled={filteredProducts.length === 0}>Select shown</button><button className="button-ghost" type="button" onClick={() => setSelectedProductIds([])} disabled={selectedProductIds.length === 0}>Clear selection</button></div><div className="inline-actions" style={{ alignItems: "end" }}><div className="field" style={{ minWidth: "180px" }}><label>New stock for selected</label><input type="number" min="1" step="1" value={bulkStockValue} onChange={(event) => setBulkStockValue(event.target.value)} placeholder="e.g. 12" /></div><button className="button" type="button" disabled={selectedProductIds.length === 0 || bulkStockValue.trim().length === 0} onClick={() => void applyBulkStockUpdate()}>{activeAction === "bulk-stock" ? "Updating..." : "Apply stock update"}</button></div></div>{filteredProducts.length === 0 ? <div className="empty">No stock-managed products for this filter.</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><label className="vendor-row-check"><input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={(event) => setSelectedProductIds((current) => event.target.checked ? [...current, product.id] : current.filter((entry) => entry !== product.id))} /></label><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">Stock {product.stock}</span><span className="muted">Sold {product.soldUnits}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div></div>)}</section></> : null}
 
         {section === "orders" ? (
           <section className="form-card stack">

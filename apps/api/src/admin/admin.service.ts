@@ -3976,6 +3976,36 @@ export class AdminService {
     return response;
   }
 
+  async approveProduct(adminUserId: string, productId: string) {
+    const product = await this.databaseService.query<{
+      id: string;
+      title: string;
+      vendor_id: string;
+    }>('SELECT TOP 1 id, title, vendor_id FROM products WHERE id = $1', [
+      productId,
+    ]);
+
+    const record = product.rows[0];
+    if (!record) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const response = await this.productsService.adminApproveProduct(productId);
+
+    await this.recordAdminActivity(adminUserId, {
+      actionType: 'product_approved',
+      entityType: 'product',
+      entityId: productId,
+      entityLabel: record.title,
+      description: `Approved product ${record.title}.`,
+      metadata: {
+        vendorId: record.vendor_id,
+      },
+    });
+
+    return response;
+  }
+
   async updateVendorActivation(
     adminUserId: string,
     vendorId: string,

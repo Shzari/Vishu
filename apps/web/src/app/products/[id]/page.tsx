@@ -12,6 +12,7 @@ import {
   isAccessoryProduct,
   isCatalogDepartmentVisible,
 } from "@/lib/catalog";
+import { getColorSwatchStyle, getResolvedColorKey } from "@/lib/color-swatch";
 import { FavoriteStarButton } from "@/components/favorite-star-button";
 import { ProductMedia } from "@/components/product-media";
 import { RatingStars } from "@/components/rating-stars";
@@ -25,6 +26,7 @@ export default function ProductDetailPage() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | undefined>();
   const [selectedSizeId, setSelectedSizeId] = useState("");
+  const [selectedColorId, setSelectedColorId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(null);
   const [reviewRating, setReviewRating] = useState(5);
@@ -39,7 +41,6 @@ export default function ProductDetailPage() {
   const [reviewModal, setReviewModal] = useState<"product" | "shop" | null>(null);
   const [cartNotice, setCartNotice] = useState<string | null>(null);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
-  const [imageZoom, setImageZoom] = useState(1);
 
   useEffect(() => {
     async function loadProduct() {
@@ -51,6 +52,11 @@ export default function ProductDetailPage() {
         setProduct(data);
         setSelectedImage(data.images[0]);
         setSelectedSizeId(data.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "");
+        setSelectedColorId(
+          data.colors.find((entry) => entry.name === data.color)?.id ??
+            data.colors[0]?.id ??
+            "",
+        );
         setRelatedProducts(
           catalog
             .filter((entry) => entry.id !== data.id)
@@ -243,7 +249,6 @@ export default function ProductDetailPage() {
       return;
     }
 
-    setImageZoom(1);
     setImageViewerOpen(true);
   }
 
@@ -293,12 +298,19 @@ export default function ProductDetailPage() {
     : "Talk about quality, fit, delivery, or anything helpful for the next customer.";
   const activeReviewLockedText = isShopReviewModal ? shopReviewSupportText : productReviewSupportText;
   const selectedSize = product.sizeVariants.find((entry) => entry.id === selectedSizeId) ?? null;
+  const selectedColor =
+    product.colors.find((entry) => entry.id === selectedColorId) ??
+    product.colors.find((entry) => entry.name === product.color) ??
+    product.colors[0] ??
+    null;
   const isOwnVendorProduct = currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id;
   const productIsAccessory = isAccessoryProduct(product);
-  const displaySizeOptions = product.sizeOptions?.length ? product.sizeOptions : product.sizeVariants.map((variant) => ({
-    ...variant,
-    isAvailable: true,
-  }));
+  const displaySizeOptions = product.sizeVariants.length
+    ? product.sizeVariants.map((variant) => ({
+        ...variant,
+        isAvailable: true,
+      }))
+    : product.sizeOptions ?? [];
 
   function addSelectedProductToCart() {
     if (!product) return;
@@ -311,7 +323,7 @@ export default function ProductDetailPage() {
         title: product.title,
         price: product.price,
         image: product.images[0],
-        color: product.color ?? product.colors[0]?.name ?? null,
+        color: selectedColor?.name ?? product.color ?? product.colors[0]?.name ?? null,
         size: productIsAccessory ? null : selectedSize?.label ?? product.size ?? null,
         quantity: 1,
         stock: selectedSize?.stock ?? product.stock,
@@ -370,7 +382,7 @@ export default function ProductDetailPage() {
           <RatingStars value={product.ratingSummary.average} count={product.ratingSummary.count} size="lg" />
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
           <div className="product-stock detail-stock">
-            {product.stock > 0 ? `In stock: ${product.stock}` : "Currently unavailable"}
+            {product.stock > 0 ? "Available now" : "Currently unavailable"}
           </div>
           {!productIsAccessory && displaySizeOptions.length > 0 ? (
             <div className="product-size-picker">
@@ -395,6 +407,42 @@ export default function ProductDetailPage() {
                       aria-label={`${variant.label}${isUnavailable ? " unavailable" : ""}`}
                     >
                       {formatProductAttributeLabel(variant.label)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          {product.colors.length > 1 ? (
+            <div className="product-color-picker">
+              <span>Color</span>
+              <div className="product-color-options">
+                {product.colors.map((color) => {
+                  const colorKey = getResolvedColorKey(color.name);
+                  const isSelected = selectedColor?.id === color.id;
+
+                  return (
+                    <button
+                      key={color.id}
+                      type="button"
+                      className={[
+                        "product-color-option",
+                        isSelected ? "selected" : "",
+                        colorKey === "white" ? "white" : "",
+                        colorKey === "black" ? "black" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => setSelectedColorId(color.id)}
+                      aria-pressed={isSelected}
+                      aria-label={`Select ${color.name}`}
+                    >
+                      <span
+                        className="product-color-swatch"
+                        style={getColorSwatchStyle(color.name)}
+                        aria-hidden="true"
+                      />
+                      <span>{formatProductAttributeLabel(color.name)}</span>
                     </button>
                   );
                 })}
@@ -682,30 +730,8 @@ export default function ProductDetailPage() {
             <div className="product-image-viewer-toolbar">
               <div className="product-image-viewer-title">
                 <strong>{product.title}</strong>
-                <span>{Math.round(imageZoom * 100)}%</span>
               </div>
               <div className="product-image-viewer-actions">
-                <button
-                  className="button-ghost"
-                  type="button"
-                  onClick={() => setImageZoom((current) => Math.max(1, Number((current - 0.25).toFixed(2))))}
-                >
-                  Zoom out
-                </button>
-                <button
-                  className="button-ghost"
-                  type="button"
-                  onClick={() => setImageZoom(1)}
-                >
-                  Reset
-                </button>
-                <button
-                  className="button-ghost"
-                  type="button"
-                  onClick={() => setImageZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))}
-                >
-                  Zoom in
-                </button>
                 <button className="button" type="button" onClick={() => setImageViewerOpen(false)}>
                   Close
                 </button>
@@ -715,7 +741,6 @@ export default function ProductDetailPage() {
               <img
                 src={assetUrl(selectedImage)}
                 alt={product.title}
-                style={{ transform: `scale(${imageZoom})` }}
               />
             </div>
           </div>

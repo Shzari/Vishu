@@ -14,6 +14,7 @@ import {
   isAccessoryProduct,
   isCatalogDepartmentVisible,
 } from "@/lib/catalog";
+import { getColorSwatchStyle, getResolvedColorKey } from "@/lib/color-swatch";
 import { ProductMedia } from "@/components/product-media";
 import type { Product } from "@/lib/types";
 
@@ -23,6 +24,7 @@ export function ProductDetailClient() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | undefined>();
   const [selectedSizeId, setSelectedSizeId] = useState("");
+  const [selectedColorId, setSelectedColorId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cartNotice, setCartNotice] = useState<string | null>(null);
   const { addItem } = useCart();
@@ -39,6 +41,11 @@ export function ProductDetailClient() {
         setSelectedImage(data.images[0]);
         setSelectedSizeId(
           data.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "",
+        );
+        setSelectedColorId(
+          data.colors.find((entry) => entry.name === data.color)?.id ??
+            data.colors[0]?.id ??
+            "",
         );
         setRelatedProducts(
           catalog
@@ -85,15 +92,20 @@ export function ProductDetailClient() {
     ? `/?department=${encodeURIComponent(product.department)}`
     : null;
   const productSizeOptions =
-    product.sizeOptions?.length
-      ? product.sizeOptions
-      : product.sizeVariants.map((variant) => ({
+    product.sizeVariants.length
+      ? product.sizeVariants.map((variant) => ({
           ...variant,
           isAvailable: true,
-        }));
+        }))
+      : product.sizeOptions ?? [];
   const selectedSize =
     product.sizeVariants.find((entry) => entry.id === selectedSizeId) ??
     product.sizeOptions?.find((entry) => entry.id === selectedSizeId) ??
+    null;
+  const selectedColor =
+    product.colors.find((entry) => entry.id === selectedColorId) ??
+    product.colors.find((entry) => entry.name === product.color) ??
+    product.colors[0] ??
     null;
   const productIsAccessory = isAccessoryProduct(product);
   const selectedStock = selectedSize?.stock ?? product.stock;
@@ -113,7 +125,7 @@ export function ProductDetailClient() {
         title: product.title,
         price: product.price,
         image: product.images[0],
-        color: product.color ?? product.colors[0]?.name ?? null,
+        color: selectedColor?.name ?? product.color ?? product.colors[0]?.name ?? null,
         size: productIsAccessory ? null : selectedSize?.label ?? product.size ?? null,
         quantity: 1,
         stock: selectedStock,
@@ -169,11 +181,7 @@ export function ProductDetailClient() {
           <h1 className="product-detail-title">{product.title}</h1>
           <div className="product-detail-price">{formatCurrency(product.price)}</div>
           <div className="product-stock detail-stock">
-            {product.stock > 0
-              ? selectedSize
-                ? `Selected size stock: ${selectedStock}`
-                : `In stock: ${product.stock}`
-              : "Currently unavailable"}
+            {product.stock > 0 ? "Available now" : "Currently unavailable"}
           </div>
           {!productIsAccessory && productSizeOptions.length > 0 ? (
             <div className="product-size-picker">
@@ -202,15 +210,45 @@ export function ProductDetailClient() {
                   );
                 })}
               </div>
-              {selectedSize ? (
-                <p className="muted">
-                  {selectedStock === 1
-                    ? "Only 1 left in this size."
-                    : `${selectedStock} available in this size.`}
-                </p>
-              ) : (
+              {!selectedSize ? (
                 <p className="muted">Choose an available size before adding to cart.</p>
-              )}
+              ) : null}
+            </div>
+          ) : null}
+          {product.colors.length > 1 ? (
+            <div className="product-color-picker">
+              <span>Color</span>
+              <div className="product-color-options">
+                {product.colors.map((color) => {
+                  const colorKey = getResolvedColorKey(color.name);
+                  const isSelected = selectedColor?.id === color.id;
+
+                  return (
+                    <button
+                      key={color.id}
+                      type="button"
+                      className={[
+                        "product-color-option",
+                        isSelected ? "selected" : "",
+                        colorKey === "white" ? "white" : "",
+                        colorKey === "black" ? "black" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => setSelectedColorId(color.id)}
+                      aria-pressed={isSelected}
+                      aria-label={`Select ${color.name}`}
+                    >
+                      <span
+                        className="product-color-swatch"
+                        style={getColorSwatchStyle(color.name)}
+                        aria-hidden="true"
+                      />
+                      <span>{formatProductAttributeLabel(color.name)}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
           <p className="product-detail-copy">{product.description}</p>

@@ -833,9 +833,11 @@ const textTranslations = new Map<string, string>([
   ["Shoes", "Këpucë"],
   ["Sportswear", "Veshje sportive"],
   ["Accessories", "Aksesorë"],
+  ["Beach", "Plazhi"],
   ["Leggings", "Leggings"],
   ["Dresses", "Fustane"],
   ["Skirts", "Funde"],
+  ["Set", "Set"],
   ["Sets", "Sete"],
   ["Schoolwear", "Veshje shkolle"],
   ["Bodysuits", "Body për bebe"],
@@ -1197,7 +1199,7 @@ function translateElement(root: ParentNode, language: Language) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (!parent || parent.closest("script, style, textarea")) {
+      if (!parent || parent.closest("script, style, textarea, [data-no-translate]")) {
         return NodeFilter.FILTER_REJECT;
       }
       return NodeFilter.FILTER_ACCEPT;

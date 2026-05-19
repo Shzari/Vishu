@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth, useCart } from "@/components/providers";
 import { FavoriteStarButton } from "@/components/favorite-star-button";
@@ -15,6 +14,7 @@ import {
   getCatalogGenderLabel,
   formatProductAttributeLabel,
 } from "@/lib/catalog";
+import { getColorSwatchStyle, getResolvedColorKey } from "@/lib/color-swatch";
 import { ProductMedia } from "@/components/product-media";
 import type {
   HomepageHeroConfig,
@@ -70,19 +70,14 @@ function applyCatalogFilters(
   });
 }
 
-function sortProductsByVendor(items: Product[]) {
-  return [...items].sort(
-    (left, right) =>
-      (left.vendor?.shopName?.trim() || "Vendor").localeCompare(
-        right.vendor?.shopName?.trim() || "Vendor",
-      ) ||
-      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
-      left.title.localeCompare(right.title),
-  );
+function shuffleProducts(items: Product[]) {
+  return [...items]
+    .map((product) => ({ product, sortKey: Math.random() }))
+    .sort((left, right) => left.sortKey - right.sortKey)
+    .map((entry) => entry.product);
 }
 
 export default function HomePage() {
-  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [vendors, setVendors] = useState<PublicVendorSummary[]>([]);
   const [homepageHero, setHomepageHero] = useState<HomepageHeroConfig>({
@@ -98,6 +93,7 @@ export default function HomePage() {
     string | undefined
   >();
   const [selectedQuickViewSizeId, setSelectedQuickViewSizeId] = useState<string>("");
+  const [selectedQuickViewColorId, setSelectedQuickViewColorId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -114,13 +110,7 @@ export default function HomePage() {
   const [size, setSize] = useState("all");
   const [filtersHydrated, setFiltersHydrated] = useState(false);
   const { addItem } = useCart();
-  const { currentRole, loading: authLoading, profile } = useAuth();
-
-  useEffect(() => {
-    if (!authLoading && currentRole === "vendor") {
-      router.replace("/vendor/dashboard");
-    }
-  }, [authLoading, currentRole, router]);
+  const { currentRole, profile } = useAuth();
 
   useEffect(() => {
     async function loadProducts() {
@@ -281,13 +271,10 @@ export default function HomePage() {
               new Date(product.createdAt).getTime() >=
               Date.now() - NEW_ARRIVAL_DAYS * 24 * 60 * 60 * 1000,
           )
-          .sort(
-            (left, right) =>
-              new Date(right.createdAt).getTime() -
-              new Date(left.createdAt).getTime(),
-          )
+          .map((product) => ({ product, sortKey: Math.random() }))
+          .sort((left, right) => left.sortKey - right.sortKey)
           .slice(0, NEW_ARRIVAL_LIMIT)
-          .map((product) => product.id),
+          .map((entry) => entry.product.id),
       ),
     [products],
   );
@@ -357,15 +344,7 @@ export default function HomePage() {
         size,
       });
 
-      if (browseMode !== "new") {
-        return sortProductsByVendor(visibleProducts);
-      }
-
-      return [...visibleProducts].sort(
-        (left, right) =>
-          new Date(right.createdAt).getTime() -
-          new Date(left.createdAt).getTime(),
-      );
+      return shuffleProducts(visibleProducts);
     },
     [
       browseMode,
@@ -464,6 +443,10 @@ export default function HomePage() {
     department !== "all" ||
     category !== "all" ||
     search.trim().length > 0;
+  const hasActiveSearch = search.trim().length > 0;
+  const canShowSearchResults =
+    hasActiveSearch && !searchLoading && searchResults !== null;
+  const showCatalogLoading = loading && !canShowSearchResults;
 
   const storefrontVendors = useMemo(() => {
     const relevantVendors = vendors.filter((vendor) => {
@@ -546,19 +529,34 @@ export default function HomePage() {
     setQuickViewProduct(null);
     setSelectedQuickViewImage(undefined);
     setSelectedQuickViewSizeId("");
+    setSelectedQuickViewColorId("");
   }
 
   function openQuickView(product: Product) {
     setQuickViewProduct(product);
     setSelectedQuickViewImage(product.images[0]);
     setSelectedQuickViewSizeId(product.sizeVariants.find((entry) => entry.stock > 0)?.id ?? "");
+    setSelectedQuickViewColorId(
+      product.colors.find((entry) => entry.name === product.color)?.id ??
+        product.colors[0]?.id ??
+        "",
+    );
   }
 
   function getSelectedSize(product: Product) {
     return product.sizeVariants.find((entry) => entry.id === selectedQuickViewSizeId) ?? null;
   }
 
-  function addProductToCart(product: Product, sizeId?: string) {
+  function getSelectedColor(product: Product) {
+    return (
+      product.colors.find((entry) => entry.id === selectedQuickViewColorId) ??
+      product.colors.find((entry) => entry.name === product.color) ??
+      product.colors[0] ??
+      null
+    );
+  }
+
+  function addProductToCart(product: Product, sizeId?: string, colorId?: string) {
     if (currentRole === "vendor" && product.vendor?.id === profile?.vendor?.id) {
       return;
     }
@@ -566,6 +564,11 @@ export default function HomePage() {
     const selectedSize =
       product.sizeVariants.find((entry) => entry.id === sizeId) ??
       product.sizeVariants.find((entry) => entry.stock > 0) ??
+      null;
+    const selectedColor =
+      product.colors.find((entry) => entry.id === colorId) ??
+      product.colors.find((entry) => entry.name === product.color) ??
+      product.colors[0] ??
       null;
 
     addItem({
@@ -575,7 +578,7 @@ export default function HomePage() {
       title: product.title,
       price: product.price,
       image: product.images[0],
-      color: product.color ?? product.colors[0]?.name ?? null,
+      color: selectedColor?.name ?? product.color ?? product.colors[0]?.name ?? null,
       size: selectedSize?.label ?? product.size ?? null,
       quantity: 1,
       stock: selectedSize?.stock ?? product.stock,
@@ -643,7 +646,7 @@ export default function HomePage() {
               }
             >
               {product.stock > 0
-                ? `${product.stock} available now`
+                ? "Available now"
                 : "Currently unavailable"}
             </div>
           </div>
@@ -885,10 +888,10 @@ export default function HomePage() {
           </div>
         )}
 
-        {loading && <div className="message">Loading products...</div>}
+        {showCatalogLoading && <div className="message">Loading products...</div>}
         {searchLoading && <div className="message">Searching marketplace...</div>}
         {error && <div className="message error">{error}</div>}
-        {!loading &&
+        {(!loading || canShowSearchResults) &&
           !searchLoading &&
           !error &&
           search.trim() &&
@@ -898,7 +901,7 @@ export default function HomePage() {
               {searchSectionLabel}
             </div>
           )}
-        {!loading &&
+        {(!loading || canShowSearchResults) &&
           !searchLoading &&
           !error &&
           showingFallbackProducts && (
@@ -908,12 +911,15 @@ export default function HomePage() {
               Showing popular products instead.
             </div>
           )}
-        {!loading && !searchLoading && !error && displayProducts.length === 0 && (
-          <div className="empty">
-            {searchResults?.noResultsMessage ??
-              "No products match your current search."}
-          </div>
-        )}
+        {(!loading || canShowSearchResults) &&
+          !searchLoading &&
+          !error &&
+          displayProducts.length === 0 && (
+            <div className="empty">
+              {searchResults?.noResultsMessage ??
+                "No products match your current search."}
+            </div>
+          )}
 
         <div className="catalog-grid">
           {leadingProducts.map(renderProductCard)}
@@ -977,9 +983,19 @@ export default function HomePage() {
                   </div>
                   <strong>{vendor.shopName}</strong>
                   <div className="vendor-public-categories">
-                    {vendor.categories.slice(0, 2).map((entry) => (
-                      <em key={`${vendor.id}-${entry}`}>{formatCatalogLabel(entry)}</em>
-                    ))}
+                    {vendor.productCount > 0 ? (
+                      <>
+                        {vendor.categories.slice(0, 2).map((entry) => (
+                          <em key={`${vendor.id}-${entry}`}>{formatCatalogLabel(entry)}</em>
+                        ))}
+                        <em>{vendor.productCount} products</em>
+                      </>
+                    ) : (
+                      <>
+                        <em>Coming soon</em>
+                        <em>0 products</em>
+                      </>
+                    )}
                   </div>
                 </Link>
               ))}
@@ -1055,22 +1071,18 @@ export default function HomePage() {
                   {formatCurrency(quickViewProduct.price)}
                 </div>
                 <div className="product-stock detail-stock">
-                  {quickViewProduct.stock > 0
-                    ? getSelectedSize(quickViewProduct)
-                      ? `Selected size stock: ${getSelectedSize(quickViewProduct)?.stock ?? quickViewProduct.stock}`
-                      : `In stock: ${quickViewProduct.stock}`
-                    : "Currently unavailable"}
+                  {quickViewProduct.stock > 0 ? "Available now" : "Currently unavailable"}
                 </div>
-                {(quickViewProduct.sizeOptions?.length ?? quickViewProduct.sizeVariants.length) > 0 ? (
+                {(quickViewProduct.sizeVariants.length || quickViewProduct.sizeOptions?.length) ? (
                   <div className="product-size-picker">
                     <span>Size</span>
                     <div className="product-size-options">
-                      {(quickViewProduct.sizeOptions?.length
-                        ? quickViewProduct.sizeOptions
-                        : quickViewProduct.sizeVariants.map((variant) => ({
+                      {(quickViewProduct.sizeVariants.length
+                        ? quickViewProduct.sizeVariants.map((variant) => ({
                             ...variant,
                             isAvailable: true,
                           }))
+                        : quickViewProduct.sizeOptions ?? []
                       ).map((variant) => {
                         const isUnavailable = !variant.isAvailable || variant.stock === 0;
 
@@ -1096,13 +1108,43 @@ export default function HomePage() {
                     </div>
                   </div>
                 ) : null}
-                {getSelectedSize(quickViewProduct) ? (
-                  <p className="muted">
-                    {getSelectedSize(quickViewProduct)?.stock === 1
-                      ? "Only 1 left in this size."
-                      : `${getSelectedSize(quickViewProduct)?.stock ?? 0} available in this size.`}
-                  </p>
-                ) : (quickViewProduct.sizeOptions?.length ?? quickViewProduct.sizeVariants.length) > 0 ? (
+                {quickViewProduct.colors.length > 1 ? (
+                  <div className="product-color-picker">
+                    <span>Color</span>
+                    <div className="product-color-options">
+                      {quickViewProduct.colors.map((color) => {
+                        const colorKey = getResolvedColorKey(color.name);
+                        const isSelected = getSelectedColor(quickViewProduct)?.id === color.id;
+
+                        return (
+                          <button
+                            key={color.id}
+                            type="button"
+                            className={[
+                              "product-color-option",
+                              isSelected ? "selected" : "",
+                              colorKey === "white" ? "white" : "",
+                              colorKey === "black" ? "black" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            onClick={() => setSelectedQuickViewColorId(color.id)}
+                            aria-pressed={isSelected}
+                            aria-label={`Select ${color.name}`}
+                          >
+                            <span
+                              className="product-color-swatch"
+                              style={getColorSwatchStyle(color.name)}
+                              aria-hidden="true"
+                            />
+                            <span>{formatProductAttributeLabel(color.name)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {!getSelectedSize(quickViewProduct) && (quickViewProduct.sizeVariants.length || quickViewProduct.sizeOptions?.length) ? (
                   <p className="muted">Choose an available size before adding to cart.</p>
                 ) : null}
                 <p className="product-detail-copy">
@@ -1113,7 +1155,13 @@ export default function HomePage() {
                   <button
                     type="button"
                     className="button"
-                    onClick={() => addProductToCart(quickViewProduct, selectedQuickViewSizeId)}
+                    onClick={() =>
+                      addProductToCart(
+                        quickViewProduct,
+                        selectedQuickViewSizeId,
+                        selectedQuickViewColorId,
+                      )
+                    }
                     disabled={
                       quickViewProduct.stock === 0 ||
                       (currentRole === "vendor" && quickViewProduct.vendor?.id === profile?.vendor?.id) ||

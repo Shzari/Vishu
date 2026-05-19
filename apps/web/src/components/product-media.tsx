@@ -1,8 +1,11 @@
+import Image from "next/image";
+
 interface ProductMediaProps {
   title: string;
   image?: string;
   className?: string;
   subtitle?: string;
+  priority?: boolean;
 }
 
 export function ProductMedia({
@@ -10,9 +13,22 @@ export function ProductMedia({
   image,
   className,
   subtitle = "Clothing marketplace essential",
+  priority = false,
 }: ProductMediaProps) {
   if (image) {
-    return <img src={image} alt={title} className={className} />;
+    return (
+      <span className={["product-media-frame", className].filter(Boolean).join(" ")}>
+        <Image
+          src={image}
+          alt={title}
+          fill
+          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+          priority={priority}
+          loading={priority ? "eager" : "lazy"}
+          className="product-media-image"
+        />
+      </span>
+    );
   }
 
   return (

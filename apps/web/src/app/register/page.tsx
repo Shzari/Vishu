@@ -3,12 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
 import { getPasswordPolicyError } from "@/lib/password-policy";
+import type { SessionUser } from "@/lib/types";
 type RegisterRole = "customer" | "vendor";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { setSession } = useAuth();
   const [role, setRole] = useState<RegisterRole>("customer");
   const [shopName, setShopName] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -62,6 +65,7 @@ export default function RegisterPage() {
 
     try {
       setSubmitting(true);
+      const normalizedPhoneNumber = phoneNumber.trim() || undefined;
 
       if (role === "vendor") {
         const response = await apiRequest<{ message: string }>("/auth/vendor/register", {
@@ -71,7 +75,7 @@ export default function RegisterPage() {
             firstName,
             lastName,
             email,
-            phoneNumber,
+            phoneNumber: normalizedPhoneNumber,
             password,
             acceptedTerms: acceptedVendorTerms,
           }),
@@ -90,25 +94,36 @@ export default function RegisterPage() {
         return;
       }
 
-      const response = await apiRequest<{ message: string }>(
+      const response = await apiRequest<{
+        accessToken: string;
+        user: SessionUser;
+        message: string;
+      }>(
         "/auth/register",
         {
           method: "POST",
-          body: JSON.stringify({ firstName, lastName, email, phoneNumber, password }),
+          body: JSON.stringify({
+            firstName,
+            lastName,
+            email,
+            phoneNumber: normalizedPhoneNumber,
+            password,
+          }),
         },
       );
 
+      await setSession(response.user);
       setMessage(response.message);
       setFirstName("");
-        setLastName("");
-        setEmail("");
-        setPhoneNumber("");
-        setPassword("");
-        setConfirmPassword("");
-        setAcceptedVendorTerms(false);
-        window.setTimeout(() => {
-        router.push(`/verify?email=${encodeURIComponent(email.trim().toLowerCase())}`);
-      }, 900);
+      setLastName("");
+      setEmail("");
+      setPhoneNumber("");
+      setPassword("");
+      setConfirmPassword("");
+      setAcceptedVendorTerms(false);
+      window.setTimeout(() => {
+        router.push("/");
+      }, 500);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Registration failed.");
     } finally {
@@ -126,7 +141,7 @@ export default function RegisterPage() {
         <p className="hero-copy">
           {role === "vendor"
             ? "Create a vendor account, verify your email, then sign in to add products and manage your shop."
-            : "Create a customer account, then enter the 6-digit email code to track orders and manage future purchases."}
+            : "Create a customer account and start shopping right away."}
         </p>
       </section>
 

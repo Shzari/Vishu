@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/components/providers";
+import { useAuth, useLanguage } from "@/components/providers";
 import { RequireRole } from "@/components/require-role";
 import { VendorWorkspaceShell } from "@/components/vendor-workspace-shell";
 import { apiRequest, assetUrl } from "@/lib/api";
@@ -37,6 +37,7 @@ function canManageTeamRole(currentRole: VendorAccessRole, targetRole: VendorAcce
 
 export default function VendorSettingsPage() {
   const { token, currentRole, refreshProfile, profile } = useAuth();
+  const { language } = useLanguage();
   const [settings, setSettings] = useState<AccountSettingsProfile | null>(null);
   const [teamAccess, setTeamAccess] = useState<VendorTeamAccessResponse | null>(null);
   const [firstName, setFirstName] = useState("");
@@ -71,6 +72,13 @@ export default function VendorSettingsPage() {
   const vendorAccessRole = profile?.vendor?.access_role ?? "shop_holder";
   const canManageSettings = vendorAccessRole !== "employee";
   const inviteRoleOptions = useMemo(() => getInviteRoleOptions(vendorAccessRole), [vendorAccessRole]);
+  const twoFactorActionLabel = twoFactorEnabled
+    ? language === "sq"
+      ? "Deaktivizo"
+      : "Deactivate"
+    : language === "sq"
+      ? "Aktivizo"
+      : "Activate";
 
   const loadSettings = useCallback(async () => {
     if (!token) return;
@@ -456,11 +464,12 @@ export default function VendorSettingsPage() {
         section="settings"
         eyebrow="Configuration"
         title={`${shopName || settings.vendor?.shopName || "Your Shop"} Settings`}
+        noTranslateTitle
         description="Manage shop information, working hours, low-stock alerts, and seller account configuration."
       >
       <div className="stack account-page">
       <section className="panel hero-panel">
-        <span className="chip">Vendor Settings</span>
+        <span className="chip" data-no-translate>Vendor Settings</span>
         <h1 className="hero-title account-hero-title">Manage vendor profile and shop settings.</h1>
         <p className="hero-copy">
           Update your seller account, shop information, branding, policies, and operating details in one place.
@@ -514,11 +523,15 @@ export default function VendorSettingsPage() {
           <div className="card">
             <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <strong>Two-factor authentication</strong>
+                <strong>{language === "sq" ? "Verifikimi me kod sigurie" : "Two-factor authentication"}</strong>
                 <p className="muted">
-                  {twoFactorEnabled
-                    ? "Vendor login requires an email OTP code."
-                    : "Vendor login does not ask for an email OTP code."}
+                  {language === "sq"
+                    ? twoFactorEnabled
+                      ? "Hyrja si shitës kërkon kod sigurie të dërguar me email."
+                      : "Hyrja si shitës nuk kërkon kod sigurie me email."
+                    : twoFactorEnabled
+                      ? "Vendor login requires an email OTP code."
+                      : "Vendor login does not ask for an email OTP code."}
                 </p>
               </div>
               <label className="vendor-row-check">
@@ -532,7 +545,7 @@ export default function VendorSettingsPage() {
                     void saveVendorSecurity(nextValue);
                   }}
                 />
-                <span>{twoFactorEnabled ? "On" : "Off"}</span>
+                <span data-no-translate>{twoFactorActionLabel}</span>
               </label>
             </div>
           </div>

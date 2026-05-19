@@ -6,6 +6,33 @@ const nextConfig: NextConfig = {
     root: path.join(__dirname, "..", ".."),
   },
   poweredByHeader: false,
+  images: {
+    dangerouslyAllowLocalIP: true,
+    remotePatterns: [
+      {
+        protocol: "http",
+        hostname: "localhost",
+        port: "3000",
+        pathname: "/media/**",
+      },
+      {
+        protocol: "http",
+        hostname: "127.0.0.1",
+        port: "3000",
+        pathname: "/media/**",
+      },
+      {
+        protocol: "https",
+        hostname: "vishu.shop",
+        pathname: "/api/media/**",
+      },
+      {
+        protocol: "https",
+        hostname: "www.vishu.shop",
+        pathname: "/api/media/**",
+      },
+    ],
+  },
   async redirects() {
     return [
       {

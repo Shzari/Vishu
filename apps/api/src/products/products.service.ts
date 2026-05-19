@@ -84,6 +84,8 @@ const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
   ],
   jeans: ['jean', 'jeans', 'denim', 'denims'],
   shorts: ['short', 'shorts'],
+  set: ['set', 'sets', 'outfit', 'outfits', 'matching set', 'two piece'],
+  beach: ['beach', 'swimwear', 'swimsuit', 'bikini', 'beachwear'],
   underwear: [
     'underwear',
     'underclothes',
@@ -143,6 +145,7 @@ interface ProductRow {
   stock: number;
   is_listed?: boolean;
   admin_status?: string | null;
+  admin_block_reason?: string | null;
   department: string;
   category: string;
   color: string | null;
@@ -850,7 +853,7 @@ export class ProductsService {
     const vendor = await this.getVendorForUser(user.sub);
 
     const result = await this.databaseService.query<ProductRow>(
-      `SELECT p.id, p.title, p.description, p.price, p.stock, p.is_listed, p.department, p.category, p.color, p.size, p.product_code, p.created_at
+      `SELECT p.id, p.title, p.description, p.price, p.stock, p.is_listed, p.admin_status, p.admin_block_reason, p.department, p.category, p.color, p.size, p.product_code, p.created_at
        FROM products p
        WHERE p.vendor_id = $1
        ORDER BY p.created_at DESC`,
@@ -1143,6 +1146,7 @@ export class ProductsService {
     const normalizedDto = this.normalizeProductMutationDto(dto);
     const selection =
       await this.resolveStructuredProductSelection(normalizedDto);
+    this.assertPositiveProductStock(selection.totalStock);
     let lowStockAlert: VendorLowStockAlertPayload | null = null;
 
     try {
@@ -1163,10 +1167,11 @@ export class ProductsService {
                subcategory_id,
                gender_group_id,
                color,
-               size
+               size,
+               admin_status
              )
            OUTPUT INSERTED.id
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
             [
               vendor.id,
               normalizedDto.title,
@@ -1182,6 +1187,7 @@ export class ProductsService {
               selection.genderGroup?.id ?? null,
               selection.primaryColor,
               selection.primarySize,
+              'under_review',
             ],
           );
 
@@ -1289,6 +1295,8 @@ export class ProductsService {
       await this.databaseService.withTransaction(async (client) => {
         const currentProduct = await client.query<{
           title: string;
+          description: string | null;
+          price: number | string;
           stock: number;
           department: string;
           category: string;
@@ -1301,7 +1309,7 @@ export class ProductsService {
           product_code: string | null;
           low_stock_alert_sent_at: Date | null;
         }>(
-          `SELECT TOP 1 title, stock, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size, product_code, low_stock_alert_sent_at
+          `SELECT TOP 1 title, description, price, stock, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size, product_code, low_stock_alert_sent_at
            FROM products
            WHERE id = $1`,
           [productId],
@@ -1364,6 +1372,14 @@ export class ProductsService {
                 })),
             })
           : null;
+        if (selection) {
+          this.assertPositiveProductStock(selection.totalStock);
+        } else if (
+          normalizedDto.stock !== undefined ||
+          normalizedDto.sizeVariants !== undefined
+        ) {
+          this.assertPositiveProductStock(normalizedDto.stock ?? 0);
+        }
 
         const updates: string[] = [];
         const values: unknown[] = [];
@@ -1376,6 +1392,27 @@ export class ProductsService {
           values.push(value);
           updates.push(`${column} = $${values.length}`);
         };
+
+        const reviewTriggers: boolean[] = [
+          normalizedDto.title !== undefined &&
+            normalizedDto.title !== currentRow.title,
+          normalizedDto.description !== undefined &&
+            normalizedDto.description !== (currentRow.description ?? ''),
+          normalizedDto.price !== undefined &&
+            Number(normalizedDto.price) !== Number(currentRow.price),
+          normalizedDto.brandId !== undefined &&
+            normalizedDto.brandId !== (currentRow.brand_id ?? ''),
+          normalizedDto.categoryId !== undefined &&
+            normalizedDto.categoryId !== (currentRow.category_id ?? ''),
+          normalizedDto.subcategoryId !== undefined &&
+            normalizedDto.subcategoryId !== (currentRow.subcategory_id ?? ''),
+          normalizedDto.genderGroupId !== undefined &&
+            normalizedDto.genderGroupId !== currentRow.gender_group_id,
+          normalizedDto.colorIds !== undefined,
+          files.length > 0,
+          normalizedDto.replaceImages === true,
+          Boolean(normalizedDto.removedExistingImageUrls?.length),
+        ];
 
         if (normalizedDto.title !== undefined)
           pushUpdate('title', normalizedDto.title);
@@ -1395,6 +1432,12 @@ export class ProductsService {
           pushUpdate('size', selection.primarySize);
         } else if (normalizedDto.stock !== undefined) {
           pushUpdate('stock', normalizedDto.stock);
+        }
+
+        if (reviewTriggers.some(Boolean)) {
+          pushUpdate('admin_status', 'under_review');
+          pushUpdate('admin_block_reason', null);
+          pushUpdate('admin_blocked_at', null);
         }
 
         if (updates.length) {
@@ -1601,13 +1644,37 @@ export class ProductsService {
     await this.ensureVendorOwnsProduct(productId, vendor.id);
 
     const product = await this.databaseService.query<{
+      id: string;
+      title: string;
       admin_status: string | null;
-    }>('SELECT TOP 1 admin_status FROM products WHERE id = $1', [productId]);
+    }>('SELECT TOP 1 id, title, admin_status FROM products WHERE id = $1', [
+      productId,
+    ]);
 
-    if (product.rows[0]?.admin_status === 'blocked' && isListed) {
-      throw new ForbiddenException(
-        'This product is blocked by admin review and cannot be listed.',
-      );
+    const productRow = product.rows[0];
+    const adminStatus = productRow?.admin_status ?? 'approved';
+    if (adminStatus !== 'approved' && isListed) {
+      await this.databaseService.withTransaction(async (client) => {
+        await client.query(
+          `UPDATE products
+           SET admin_status = 'under_review',
+               is_listed = 1,
+               updated_at = SYSDATETIME()
+           WHERE id = $1`,
+          [productId],
+        );
+
+        await this.notifyAdminsProductReviewRequested(
+          client,
+          vendor.id,
+          vendor.shop_name,
+          productId,
+          productRow?.title ?? productId,
+        );
+      });
+
+      await this.syncProductToSearchIndexSafely(productId);
+      return this.getVendorProductById(productId, vendor.id);
     }
 
     await this.databaseService.query(
@@ -1620,6 +1687,42 @@ export class ProductsService {
 
     await this.syncProductToSearchIndexSafely(productId);
     return this.getVendorProductById(productId, vendor.id);
+  }
+
+  private async notifyAdminsProductReviewRequested(
+    client: QueryRunner,
+    vendorId: string,
+    shopName: string,
+    productId: string,
+    productTitle: string,
+  ) {
+    const admins = await client.query<{ id: string }>(
+      `SELECT id
+       FROM users
+       WHERE role = 'admin'
+         AND is_active = 1`,
+    );
+
+    for (const admin of admins.rows) {
+      await client.query(
+        `INSERT INTO admin_notifications (
+           admin_user_id,
+           vendor_id,
+           notification_type,
+           title,
+           body,
+           action_url
+         )
+         VALUES ($1, $2, 'product_review_requested', $3, $4, $5)`,
+        [
+          admin.id,
+          vendorId,
+          'Product review requested',
+          `${shopName} requested review for ${productTitle}. The product stays hidden until admin approval.`,
+          `/admin/vendors/${vendorId}`,
+        ],
+      );
+    }
   }
 
   async adminSetProductBlock(
@@ -1656,6 +1759,33 @@ export class ProductsService {
 
     return {
       message: isBlocked ? 'Product blocked.' : 'Product unblocked.',
+    };
+  }
+
+  async adminApproveProduct(productId: string) {
+    const existing = await this.databaseService.query<{ id: string }>(
+      'SELECT TOP 1 id FROM products WHERE id = $1',
+      [productId],
+    );
+
+    if (!existing.rows[0]) {
+      throw new NotFoundException('Product not found');
+    }
+
+    await this.databaseService.query(
+      `UPDATE products
+       SET admin_status = 'approved',
+           admin_block_reason = NULL,
+           admin_blocked_at = NULL,
+           updated_at = SYSDATETIME()
+       WHERE id = $1`,
+      [productId],
+    );
+
+    await this.syncProductToSearchIndexSafely(productId);
+
+    return {
+      message: 'Product approved.',
     };
   }
 
@@ -1778,6 +1908,8 @@ export class ProductsService {
          p.price,
          p.stock,
          p.is_listed,
+         p.admin_status,
+         p.admin_block_reason,
          p.department,
          p.category,
          p.brand_id,
@@ -1807,9 +1939,9 @@ export class ProductsService {
     const duplicated = await this.databaseService.withTransaction(
       async (client) => {
         const created = await client.query<{ id: string }>(
-          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size)
+          `INSERT INTO products (vendor_id, title, description, price, stock, is_listed, department, category, brand_id, category_id, subcategory_id, gender_group_id, color, size, admin_status)
          OUTPUT INSERTED.id
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
           [
             vendor.id,
             `${source.title} Copy`,
@@ -1825,6 +1957,7 @@ export class ProductsService {
             source.gender_group_id,
             source.color,
             source.size,
+            'under_review',
           ],
         );
 
@@ -1910,10 +2043,38 @@ export class ProductsService {
       stock: number;
       price: number | string;
       product_code: string | null;
+      is_listed: boolean;
       vendor_id: string;
       shop_name: string;
+      admin_status: string | null;
+      admin_block_reason: string | null;
+      image_url: string | null;
+      created_at: Date;
+      updated_at: Date;
     }>(
-      `SELECT p.id, p.title, p.department, p.category, p.color, p.size, p.stock, p.price, p.product_code, p.vendor_id, v.shop_name
+      `SELECT
+         p.id,
+         p.title,
+         p.department,
+         p.category,
+         p.color,
+         p.size,
+         p.stock,
+         p.price,
+         p.product_code,
+         p.is_listed,
+         p.vendor_id,
+         v.shop_name,
+         p.admin_status,
+         p.admin_block_reason,
+         (
+           SELECT TOP 1 pi.image_url
+           FROM product_images pi
+           WHERE pi.product_id = p.id
+           ORDER BY pi.sort_order ASC
+         ) AS image_url,
+         p.created_at,
+         p.updated_at
        FROM products p
        INNER JOIN vendors v ON v.id = p.vendor_id
        ORDER BY p.created_at DESC${pagingClause}`,
@@ -1925,9 +2086,45 @@ export class ProductsService {
         : Promise.resolve({ rows: [] as { total: number }[] }),
     ]);
 
+    const imageRows = result.rows.length
+      ? await this.databaseService.query<{
+          product_id: string;
+          image_url: string;
+        }>(
+          `SELECT product_id, image_url
+           FROM product_images
+           WHERE product_id IN (${this.buildGuidLiteralClause(
+             result.rows.map((row) => row.id),
+           )})
+           ORDER BY product_id, sort_order ASC`,
+        )
+      : { rows: [] };
+    const imagesByProductId = new Map<string, string[]>();
+    for (const image of imageRows.rows) {
+      const current = imagesByProductId.get(image.product_id) ?? [];
+      current.push(image.image_url);
+      imagesByProductId.set(image.product_id, current);
+    }
+
     const items = result.rows.map((row) => ({
-      ...row,
+      id: row.id,
+      title: row.title,
+      department: row.department,
+      category: row.category,
+      color: row.color,
+      size: row.size,
+      stock: row.stock,
       price: Number(row.price),
+      productCode: row.product_code,
+      isListed: row.is_listed,
+      vendorId: row.vendor_id,
+      shopName: row.shop_name,
+      adminStatus: row.admin_status ?? 'approved',
+      adminBlockReason: row.admin_block_reason,
+      imageUrl: row.image_url,
+      imageUrls: imagesByProductId.get(row.id) ?? [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }));
 
     if (!pagination) {
@@ -2026,6 +2223,8 @@ export class ProductsService {
         price: Number(row.price),
         stock: row.stock,
         isListed: row.is_listed ?? true,
+        adminStatus: row.admin_status ?? 'approved',
+        adminBlockReason: row.admin_block_reason ?? null,
         department: row.department,
         category: row.category,
         color: displayColor,
@@ -3232,6 +3431,12 @@ export class ProductsService {
     }
   }
 
+  private assertPositiveProductStock(stock: number) {
+    if (!Number.isInteger(stock) || stock < 1) {
+      throw new BadRequestException('Product stock must be at least 1');
+    }
+  }
+
   private normalizeProductMutationDto(dto: ProductMutationDto) {
     return {
       title: dto.title.trim(),
@@ -3419,6 +3624,16 @@ export class ProductsService {
     }> = [];
 
     if (sizeVariants.length) {
+      if (
+        sizeVariants.some(
+          (entry) => !Number.isInteger(entry.stock) || entry.stock < 1,
+        )
+      ) {
+        throw new BadRequestException(
+          'Selected sizes must have stock of at least 1',
+        );
+      }
+
       const sizeIds = [...new Set(sizeVariants.map((entry) => entry.sizeId))];
       const sizeResult = await this.databaseService.query<{
         id: string;
@@ -3938,22 +4153,7 @@ export class ProductsService {
   }
 
   private publicProductDiscoveryOrderClause(productAlias: string) {
-    return `ISNULL((
-        SELECT AVG(CAST(pr.rating AS DECIMAL(10, 2)))
-        FROM product_reviews pr
-        WHERE pr.product_id = ${productAlias}.id
-      ), 0) DESC,
-      ISNULL((
-        SELECT COUNT(*)
-        FROM product_reviews pr
-        WHERE pr.product_id = ${productAlias}.id
-      ), 0) DESC,
-      ISNULL((
-        SELECT SUM(oi.quantity)
-        FROM order_items oi
-        WHERE oi.product_id = ${productAlias}.id
-      ), 0) DESC,
-      NEWID()`;
+    return `NEWID(), ${productAlias}.id`;
   }
 
   private assertGuid(value: string) {

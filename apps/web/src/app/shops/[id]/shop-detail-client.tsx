@@ -334,7 +334,7 @@ export function ShopDetailClient() {
                         : "product-stock-line product-stock-line-empty shop-stock-line"
                     }
                   >
-                    {product.stock > 0 ? `${product.stock} available now` : "Currently unavailable"}
+                    {product.stock > 0 ? "Available now" : "Currently unavailable"}
                   </div>
                   <div className="product-actions shop-product-actions">
                     <button
@@ -424,7 +424,7 @@ export function ShopDetailClient() {
                 <h2 className="product-detail-title">{quickViewProduct.title}</h2>
                 <div className="product-detail-price">{formatCurrency(quickViewProduct.price)}</div>
                 <div className="product-stock detail-stock">
-                  {quickViewProduct.stock > 0 ? `In stock: ${quickViewProduct.stock}` : "Currently unavailable"}
+                  {quickViewProduct.stock > 0 ? "Available now" : "Currently unavailable"}
                 </div>
                 <p className="product-detail-copy">{quickViewProduct.description}</p>
                 <div className="product-detail-actions">

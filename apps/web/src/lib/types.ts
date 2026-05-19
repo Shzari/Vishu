@@ -99,6 +99,8 @@ export interface Product {
   price: number;
   stock: number;
   isListed?: boolean;
+  adminStatus?: string | null;
+  adminBlockReason?: string | null;
   department: string;
   category: string;
   color?: string | null;
@@ -718,14 +720,30 @@ export interface AdminCatalogStructure {
 export interface AdminProductOption {
   id: string;
   title: string;
+  department?: string;
   category: string;
   color?: string | null;
   size?: string | null;
   stock: number;
   price: number;
-  product_code?: string | null;
-  vendor_id: string;
-  shop_name: string;
+  productCode?: string | null;
+  isListed?: boolean;
+  vendorId: string;
+  shopName: string;
+  adminStatus?: string | null;
+  adminBlockReason?: string | null;
+  imageUrl?: string | null;
+  imageUrls?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
 export interface AdminVendorDetail {

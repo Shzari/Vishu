@@ -8,6 +8,7 @@ import { useAuth } from "@/components/providers";
 type AdminWorkspaceSection =
   | "dashboard"
   | "vendors"
+  | "products"
   | "customers"
   | "promotions"
   | "requests"
@@ -22,6 +23,7 @@ const ADMIN_WORKSPACE_LINKS: Array<{
 }> = [
   { id: "dashboard", label: "Dashboard", href: "/admin/dashboard" },
   { id: "vendors", label: "Vendors", href: "/admin/vendors" },
+  { id: "products", label: "Products", href: "/admin/products" },
   { id: "customers", label: "Customers", href: "/admin/customers" },
   { id: "promotions", label: "Promotions", href: "/admin/promotions" },
   { id: "requests", label: "Requests", href: "/admin/requests" },
@@ -32,6 +34,7 @@ const ADMIN_WORKSPACE_LINKS: Array<{
 
 function getActiveSection(pathname: string): AdminWorkspaceSection {
   if (pathname.startsWith("/admin/vendors")) return "vendors";
+  if (pathname.startsWith("/admin/products")) return "products";
   if (pathname.startsWith("/admin/customers")) return "customers";
   if (pathname.startsWith("/admin/users")) return "customers";
   if (pathname.startsWith("/admin/orders")) return "reports";
