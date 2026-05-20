@@ -84,7 +84,17 @@ const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
   ],
   jeans: ['jean', 'jeans', 'denim', 'denims'],
   shorts: ['short', 'shorts'],
-  set: ['set', 'sets', 'outfit', 'outfits', 'matching set', 'two piece'],
+  kostume: ['kostume', 'kostum', 'suit', 'suits', 'tailoring', 'formalwear'],
+  komplete: [
+    'komplete',
+    'komplet',
+    'outfit',
+    'outfits',
+    'matching set',
+    'two piece',
+    'co-ord',
+    'coordinate set',
+  ],
   beach: ['beach', 'swimwear', 'swimsuit', 'bikini', 'beachwear'],
   underwear: [
     'underwear',
@@ -123,7 +133,6 @@ const SEARCH_CATEGORY_ALIASES: Record<string, string[]> = {
   ],
   bodysuits: ['bodysuit', 'bodysuits', 'body suit', 'body suits'],
   rompers: ['romper', 'rompers', 'onesie', 'onesies'],
-  sets: ['set', 'sets', 'outfit', 'outfits'],
   sleepwear: ['sleepwear', 'pajama', 'pajamas', 'pyjama', 'pyjamas'],
   blankets: ['blanket', 'blankets'],
   schoolwear: ['schoolwear', 'school uniform', 'school uniforms'],
@@ -135,6 +144,8 @@ const SEARCH_CATEGORY_LABELS: Record<string, string> = {
   schoolwear: 'Schoolwear',
   sleepwear: 'Sleepwear',
   underwear: 'Underwear',
+  kostume: 'Kostume',
+  komplete: 'Komplete',
 };
 
 interface ProductRow {

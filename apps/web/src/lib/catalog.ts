@@ -12,7 +12,7 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "pants",
     "jeans",
     "shorts",
-    "set",
+    "kostume",
     "beach",
     "underwear",
     "suits",
@@ -32,7 +32,7 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "jeans",
     "shorts",
     "leggings",
-    "set",
+    "komplete",
     "beach",
     "underwear",
     "dresses",
@@ -47,7 +47,6 @@ export const PRODUCT_CATEGORY_GROUPS = {
     "jackets",
     "pants",
     "jeans",
-    "set",
     "beach",
     "underwear",
     "schoolwear",
@@ -57,7 +56,6 @@ export const PRODUCT_CATEGORY_GROUPS = {
   babies: [
     "bodysuits",
     "rompers",
-    "set",
     "underwear",
     "outerwear",
     "sleepwear",
@@ -312,7 +310,8 @@ export function formatCatalogLabel(value: string) {
   if (normalized === "tshirts") return "T-Shirts";
   if (normalized === "sweatshirt") return "Sweatshirt";
   if (normalized === "sweatshirts") return "Sweatshirts";
-  if (normalized === "set") return "Set";
+  if (normalized === "kostume") return "Kostume";
+  if (normalized === "komplete") return "Komplete";
   if (normalized === "beach") return "Beach";
 
   return normalized

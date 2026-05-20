@@ -955,7 +955,8 @@ SELECT seed.name, 1, seed.sort_order
 FROM (
   VALUES
     ('Beach', 120),
-    ('Set', 125),
+    ('Kostume', 125),
+    ('Komplete', 126),
     ('underwear', 130),
     ('Shoes', 140),
     ('accessories', 150)
@@ -995,7 +996,8 @@ SELECT c.id, seed.name, 1, seed.sort_order
 FROM (
   VALUES
     ('Beach', 'Beach', 0),
-    ('Set', 'Set', 0),
+    ('Kostume', 'Kostume', 0),
+    ('Komplete', 'Komplete', 0),
     ('underwear', 'underwear', 0),
     ('Shoes', 'Shoes', 0),
     ('accessories', 'Hat', 10),
@@ -1014,6 +1016,18 @@ WHERE NOT EXISTS (
   WHERE sc.category_id = c.id
     AND LOWER(LTRIM(RTRIM(sc.name))) = LOWER(LTRIM(RTRIM(seed.name)))
 );
+
+UPDATE dbo.categories
+SET is_active = 0,
+    sort_order = 999,
+    updated_at = SYSDATETIME()
+WHERE LOWER(LTRIM(RTRIM(name))) = 'set';
+
+UPDATE dbo.subcategories
+SET is_active = 0,
+    sort_order = 999,
+    updated_at = SYSDATETIME()
+WHERE LOWER(LTRIM(RTRIM(name))) = 'set';
 
 UPDATE sc
 SET is_active = 0,
