@@ -339,9 +339,37 @@ export function VendorProductCreatePage() {
     );
   }
 
+  function movePhoto(fromIndex: number, toIndex: number) {
+    setPhotos((current) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex >= current.length
+      ) {
+        return current;
+      }
+
+      const nextPhotos = [...current];
+      const [movedPhoto] = nextPhotos.splice(fromIndex, 1);
+      nextPhotos.splice(toIndex, 0, movedPhoto);
+      photosRef.current = nextPhotos;
+      return nextPhotos;
+    });
+    setPrimaryPhotoIndex(0);
+    setStatus(`Photo moved to slot ${toIndex + 1}. Slot 1 is the thumbnail.`);
+  }
+
   function selectPrimaryPhoto(index: number) {
-    setPrimaryPhotoIndex(index);
-    setStatus(`Photo ${index + 1} is selected as the thumbnail.`);
+    if (index === 0) {
+      setPrimaryPhotoIndex(0);
+      setStatus("Photo 1 is selected as the thumbnail.");
+      return;
+    }
+
+    movePhoto(index, 0);
+    setStatus(`Photo ${index + 1} moved to slot 1 and selected as the thumbnail.`);
   }
 
   function toggleColor(colorId: string) {
@@ -744,7 +772,26 @@ export function VendorProductCreatePage() {
                 {photos.length ? (
                   <div className="vendor-new-photo-grid">
                     {photos.map((photo, index) => (
-                      <div key={photo.id} className="vendor-new-photo-card">
+                      <div
+                        key={photo.id}
+                        className="vendor-new-photo-card"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", String(index));
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const fromIndex = Number(event.dataTransfer.getData("text/plain"));
+                          if (!Number.isNaN(fromIndex)) {
+                            movePhoto(fromIndex, index);
+                          }
+                        }}
+                      >
                         <button
                           type="button"
                           className={

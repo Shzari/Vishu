@@ -1572,6 +1572,19 @@ export class ProductsService {
           }
         }
 
+        if (
+          normalizedDto.replaceImages !== true &&
+          normalizedDto.existingImageOrderUrls?.length
+        ) {
+          await this.applyExistingProductImageOrder(
+            client,
+            productId,
+            normalizedDto.existingImageOrderUrls.filter(
+              (imageUrl) => !removedExistingImageUrls.includes(imageUrl),
+            ),
+          );
+        }
+
         if (files.length) {
           const shouldReplace = normalizedDto.replaceImages === true;
           const nextImageCount = shouldReplace
@@ -3522,6 +3535,16 @@ export class ProductsService {
                   .filter(Boolean),
               ),
             ],
+      existingImageOrderUrls:
+        dto.existingImageOrderUrls === undefined
+          ? undefined
+          : [
+              ...new Set(
+                dto.existingImageOrderUrls
+                  .map((entry) => entry.trim())
+                  .filter(Boolean),
+              ),
+            ],
     };
   }
 
@@ -4141,6 +4164,25 @@ export class ProductsService {
        INNER JOIN ordered_images ON ordered_images.id = pi.id`,
       [productId, primaryImageUrl],
     );
+  }
+
+  private async applyExistingProductImageOrder(
+    client: QueryRunner,
+    productId: string,
+    imageUrls: string[],
+  ) {
+    if (!imageUrls.length) {
+      return;
+    }
+
+    for (const [index, imageUrl] of imageUrls.entries()) {
+      await client.query(
+        `UPDATE product_images
+         SET sort_order = $3
+         WHERE product_id = $1 AND image_url = $2`,
+        [productId, imageUrl, index],
+      );
+    }
   }
 
   private buildGuidLiteralClause(values: string[]) {

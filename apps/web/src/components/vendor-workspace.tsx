@@ -589,6 +589,7 @@ export function VendorWorkspace({
   const [primaryImageKey, setPrimaryImageKey] = useState<string>("");
   const [replaceImages, setReplaceImages] = useState(false);
   const [removedExistingImageUrls, setRemovedExistingImageUrls] = useState<string[]>([]);
+  const [existingImageOrderUrls, setExistingImageOrderUrls] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState("");
   const [productSort, setProductSort] = useState("newest");
   const [stockFilter, setStockFilter] = useState(section === "inventory" ? "low_stock" : "all");
@@ -646,6 +647,7 @@ export function VendorWorkspace({
     setForm(emptyForm);
     setFiles([]);
     selectedProductImageFilesRef.current = [];
+    setExistingImageOrderUrls([]);
     if (productImageInputRef.current) {
       productImageInputRef.current.value = "";
     }
@@ -719,6 +721,9 @@ export function VendorWorkspace({
           body.append("replaceImages", String(replaceImages));
           if (!replaceImages && removedExistingImageUrls.length) {
             body.append("removedExistingImageUrls", JSON.stringify(removedExistingImageUrls));
+          }
+          if (!replaceImages && existingImageOrderUrls.length) {
+            body.append("existingImageOrderUrls", JSON.stringify(existingImageOrderUrls));
           }
         }
         if (primaryImageKey.startsWith("upload:")) {
@@ -1543,6 +1548,7 @@ export function VendorWorkspace({
     setPrimaryImageKey("");
     setReplaceImages(false);
     setRemovedExistingImageUrls([]);
+    setExistingImageOrderUrls([]);
     setProductModalOpen(false);
   }
 
@@ -1557,6 +1563,7 @@ export function VendorWorkspace({
     setPrimaryImageKey(product.images[0] ? `existing:${product.images[0]}` : "");
     setReplaceImages(false);
     setRemovedExistingImageUrls([]);
+    setExistingImageOrderUrls(product.images);
     setForm({
       title: product.title,
       description: product.description,
@@ -1587,6 +1594,79 @@ export function VendorWorkspace({
       return current || (nextFiles.length ? "upload:0" : "");
     });
     setError(null);
+  }
+
+  function moveSelectedProductImage(fromIndex: number, toIndex: number) {
+    setFiles((current) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex >= current.length
+      ) {
+        return current;
+      }
+
+      const nextFiles = [...current];
+      const [movedFile] = nextFiles.splice(fromIndex, 1);
+      nextFiles.splice(toIndex, 0, movedFile);
+      selectedProductImageFilesRef.current = nextFiles;
+      return nextFiles;
+    });
+    setPrimaryImageKey("upload:0");
+    setError(null);
+  }
+
+  function selectUploadedThumbnail(index: number) {
+    if (index === 0) {
+      setPrimaryImageKey("upload:0");
+      return;
+    }
+
+    moveSelectedProductImage(index, 0);
+  }
+
+  function moveExistingProductImage(fromIndex: number, toIndex: number) {
+    setExistingImageOrderUrls((current) => {
+      const visibleImages = current.filter(
+        (image) => !removedExistingImageUrls.includes(image),
+      );
+
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= visibleImages.length ||
+        toIndex >= visibleImages.length
+      ) {
+        return current;
+      }
+
+      const nextVisibleImages = [...visibleImages];
+      const [movedImage] = nextVisibleImages.splice(fromIndex, 1);
+      nextVisibleImages.splice(toIndex, 0, movedImage);
+      setPrimaryImageKey(nextVisibleImages[0] ? `existing:${nextVisibleImages[0]}` : "");
+      return [
+        ...nextVisibleImages,
+        ...current.filter((image) => removedExistingImageUrls.includes(image)),
+      ];
+    });
+    setError(null);
+  }
+
+  function selectExistingThumbnail(imageUrl: string) {
+    setExistingImageOrderUrls((current) => {
+      const visibleImages = current.filter(
+        (image) => !removedExistingImageUrls.includes(image),
+      );
+      return [
+        imageUrl,
+        ...visibleImages.filter((image) => image !== imageUrl),
+        ...current.filter((image) => removedExistingImageUrls.includes(image)),
+      ];
+    });
+    setPrimaryImageKey(`existing:${imageUrl}`);
   }
 
   function removeSelectedProductImage(indexToRemove: number) {
@@ -1635,6 +1715,7 @@ export function VendorWorkspace({
     setRemovedExistingImageUrls((current) =>
       current.includes(imageUrl) ? current : [...current, imageUrl],
     );
+    setExistingImageOrderUrls((current) => current.filter((image) => image !== imageUrl));
     setPrimaryImageKey((current) => {
       if (current !== `existing:${imageUrl}`) {
         return current;
@@ -2335,6 +2416,7 @@ export function VendorWorkspace({
                             const checked = event.target.checked;
                             setReplaceImages(checked);
                             setRemovedExistingImageUrls([]);
+                            setExistingImageOrderUrls(editingProduct?.images ?? []);
                             setPrimaryImageKey(
                               checked
                                 ? files.length
@@ -2354,16 +2436,35 @@ export function VendorWorkspace({
 
                     {editingProduct &&
                     !replaceImages &&
-                    editingProduct.images.some((image) => !removedExistingImageUrls.includes(image)) ? (
+                    existingImageOrderUrls.some((image) => !removedExistingImageUrls.includes(image)) ? (
                       <div className="vendor-preview-group">
                         <div className="vendor-preview-heading">Current images</div>
                         <div className="preview-grid">
-                          {editingProduct.images.filter((image) => !removedExistingImageUrls.includes(image)).map((image) => (
-                            <div key={image} className="preview-card">
+                          {existingImageOrderUrls.filter((image) => !removedExistingImageUrls.includes(image)).map((image, index) => (
+                            <div
+                              key={image}
+                              className="preview-card"
+                              draggable
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", String(index));
+                              }}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                const fromIndex = Number(event.dataTransfer.getData("text/plain"));
+                                if (!Number.isNaN(fromIndex)) {
+                                  moveExistingProductImage(fromIndex, index);
+                                }
+                              }}
+                            >
                               <ProductMedia
                                 image={assetUrl(image)}
                                 title={editingProduct.title}
-                                subtitle="Current image"
+                                subtitle={`Slot ${index + 1}${index === 0 ? " - thumbnail" : ""}`}
                                 className="card-image"
                               />
                               <button
@@ -2377,9 +2478,9 @@ export function VendorWorkspace({
                               <button
                                 className={`thumbnail-select-button${primaryImageKey === `existing:${image}` ? " selected" : ""}`}
                                 type="button"
-                                onClick={() => setPrimaryImageKey(`existing:${image}`)}
+                                onClick={() => selectExistingThumbnail(image)}
                               >
-                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : "Use as thumbnail"}
+                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : `Move to slot 1`}
                               </button>
                             </div>
                           ))}
@@ -2392,12 +2493,31 @@ export function VendorWorkspace({
                         <div className="vendor-preview-heading">New uploads</div>
                         <div className="preview-grid">
                           {selectedFilePreviews.map((preview, index) => (
-                            <div key={preview.url} className="preview-card">
+                            <div
+                              key={preview.url}
+                              className="preview-card"
+                              draggable
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", String(index));
+                              }}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                const fromIndex = Number(event.dataTransfer.getData("text/plain"));
+                                if (!Number.isNaN(fromIndex)) {
+                                  moveSelectedProductImage(fromIndex, index);
+                                }
+                              }}
+                            >
                               {preview.canPreview ? (
                                 <ProductMedia
                                   image={preview.url}
                                   title={form.title || preview.name}
-                                  subtitle={preview.name}
+                                  subtitle={`Upload slot ${index + 1}${primaryImageKey === preview.key ? " - thumbnail" : ""}`}
                                   className="card-image"
                                 />
                               ) : (
@@ -2417,11 +2537,11 @@ export function VendorWorkspace({
                               <button
                                 className={`thumbnail-select-button${primaryImageKey === preview.key ? " selected" : ""}`}
                                 type="button"
-                                onClick={() => setPrimaryImageKey(preview.key)}
+                                onClick={() => selectUploadedThumbnail(index)}
                               >
                                 {primaryImageKey === preview.key
                                   ? "Thumbnail selected"
-                                  : `Use upload ${index + 1} as thumbnail`}
+                                  : `Move to slot 1`}
                               </button>
                             </div>
                           ))}

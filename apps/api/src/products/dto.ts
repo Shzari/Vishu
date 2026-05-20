@@ -231,6 +231,27 @@ export class ProductUpdateDto {
   @IsArray()
   @IsString({ each: true })
   removedExistingImageUrls?: string[];
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsString({ each: true })
+  existingImageOrderUrls?: string[];
 }
 
 export class ProductListingDto {
