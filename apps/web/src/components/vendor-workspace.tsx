@@ -2379,7 +2379,7 @@ export function VendorWorkspace({
                                 type="button"
                                 onClick={() => setPrimaryImageKey(`existing:${image}`)}
                               >
-                                {primaryImageKey === `existing:${image}` ? "Thumbnail" : "Set thumbnail"}
+                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : "Use as thumbnail"}
                               </button>
                             </div>
                           ))}
@@ -2419,7 +2419,9 @@ export function VendorWorkspace({
                                 type="button"
                                 onClick={() => setPrimaryImageKey(preview.key)}
                               >
-                                {primaryImageKey === preview.key ? "Thumbnail" : "Set thumbnail"}
+                                {primaryImageKey === preview.key
+                                  ? "Thumbnail selected"
+                                  : `Use upload ${index + 1} as thumbnail`}
                               </button>
                             </div>
                           ))}

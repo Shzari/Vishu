@@ -339,6 +339,11 @@ export function VendorProductCreatePage() {
     );
   }
 
+  function selectPrimaryPhoto(index: number) {
+    setPrimaryPhotoIndex(index);
+    setStatus(`Photo ${index + 1} is selected as the thumbnail.`);
+  }
+
   function toggleColor(colorId: string) {
     setSelectedColorIds((current) =>
       current.includes(colorId)
@@ -747,23 +752,42 @@ export function VendorProductCreatePage() {
                               ? "vendor-new-photo-preview selected"
                               : "vendor-new-photo-preview"
                           }
-                          onClick={() => setPrimaryPhotoIndex(index)}
-                          aria-label={`Set ${photo.file.name} as main photo`}
+                          onClick={() => selectPrimaryPhoto(index)}
+                          aria-label={`Use photo ${index + 1} as product thumbnail`}
                         >
                           <img src={photo.previewUrl} alt={photo.file.name} />
                         </button>
                         <div className="vendor-new-photo-meta">
-                          <strong>{primaryPhotoIndex === index ? "Main photo" : `Photo ${index + 1}`}</strong>
+                          <strong>
+                            {primaryPhotoIndex === index
+                              ? `Photo ${index + 1} - thumbnail`
+                              : `Photo ${index + 1}`}
+                          </strong>
                           <span>{photo.file.name}</span>
                           <small>{formatFileSize(photo.file.size)}</small>
                         </div>
-                        <button
-                          type="button"
-                          className="button-ghost"
-                          onClick={() => removePhoto(index)}
-                        >
-                          Remove
-                        </button>
+                        <div className="vendor-new-photo-actions">
+                          <button
+                            type="button"
+                            className={
+                              primaryPhotoIndex === index
+                                ? "thumbnail-select-button selected"
+                                : "thumbnail-select-button"
+                            }
+                            onClick={() => selectPrimaryPhoto(index)}
+                          >
+                            {primaryPhotoIndex === index
+                              ? "Thumbnail selected"
+                              : `Use photo ${index + 1} as thumbnail`}
+                          </button>
+                          <button
+                            type="button"
+                            className="button-ghost"
+                            onClick={() => removePhoto(index)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
