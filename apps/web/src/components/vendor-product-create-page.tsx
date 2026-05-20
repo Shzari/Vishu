@@ -825,7 +825,7 @@ export function VendorProductCreatePage() {
                           >
                             {primaryPhotoIndex === index
                               ? "Thumbnail selected"
-                              : `Use photo ${index + 1} as thumbnail`}
+                              : "Set thumbnail"}
                           </button>
                           <button
                             type="button"

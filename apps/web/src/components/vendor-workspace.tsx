@@ -2480,7 +2480,7 @@ export function VendorWorkspace({
                                 type="button"
                                 onClick={() => selectExistingThumbnail(image)}
                               >
-                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : `Move to slot 1`}
+                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : "Set thumbnail"}
                               </button>
                             </div>
                           ))}
@@ -2541,7 +2541,7 @@ export function VendorWorkspace({
                               >
                                 {primaryImageKey === preview.key
                                   ? "Thumbnail selected"
-                                  : `Move to slot 1`}
+                                  : "Set thumbnail"}
                               </button>
                             </div>
                           ))}
