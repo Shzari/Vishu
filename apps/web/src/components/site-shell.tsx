@@ -183,8 +183,9 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const isVendor = !loading && currentRole === "vendor";
   const isVendorWorkspace = isVendor && isVendorRoute;
   const isCustomer = !loading && currentRole === "customer";
-  const isFrontendLanguageRoute = !isAdminRoute && !isVendorRoute;
-  const activeLanguage = isFrontendLanguageRoute ? language : "en";
+  const canShowLanguageToggle = !isAdminRoute;
+  const shouldRunFrontendTranslator = !isAdminRoute && !isVendorRoute;
+  const activeLanguage = canShowLanguageToggle ? language : "en";
   const t = shellCopy[activeLanguage];
   const canUseShoppingCart = !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute;
   const showGuestActions = !loading && !isAuthenticated;
@@ -527,7 +528,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               </Link>
             )}
 
-            {isFrontendLanguageRoute ? (
+            {canShowLanguageToggle ? (
               <div className="language-toggle" aria-label="Choose language">
                 <button
                   type="button"
@@ -1163,7 +1164,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       ) : null}
       <main className={isAdminRoute ? "page admin-page" : "page"}>
         <FrontendLanguageTranslator
-          enabled={isFrontendLanguageRoute}
+          enabled={shouldRunFrontendTranslator}
           language={activeLanguage}
         />
         {children}
