@@ -802,12 +802,12 @@ const textTranslations = new Map<string, string>([
   ["Cancelling...", "Duke anuluar..."],
   ["Approving...", "Duke aprovuar..."],
   ["Approve customer cancellation", "Aprovo anulimin e klientit"],
-  ["MEN", "BURRA"],
-  ["WOMEN", "GRA"],
+  ["MEN", "MESHKUJ"],
+  ["WOMEN", "FEMRA"],
   ["KIDS", "FËMIJË"],
   ["BABIES", "BEBE"],
-  ["Men", "Burra"],
-  ["Women", "Gra"],
+  ["Men", "Meshkuj"],
+  ["Women", "Femra"],
   ["Kids", "Fëmijë"],
   ["Babies", "Bebe"],
   ["Male", "Mashkull"],
@@ -1095,8 +1095,8 @@ function replacePatternText(value: string, language: Language): string {
     const categoryHeadingMatch = trimmed.match(/^(Men|Women|Kids|Babies)'s\s+(.+)$/);
     if (categoryHeadingMatch) {
       const prefix = {
-        Men: "Për burra",
-        Women: "Për gra",
+        Men: "Për meshkuj",
+        Women: "Për femra",
         Kids: "Për fëmijë",
         Babies: "Për bebe",
       }[categoryHeadingMatch[1]];
