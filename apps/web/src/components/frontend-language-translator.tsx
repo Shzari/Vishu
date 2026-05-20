@@ -1171,7 +1171,10 @@ function replaceWholeText(value: string, language: Language): string {
 }
 
 function translateAttributes(element: Element, language: Language) {
-  if (element instanceof HTMLInputElement && element.type === "file") {
+  if (
+    element.matches("input, select, textarea, option, [contenteditable='true']") ||
+    (element instanceof HTMLInputElement && element.type === "file")
+  ) {
     return;
   }
 
@@ -1199,7 +1202,12 @@ function translateElement(root: ParentNode, language: Language) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (!parent || parent.closest("script, style, textarea, [data-no-translate]")) {
+      if (
+        !parent ||
+        parent.closest(
+          "script, style, input, select, textarea, option, [contenteditable='true'], [data-no-translate]",
+        )
+      ) {
         return NodeFilter.FILTER_REJECT;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -1226,6 +1234,10 @@ function translateElement(root: ParentNode, language: Language) {
       "input[placeholder], textarea[placeholder], [aria-label], [title], input[type='submit'][value], input[type='button'][value]",
     )
     .forEach((element) => {
+      if (element.matches("input, select, textarea, option, [contenteditable='true']")) {
+        return;
+      }
+
       translateAttributes(element, language);
     });
 }

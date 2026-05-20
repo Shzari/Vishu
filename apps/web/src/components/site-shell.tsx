@@ -183,7 +183,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const isVendor = !loading && currentRole === "vendor";
   const isVendorWorkspace = isVendor && isVendorRoute;
   const isCustomer = !loading && currentRole === "customer";
-  const isFrontendLanguageRoute = !isAdminRoute;
+  const isFrontendLanguageRoute = !isAdminRoute && !isVendorRoute;
   const activeLanguage = isFrontendLanguageRoute ? language : "en";
   const t = shellCopy[activeLanguage];
   const canUseShoppingCart = !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute;
