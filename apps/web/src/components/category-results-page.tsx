@@ -144,20 +144,8 @@ export function CategoryResultsPage({
   useEffect(() => {
     async function loadProducts() {
       try {
-        const [productsResult, brandsResult] = await Promise.allSettled([
-          apiRequest<Product[]>("/products"),
-          apiRequest<CatalogBrandOption[]>("/products/catalog/brands"),
-        ]);
-
-        if (productsResult.status !== "fulfilled") {
-          throw productsResult.reason;
-        }
-
-        setProducts(productsResult.value);
-
-        if (brandsResult.status === "fulfilled") {
-          setCatalogBrands(brandsResult.value);
-        }
+        const productsResult = await apiRequest<Product[]>("/products");
+        setProducts(productsResult);
       } catch (loadError) {
         setError(
           loadError instanceof Error
@@ -170,6 +158,12 @@ export function CategoryResultsPage({
     }
 
     void loadProducts();
+
+    void apiRequest<CatalogBrandOption[]>("/products/catalog/brands")
+      .then(setCatalogBrands)
+      .catch(() => {
+        setCatalogBrands([]);
+      });
   }, []);
 
   useEffect(() => {
