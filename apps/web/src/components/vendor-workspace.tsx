@@ -676,6 +676,7 @@ export function VendorWorkspace({
           )
         : form.stock;
       const resolvedStockNumber = Number(resolvedStock);
+      const priceNumber = Number(form.price);
       const stockRequiredMessage =
         language === "sq"
           ? "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok."
@@ -685,6 +686,22 @@ export function VendorWorkspace({
         : selectedProductImageFilesRef.current.length
           ? selectedProductImageFilesRef.current
           : Array.from(productImageInputRef.current?.files ?? []);
+      const imageOrderChanged =
+        editingProductId &&
+        !replaceImages &&
+        existingImageOrderUrls.length > 0 &&
+        existingImageOrderUrls.join("|") !== (editingProduct?.images ?? []).join("|");
+      const imageReviewRequired = Boolean(
+        imageFilesForSubmission.length > 0 ||
+          replaceImages ||
+          removedExistingImageUrls.length > 0 ||
+          imageOrderChanged,
+      );
+
+      if (!form.price.trim() || !Number.isFinite(priceNumber) || priceNumber <= 0) {
+        setError("Enter a product price greater than 0.");
+        return;
+      }
 
       if (!resolvedStock.trim() || !Number.isInteger(resolvedStockNumber) || resolvedStockNumber < 1) {
         setError(stockRequiredMessage);
@@ -753,7 +770,9 @@ export function VendorWorkspace({
       resetProductForm();
       setMessage(
         editingProductId
-          ? "Product updated and sent for admin review."
+          ? imageReviewRequired
+            ? "Product updated and sent for admin review."
+            : "Product updated."
           : selectedGenderIds.length > 1
             ? `${selectedGenderIds.length} product listings sent for admin review.`
             : "Product sent for admin review.",
@@ -2023,8 +2042,10 @@ export function VendorWorkspace({
                         <input
                           type="number"
                           step="0.01"
+                          min="0.01"
                           placeholder="0.00"
                           value={form.price}
+                          required
                           onChange={(event) =>
                             setForm((current) => ({ ...current, price: event.target.value }))
                           }

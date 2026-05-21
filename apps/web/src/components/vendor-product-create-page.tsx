@@ -400,8 +400,8 @@ export function VendorProductCreatePage() {
       return;
     }
 
-    if (!Number.isFinite(priceNumber) || priceNumber < 0) {
-      setError("Enter a valid price.");
+    if (!price.trim() || !Number.isFinite(priceNumber) || priceNumber <= 0) {
+      setError("Enter a product price greater than 0.");
       return;
     }
 
@@ -533,10 +533,11 @@ export function VendorProductCreatePage() {
                       value={price}
                       onChange={(event) => setPrice(event.target.value)}
                       inputMode="decimal"
-                      min="0"
+                      min="0.01"
                       step="0.01"
                       type="number"
                       placeholder="0.00"
+                      required
                     />
                   </label>
 

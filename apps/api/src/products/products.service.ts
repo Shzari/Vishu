@@ -1360,7 +1360,7 @@ export class ProductsService {
           ? await this.resolveStructuredProductSelection({
               title: normalizedDto.title ?? currentRow.title,
               description: normalizedDto.description ?? '',
-              price: normalizedDto.price ?? 0,
+              price: normalizedDto.price ?? Number(currentRow.price),
               stock: normalizedDto.stock ?? currentRow.stock,
               brandId: normalizedDto.brandId ?? currentRow.brand_id ?? '',
               categoryId:
@@ -1404,25 +1404,24 @@ export class ProductsService {
           updates.push(`${column} = $${values.length}`);
         };
 
+        const currentImageUrls = currentImageRows.rows.map((row) => row.image_url);
+        const requestedExistingImageOrder =
+          normalizedDto.existingImageOrderUrls?.filter((imageUrl) =>
+            currentImageUrls.includes(imageUrl),
+          ) ?? [];
+        const existingImageOrderChanged =
+          requestedExistingImageOrder.length > 0 &&
+          requestedExistingImageOrder.join('|') !== currentImageUrls.join('|');
+        const primaryExistingImageChanged =
+          normalizedDto.primaryExistingImageUrl !== undefined &&
+          normalizedDto.primaryExistingImageUrl !== currentImageUrls[0];
+
         const reviewTriggers: boolean[] = [
-          normalizedDto.title !== undefined &&
-            normalizedDto.title !== currentRow.title,
-          normalizedDto.description !== undefined &&
-            normalizedDto.description !== (currentRow.description ?? ''),
-          normalizedDto.price !== undefined &&
-            Number(normalizedDto.price) !== Number(currentRow.price),
-          normalizedDto.brandId !== undefined &&
-            normalizedDto.brandId !== (currentRow.brand_id ?? ''),
-          normalizedDto.categoryId !== undefined &&
-            normalizedDto.categoryId !== (currentRow.category_id ?? ''),
-          normalizedDto.subcategoryId !== undefined &&
-            normalizedDto.subcategoryId !== (currentRow.subcategory_id ?? ''),
-          normalizedDto.genderGroupId !== undefined &&
-            normalizedDto.genderGroupId !== currentRow.gender_group_id,
-          normalizedDto.colorIds !== undefined,
           files.length > 0,
           normalizedDto.replaceImages === true,
           Boolean(normalizedDto.removedExistingImageUrls?.length),
+          existingImageOrderChanged,
+          primaryExistingImageChanged,
         ];
 
         if (normalizedDto.title !== undefined)
