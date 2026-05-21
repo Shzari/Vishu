@@ -112,6 +112,255 @@ const accessoryTypeLabelsSq = new Map<string, string>([
   ["brooch", "Brosh"],
 ]);
 
+const productComposerCopy = {
+  en: {
+    products: "Products",
+    productsIntro: "Manage listings from the table below, or use the full product page to add a new item.",
+    addProduct: "Add product",
+    editProduct: "Edit product",
+    productStudio: "Product studio",
+    refineProduct: "Refine this product",
+    createListing: "Create a sharper listing",
+    editing: "Editing",
+    newListing: "New listing",
+    selected: (count: number) => `${count} selected`,
+    saved: (count: number) => `${count} saved`,
+    noImagesYet: "No images yet",
+    verifyVendorEmail: "Verify your vendor email before you can save products.",
+    vendorPending:
+      "You can prepare products now. They stay hidden from customers until an admin activates your vendor account.",
+    coreDetails: "Core details",
+    title: "Title",
+    titlePlaceholder: "Ex. Soft lounge hoodie",
+    description: "Description",
+    price: "Price",
+    stock: "Stock",
+    totalStock: "Total stock",
+    catalogSetup: "Catalog setup",
+    brand: "Brand",
+    selectBrand: "Select brand",
+    category: "Category",
+    selectCategory: "Select category",
+    gender: "Gender",
+    productGenders: "Product genders",
+    accessoryType: "Accessory type",
+    missing: "Missing",
+    missingHint: "Request a missing catalog option from admin.",
+    missingValue: "Missing value",
+    missingPlaceholder: "Enter what is missing",
+    submitting: "Submitting...",
+    submitRequest: "Submit request",
+    requests: (count: number) => `${count} requests`,
+    colorAndSize: "Color and size",
+    colors: "Colors",
+    productColors: "Product colors",
+    sizeType: "Size type",
+    productSizeType: "Product size type",
+    euShoeSizes: "EU shoe sizes",
+    sizes: "Sizes",
+    productSizes: "Product sizes",
+    imagesPublish: "Images and publish",
+    chooseBrand: "Choose brand",
+    chooseCategory: "Choose category",
+    optional: "Optional",
+    sizeSetup: "Size setup",
+    notRequired: "Not required",
+    chooseSizeDetails: "Choose size details",
+    newImagesSelected: (count: number) => `${count} new image${count === 1 ? "" : "s"} selected`,
+    savedImages: (count: number) => `${count} saved image${count === 1 ? "" : "s"}`,
+    chooseProductImages: "Choose product images",
+    replaceImages: "Replace existing images",
+    currentImages: "Current images",
+    newUploads: "New uploads",
+    slotThumbnail: (slot: number) => `Slot ${slot}${slot === 1 ? " - thumbnail" : ""}`,
+    uploadSlotThumbnail: (slot: number, selected: boolean) =>
+      `Upload slot ${slot}${selected ? " - thumbnail" : ""}`,
+    removeSavedImage: "Remove saved image",
+    removeNamed: (name: string) => `Remove ${name}`,
+    remove: "Remove",
+    thumbnailSelected: "Thumbnail selected",
+    setThumbnail: "Set thumbnail",
+    photoSelected: "Photo selected",
+    updating: "Updating...",
+    creating: "Creating...",
+    updateProduct: "Update product",
+    createProduct: "Create product",
+    cancelEdit: "Cancel edit",
+    backToProducts: "Back to products",
+    close: "Close",
+    choosePhotos: "Choose photos",
+    noPhotosReady: "No photos selected yet",
+    photosReady: (count: number) => `${count} photo${count === 1 ? "" : "s"} ready`,
+    selectedPhotoNames: (count: number, names: string, limited: boolean) =>
+      `${count} photo${count === 1 ? "" : "s"} selected: ${names}${limited ? ` Only ${PRODUCT_IMAGE_LIMIT} photos are allowed.` : ""}`,
+    noPhotosSelected: "No photos were selected.",
+    duplicatePhotos: "Those photos are already selected.",
+    selectAtLeastOnePhoto: "Select at least one product photo before creating the product.",
+    priceRequired: "Enter a product price greater than 0.",
+    stockRequired: "Stock can't be 0. Enter how many pieces you have in stock.",
+    sentForReview: "Product sent for admin review.",
+    updated: "Product updated.",
+    updatedForReview: "Product updated and sent for admin review.",
+  },
+  sq: {
+    products: "Produktet",
+    productsIntro: "Menaxhoni listimet nga tabela poshte, ose perdorni faqen e plote per te shtuar produkt te ri.",
+    addProduct: "Shto produkt",
+    editProduct: "Ndrysho produktin",
+    productStudio: "Studio e produktit",
+    refineProduct: "Permireso kete produkt",
+    createListing: "Krijo listim me te qarte",
+    editing: "Duke ndryshuar",
+    newListing: "Listim i ri",
+    selected: (count: number) => `${count} te zgjedhura`,
+    saved: (count: number) => `${count} te ruajtura`,
+    noImagesYet: "Ende nuk ka imazhe",
+    verifyVendorEmail: "Verifikoni emailin e shitesit para se te ruani produkte.",
+    vendorPending:
+      "Mund te pergatisni produktet tani. Ato mbeten te fshehura per klientet derisa admini ta aktivizoje dyqanin.",
+    coreDetails: "Detajet kryesore",
+    title: "Titulli",
+    titlePlaceholder: "P.sh. Hoodie i bute",
+    description: "Pershkrimi",
+    price: "Cmimi",
+    stock: "Stoku",
+    totalStock: "Stoku total",
+    catalogSetup: "Konfigurimi i katalogut",
+    brand: "Marka",
+    selectBrand: "Zgjidh marken",
+    category: "Kategoria",
+    selectCategory: "Zgjidh kategorine",
+    gender: "Gjinia",
+    productGenders: "Gjinite e produktit",
+    accessoryType: "Lloji i aksesorit",
+    missing: "Mungese",
+    missingHint: "Kerkoni nga admini nje opsion qe mungon ne katalog.",
+    missingValue: "Vlera qe mungon",
+    missingPlaceholder: "Shkruani cfare mungon",
+    submitting: "Duke derguar...",
+    submitRequest: "Dergo kerkesen",
+    requests: (count: number) => `${count} kerkesa`,
+    colorAndSize: "Ngjyra dhe madhesia",
+    colors: "Ngjyrat",
+    productColors: "Ngjyrat e produktit",
+    sizeType: "Lloji i madhesise",
+    productSizeType: "Lloji i madhesise se produktit",
+    euShoeSizes: "Madhesite EU te kepuceve",
+    sizes: "Madhesite",
+    productSizes: "Madhesite e produktit",
+    imagesPublish: "Imazhet dhe publikimi",
+    chooseBrand: "Zgjidh marken",
+    chooseCategory: "Zgjidh kategorine",
+    optional: "Opsionale",
+    sizeSetup: "Madhesite",
+    notRequired: "Nuk kerkohet",
+    chooseSizeDetails: "Zgjidh detajet e madhesise",
+    newImagesSelected: (count: number) => `${count} imazh${count === 1 ? "" : "e"} te reja te zgjedhura`,
+    savedImages: (count: number) => `${count} imazh${count === 1 ? "" : "e"} te ruajtura`,
+    chooseProductImages: "Zgjidh imazhet e produktit",
+    replaceImages: "Zevendeso imazhet ekzistuese",
+    currentImages: "Imazhet aktuale",
+    newUploads: "Ngarkime te reja",
+    slotThumbnail: (slot: number) => `Pozicioni ${slot}${slot === 1 ? " - thumbnail" : ""}`,
+    uploadSlotThumbnail: (slot: number, selected: boolean) =>
+      `Pozicioni i ngarkimit ${slot}${selected ? " - thumbnail" : ""}`,
+    removeSavedImage: "Hiq imazhin e ruajtur",
+    removeNamed: (name: string) => `Hiq ${name}`,
+    remove: "Hiq",
+    thumbnailSelected: "Thumbnail i zgjedhur",
+    setThumbnail: "Set thumbnail",
+    photoSelected: "Foto e zgjedhur",
+    updating: "Duke perditesuar...",
+    creating: "Duke krijuar...",
+    updateProduct: "Perditeso produktin",
+    createProduct: "Krijo produktin",
+    cancelEdit: "Anulo ndryshimin",
+    backToProducts: "Kthehu te produktet",
+    close: "Mbyll",
+    choosePhotos: "Zgjidh fotot",
+    noPhotosReady: "Ende nuk ka foto te zgjedhura",
+    photosReady: (count: number) => `${count} foto gati`,
+    selectedPhotoNames: (count: number, names: string, limited: boolean) =>
+      `${count} foto te zgjedhura: ${names}${limited ? ` Lejohen vetem ${PRODUCT_IMAGE_LIMIT} foto.` : ""}`,
+    noPhotosSelected: "Nuk u zgjodh asnje foto.",
+    duplicatePhotos: "Keto foto jane zgjedhur tashme.",
+    selectAtLeastOnePhoto: "Zgjidhni te pakten nje foto te produktit para krijimit.",
+    priceRequired: "Shkruani nje cmim produkti me te madh se 0.",
+    stockRequired: "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok.",
+    sentForReview: "Produkti u dergua per shqyrtim nga admini.",
+    updated: "Produkti u perditesua.",
+    updatedForReview: "Produkti u perditesua dhe u dergua per shqyrtim nga admini.",
+  },
+} as const;
+
+function formatVendorCatalogLabel(value: string, language: "en" | "sq") {
+  if (language !== "sq") {
+    return formatCatalogLabel(value);
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const sqLabels: Record<string, string> = {
+    men: "Meshkuj",
+    women: "Femra",
+    kids: "Femije",
+    babies: "Bebe",
+    dresses: "Fustane",
+    dress: "Fustan",
+    shoes: "Kepuce",
+    accessories: "Aksesor",
+    accessory: "Aksesor",
+    bag: "Cante",
+    bags: "Canta",
+    jewelry: "Bizhuteri",
+    suit: "Kostum",
+    suits: "Kostume",
+    kostume: "Kostume",
+    komplete: "Komplete",
+    pants: "Pantallona",
+    jeans: "Xhinse",
+    skirt: "Fund",
+    skirts: "Funde",
+    shirt: "Kemishe",
+    shirts: "Kemisha",
+    tops: "Bluza",
+    top: "Bluze",
+    blouse: "Bluze",
+    tshirts: "Maica",
+    hoodie: "Hoodie",
+    hoodies: "Hoodie",
+    jacket: "Xhakete",
+    jackets: "Xhaketa",
+    outerwear: "Veshje te jashtme",
+    coat: "Pallto",
+    coats: "Pallto",
+    underwear: "Te brendshme",
+    beach: "Plazh",
+    black: "E zeze",
+    white: "E bardhe",
+    red: "E kuqe",
+    blue: "Blu",
+    navy: "Navy",
+    green: "E gjelber",
+    pink: "Roze",
+    beige: "Bezhe",
+    brown: "Kafe",
+    gray: "Gri",
+    grey: "Gri",
+    gold: "Ari",
+    silver: "Argjend",
+    yellow: "E verdhe",
+    orange: "Portokalli",
+    purple: "Vjollce",
+    cream: "Krem",
+  };
+
+  return sqLabels[normalized] ?? formatCatalogLabel(value);
+}
+
+function getVendorGenderLabel(language: "en" | "sq") {
+  return language === "sq" ? "Gjinia" : getCatalogGenderLabel();
+}
+
 function formatAccessoryTypeLabel(value: string, language: "en" | "sq") {
   const label = formatCatalogLabel(value);
   if (language !== "sq") {
@@ -120,14 +369,26 @@ function formatAccessoryTypeLabel(value: string, language: "en" | "sq") {
   return accessoryTypeLabelsSq.get(label.trim().toLowerCase()) ?? label;
 }
 
+type ProductPhotoUploaderLabels = {
+  choosePhotos: string;
+  noPhotosReady: string;
+  photosReady: (count: number) => string;
+  selectedPhotoNames: (count: number, names: string, limited: boolean) => string;
+  noPhotosSelected: string;
+  duplicatePhotos: string;
+  remove: string;
+};
+
 function ProductPhotoUploader({
   inputRef,
   selectedFiles,
   onFilesChange,
+  labels,
 }: {
   inputRef: { current: HTMLInputElement | null };
   selectedFiles: File[];
   onFilesChange: (files: File[]) => void;
+  labels: ProductPhotoUploaderLabels;
 }) {
   const [status, setStatus] = useState("");
   const lastSelectionKeyRef = useRef("");
@@ -137,20 +398,22 @@ function ProductPhotoUploader({
       onFilesChange(nextFiles);
       setStatus(
         nextFiles.length
-          ? `${nextFiles.length} photo${nextFiles.length === 1 ? "" : "s"} selected: ${nextFiles
-              .map((file) => file.name)
-              .join(", ")}${reachedLimit ? ` Only ${PRODUCT_IMAGE_LIMIT} photos are allowed.` : ""}`
+          ? labels.selectedPhotoNames(
+              nextFiles.length,
+              nextFiles.map((file) => file.name).join(", "),
+              reachedLimit,
+            )
           : "",
       );
     },
-    [onFilesChange],
+    [labels, onFilesChange],
   );
 
   const readSelectedFiles = useCallback(
     (fileList: FileList | File[] | null) => {
       const incomingFiles = Array.from(fileList ?? []);
       if (!incomingFiles.length) {
-        setStatus("No photos were selected.");
+        setStatus(labels.noPhotosSelected);
         return;
       }
 
@@ -165,7 +428,7 @@ function ProductPhotoUploader({
       });
 
       if (!newFiles.length) {
-        setStatus("Those photos are already selected.");
+        setStatus(labels.duplicatePhotos);
         return;
       }
 
@@ -175,7 +438,7 @@ function ProductPhotoUploader({
 
       applySelectedFiles(nextFiles, reachedLimit);
     },
-    [applySelectedFiles, selectedFiles],
+    [applySelectedFiles, labels, selectedFiles],
   );
 
   const handleFileInput = useCallback(
@@ -215,9 +478,7 @@ function ProductPhotoUploader({
         onChange={handleFileInput}
       />
       <p className="vendor-upload-status" aria-live="polite">
-        {selectedFiles.length
-          ? `${selectedFiles.length} photo${selectedFiles.length === 1 ? "" : "s"} ready`
-          : "No photos selected yet"}
+        {selectedFiles.length ? labels.photosReady(selectedFiles.length) : labels.noPhotosReady}
       </p>
       {status ? (
         <p className="vendor-upload-status" aria-live="polite">
@@ -239,7 +500,7 @@ function ProductPhotoUploader({
                   applySelectedFiles(nextFiles);
                 }}
               >
-                Remove
+                {labels.remove}
               </button>
             </div>
           ))}
@@ -576,6 +837,7 @@ export function VendorWorkspace({
   const router = useRouter();
   const { token, profile, currentRole, refreshProfile } = useAuth();
   const { language } = useLanguage();
+  const t = productComposerCopy[language];
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<VendorOrdersResponse[]>([]);
   const [vendorWorkspace, setVendorWorkspace] = useState<VendorProductsResponse["vendor"] | null>(null);
@@ -677,10 +939,7 @@ export function VendorWorkspace({
         : form.stock;
       const resolvedStockNumber = Number(resolvedStock);
       const priceNumber = Number(form.price);
-      const stockRequiredMessage =
-        language === "sq"
-          ? "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok."
-          : "Stock can't be 0. Enter how many pieces you have in stock.";
+      const stockRequiredMessage = t.stockRequired;
       const imageFilesForSubmission = files.length
         ? files
         : selectedProductImageFilesRef.current.length
@@ -699,7 +958,7 @@ export function VendorWorkspace({
       );
 
       if (!form.price.trim() || !Number.isFinite(priceNumber) || priceNumber <= 0) {
-        setError("Enter a product price greater than 0.");
+        setError(t.priceRequired);
         return;
       }
 
@@ -714,7 +973,7 @@ export function VendorWorkspace({
       }
 
       if (!editingProductId && imageFilesForSubmission.length === 0) {
-        setError("Select at least one product photo before creating the product.");
+        setError(t.selectAtLeastOnePhoto);
         return;
       }
 
@@ -771,11 +1030,11 @@ export function VendorWorkspace({
       setMessage(
         editingProductId
           ? imageReviewRequired
-            ? "Product updated and sent for admin review."
-            : "Product updated."
+            ? t.updatedForReview
+            : t.updated
           : selectedGenderIds.length > 1
-            ? `${selectedGenderIds.length} product listings sent for admin review.`
-            : "Product sent for admin review.",
+            ? `${selectedGenderIds.length} ${language === "sq" ? "produkte u derguan per shqyrtim nga admini." : "product listings sent for admin review."}`
+            : t.sentForReview,
       );
       await loadWorkspace();
       if (productComposerMode === "page") {
@@ -1942,11 +2201,11 @@ export function VendorWorkspace({
             {productComposerMode !== "page" ? (
             <section className="form-card vendor-products-head">
               <div>
-                <h2 className="section-title">Products</h2>
-                <p className="muted">Manage listings from the table below, or use the full product page to add a new item.</p>
+                <h2 className="section-title">{t.products}</h2>
+                <p className="muted">{t.productsIntro}</p>
               </div>
               <Link className="button" href="/vendor/products/new">
-                Add product
+                {t.addProduct}
               </Link>
             </section>
             ) : null}
@@ -1973,38 +2232,38 @@ export function VendorWorkspace({
                   }
                   role="dialog"
                   aria-modal="true"
-                  aria-label={editingProductId ? "Edit product" : "Add product"}
+                  aria-label={editingProductId ? t.editProduct : t.addProduct}
                   onClick={(event) => event.stopPropagation()}
                 >
                   <form className="form-card vendor-product-composer" onSubmit={submitProduct}>
               <div className="vendor-product-composer-header">
                 <div className="vendor-product-composer-copy">
-                  <div className="vendor-product-composer-kicker">Product studio</div>
+                  <div className="vendor-product-composer-kicker">{t.productStudio}</div>
                   <h2 className="section-title">
-                    {editingProductId ? "Refine this product" : "Create a sharper listing"}
+                    {editingProductId ? t.refineProduct : t.createListing}
                   </h2>
                 </div>
                 <div className="vendor-product-composer-badges">
                   <span className={editingProductId ? "badge warn" : "badge"}>
-                    {editingProductId ? "Editing" : "New listing"}
+                    {editingProductId ? t.editing : t.newListing}
                   </span>
                   <span className="chip">
                     {selectedFilePreviews.length > 0
-                      ? `${selectedFilePreviews.length} selected`
+                      ? t.selected(selectedFilePreviews.length)
                       : editingProduct?.images.length
-                        ? `${editingProduct.images.length} saved`
-                        : "No images yet"}
+                        ? t.saved(editingProduct.images.length)
+                        : t.noImagesYet}
                   </span>
                 </div>
               </div>
               {!vendorVerified ? (
                 <div className="message error">
-                  Verify your vendor email before you can save products.
+                  {t.verifyVendorEmail}
                 </div>
               ) : null}
               {vendorVerified && !vendorActive ? (
                 <div className="message">
-                  You can prepare products now. They stay hidden from customers until an admin activates your vendor account.
+                  {t.vendorPending}
                 </div>
               ) : null}
               {error ? <div className="message error">{error}</div> : null}
@@ -2014,21 +2273,21 @@ export function VendorWorkspace({
                     <div className="vendor-product-composer-section-head">
                       <span className="vendor-product-composer-step">01</span>
                       <div>
-                        <h3>Core details</h3>
+                        <h3>{t.coreDetails}</h3>
                       </div>
                     </div>
                     <div className="field">
-                      <label>Title</label>
+                      <label>{t.title}</label>
                       <input
                         value={form.title}
-                        placeholder="Ex. Soft lounge hoodie"
+                        placeholder={t.titlePlaceholder}
                         onChange={(event) =>
                           setForm((current) => ({ ...current, title: event.target.value }))
                         }
                       />
                     </div>
                     <div className="field">
-                      <label>Description</label>
+                      <label>{t.description}</label>
                       <textarea
                         value={form.description}
                         onChange={(event) =>
@@ -2038,7 +2297,7 @@ export function VendorWorkspace({
                     </div>
                     <div className="form-grid two">
                       <div className="field">
-                        <label>Price</label>
+                        <label>{t.price}</label>
                         <input
                           type="number"
                           step="0.01"
@@ -2052,7 +2311,7 @@ export function VendorWorkspace({
                         />
                       </div>
                       <div className="field">
-                        <label>{form.sizeIds.length ? "Total stock" : "Stock"}</label>
+                        <label>{form.sizeIds.length ? t.totalStock : t.stock}</label>
                         <input
                           type="number"
                           min="1"
@@ -2076,19 +2335,19 @@ export function VendorWorkspace({
                     <div className="vendor-product-composer-section-head">
                       <span className="vendor-product-composer-step">02</span>
                       <div>
-                        <h3>Catalog setup</h3>
+                        <h3>{t.catalogSetup}</h3>
                       </div>
                     </div>
                     <div className="form-grid two">
                       <div className="field">
-                        <label>Brand</label>
+                        <label>{t.brand}</label>
                         <select
                           value={form.brandId}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, brandId: event.target.value }))
                           }
                         >
-                          <option value="">Select brand</option>
+                          <option value="">{t.selectBrand}</option>
                           {availableBrands.map((entry) => (
                             <option key={entry.id} value={entry.id}>
                               {entry.name}
@@ -2097,8 +2356,8 @@ export function VendorWorkspace({
                         </select>
                       </div>
                       <div className="field">
-                        <label>{getCatalogGenderLabel()}</label>
-                        <div className="vendor-choice-grid" role="group" aria-label="Product genders">
+                        <label>{getVendorGenderLabel(language)}</label>
+                        <div className="vendor-choice-grid" role="group" aria-label={t.productGenders}>
                           {availableGenderGroups.map((entry) => {
                             const selected = form.genderGroupIds.includes(entry.id);
                             return (
@@ -2116,7 +2375,9 @@ export function VendorWorkspace({
                                   }))
                                 }
                               >
-                                {getCatalogDepartmentDisplayLabel(entry.name) || formatCatalogLabel(entry.name)}
+                                {language === "sq"
+                                  ? formatVendorCatalogLabel(entry.name, language)
+                                  : getCatalogDepartmentDisplayLabel(entry.name) || formatCatalogLabel(entry.name)}
                               </button>
                             );
                           })}
@@ -2125,7 +2386,7 @@ export function VendorWorkspace({
                     </div>
                     <div className="form-grid two">
                       <div className="field">
-                        <label>Category</label>
+                        <label>{t.category}</label>
                         <select
                           value={form.categoryId}
                           onChange={(event) =>
@@ -2136,17 +2397,17 @@ export function VendorWorkspace({
                             }))
                           }
                         >
-                          <option value="">Select category</option>
+                          <option value="">{t.selectCategory}</option>
                           {availableFormCategories.map((entry) => (
                             <option key={entry.id} value={entry.id}>
-                              {formatCatalogLabel(entry.name)}
+                              {formatVendorCatalogLabel(entry.name, language)}
                             </option>
                           ))}
                         </select>
                       </div>
                       {selectedFormIsAccessories ? (
                         <div className="field">
-                          <label>Accessory type</label>
+                          <label>{t.accessoryType}</label>
                           <select
                             value={form.subcategoryId}
                             onChange={(event) =>
@@ -2167,12 +2428,12 @@ export function VendorWorkspace({
                     </div>
                     <div className="vendor-catalog-request-card">
                       <div>
-                        <strong>Missing</strong>
-                        <p className="muted">Request a missing catalog option from admin.</p>
+                        <strong>{t.missing}</strong>
+                        <p className="muted">{t.missingHint}</p>
                       </div>
                       <div className="form-grid two">
                         <div className="field">
-                          <label>Mungesë</label>
+                          <label>{t.missing}</label>
                           <select
                             value={catalogRequestForm.requestType}
                             onChange={(event) =>
@@ -2182,14 +2443,14 @@ export function VendorWorkspace({
                               }))
                             }
                           >
-                            <option value="brand">Brand</option>
-                            <option value="category">Category</option>
-                            <option value="subcategory">Accessory</option>
-                            <option value="color">Color</option>
+                            <option value="brand">{t.brand}</option>
+                            <option value="category">{t.category}</option>
+                            <option value="subcategory">{t.accessoryType}</option>
+                            <option value="color">{t.colors}</option>
                           </select>
                         </div>
                         <div className="field">
-                          <label>Missing value</label>
+                          <label>{t.missingValue}</label>
                           <input
                             value={catalogRequestForm.requestedValue}
                             onChange={(event) =>
@@ -2198,7 +2459,7 @@ export function VendorWorkspace({
                                 requestedValue: event.target.value,
                               }))
                             }
-                            placeholder="Enter what is missing"
+                            placeholder={t.missingPlaceholder}
                           />
                         </div>
                       </div>
@@ -2209,9 +2470,9 @@ export function VendorWorkspace({
                           disabled={activeAction !== null || !catalogRequestForm.requestedValue.trim()}
                           onClick={() => void submitCatalogRequest()}
                         >
-                          {activeAction === "catalog-request" ? "Submitting..." : "Submit request"}
+                          {activeAction === "catalog-request" ? t.submitting : t.submitRequest}
                         </button>
-                        <span className="chip">{catalogRequests.length} requests</span>
+                        <span className="chip">{t.requests(catalogRequests.length)}</span>
                       </div>
                     </div>
                   </section>
@@ -2220,13 +2481,13 @@ export function VendorWorkspace({
                     <div className="vendor-product-composer-section-head">
                       <span className="vendor-product-composer-step">03</span>
                       <div>
-                        <h3>Color and size</h3>
+                        <h3>{t.colorAndSize}</h3>
                       </div>
                     </div>
                     <div className="form-grid two">
                       <div className="field">
-                        <label>Colors</label>
-                        <div className="vendor-color-grid" role="group" aria-label="Product colors">
+                        <label>{t.colors}</label>
+                        <div className="vendor-color-grid" role="group" aria-label={t.productColors}>
                           {availableFormColors.map((entry) => {
                             const selected = form.colorIds.includes(entry.id);
                             const colorKey = getResolvedColorKey(entry.name);
@@ -2251,7 +2512,7 @@ export function VendorWorkspace({
                                   style={getColorSwatchStyle(entry.name)}
                                   aria-hidden="true"
                                 />
-                                <span>{formatCatalogLabel(entry.name)}</span>
+                                <span>{formatVendorCatalogLabel(entry.name, language)}</span>
                               </button>
                             );
                           })}
@@ -2259,8 +2520,8 @@ export function VendorWorkspace({
                       </div>
                       {!selectedFormIsAccessories ? (
                         <div className="field vendor-size-type-field">
-                          <label>Size type</label>
-                          <div className="vendor-choice-grid" role="group" aria-label="Product size type">
+                          <label>{t.sizeType}</label>
+                          <div className="vendor-choice-grid" role="group" aria-label={t.productSizeType}>
                             {visibleFormSizeTypes.map((entry) => {
                               const selected = form.sizeTypeId === entry.id;
                               return (
@@ -2279,13 +2540,13 @@ export function VendorWorkspace({
                                     }))
                                   }
                                 >
-                                  {getSizeTypeDisplayLabel(entry.name)}
+                                  {language === "sq" ? formatVendorCatalogLabel(entry.name, language) : getSizeTypeDisplayLabel(entry.name)}
                                 </button>
                               );
                             })}
                           </div>
                           {selectedFormIsShoes ? (
-                            <span className="muted">EU shoe sizes</span>
+                            <span className="muted">{t.euShoeSizes}</span>
                           ) : null}
                         </div>
                       ) : null}
@@ -2295,10 +2556,10 @@ export function VendorWorkspace({
                         <div className="field">
                           <label>
                             {selectedFormSizeType
-                              ? `${getSizeTypeDisplayLabel(selectedFormSizeType.name)} sizes`
-                              : "Sizes"}
+                              ? `${language === "sq" ? formatVendorCatalogLabel(selectedFormSizeType.name, language) : getSizeTypeDisplayLabel(selectedFormSizeType.name)} ${t.sizes.toLowerCase()}`
+                              : t.sizes}
                           </label>
-                          <div className="vendor-size-grid" role="group" aria-label="Product sizes">
+                          <div className="vendor-size-grid" role="group" aria-label={t.productSizes}>
                             {availableFormSizes.map((entry) => {
                               const selected = form.sizeIds.includes(entry.id);
                               return (
@@ -2333,7 +2594,7 @@ export function VendorWorkspace({
                                   </button>
                                   {selected ? (
                                     <label>
-                                      <span>Stock</span>
+                                      <span>{t.stock}</span>
                                       <input
                                         type="number"
                                         min="1"
@@ -2366,47 +2627,53 @@ export function VendorWorkspace({
                     <div className="vendor-product-composer-section-head">
                       <span className="vendor-product-composer-step">04</span>
                       <div>
-                        <h3>Images and publish</h3>
+                        <h3>{t.imagesPublish}</h3>
                       </div>
                     </div>
 
                     <div className="vendor-product-meta-grid">
                       <div className="vendor-product-meta-card">
-                        <span>Brand</span>
-                        <strong>{selectedFormBrand?.name ?? "Choose brand"}</strong>
+                        <span>{t.brand}</span>
+                        <strong>{selectedFormBrand?.name ?? t.chooseBrand}</strong>
                       </div>
                       <div className="vendor-product-meta-card">
-                        <span>Category</span>
+                        <span>{t.category}</span>
                         <strong>
                           {selectedFormCategory
-                            ? formatCatalogLabel(selectedFormCategory.name)
-                            : "Choose category"}
+                            ? formatVendorCatalogLabel(selectedFormCategory.name, language)
+                            : t.chooseCategory}
                         </strong>
                       </div>
                       <div className="vendor-product-meta-card">
-                        <span>{getCatalogGenderLabel()}</span>
+                        <span>{getVendorGenderLabel(language)}</span>
                         <strong>
                           {selectedFormGenderGroups.length
                             ? selectedFormGenderGroups
                                 .map(
                                   (entry) =>
-                                    getCatalogDepartmentDisplayLabel(entry.name) ||
-                                    formatCatalogLabel(entry.name),
+                                    language === "sq"
+                                      ? formatVendorCatalogLabel(entry.name, language)
+                                      : getCatalogDepartmentDisplayLabel(entry.name) ||
+                                        formatCatalogLabel(entry.name),
                                 )
                                 .join(", ")
-                            : "Optional"}
+                            : t.optional}
                         </strong>
                       </div>
                       <div className="vendor-product-meta-card">
-                        <span>Size setup</span>
+                        <span>{t.sizeSetup}</span>
                         <strong>
                           {selectedFormIsAccessories
-                            ? "Not required"
+                            ? t.notRequired
                             : selectedFormSizes.length
                             ? selectedFormSizes.map((entry) => entry.label).join(", ")
                             : (selectedFormSize?.label ??
-                                getSizeTypeDisplayLabel(selectedFormSizeType?.name)) ||
-                              "Choose size details"}
+                                (selectedFormSizeType?.name
+                                  ? language === "sq"
+                                    ? formatVendorCatalogLabel(selectedFormSizeType.name, language)
+                                    : getSizeTypeDisplayLabel(selectedFormSizeType.name)
+                                  : "")) ||
+                              t.chooseSizeDetails}
                         </strong>
                       </div>
                     </div>
@@ -2415,16 +2682,17 @@ export function VendorWorkspace({
                       <div className="vendor-upload-dropzone-copy">
                         <strong>
                           {selectedFilePreviews.length > 0
-                            ? `${selectedFilePreviews.length} new image${selectedFilePreviews.length === 1 ? "" : "s"} selected`
+                            ? t.newImagesSelected(selectedFilePreviews.length)
                             : editingProduct?.images.length
-                              ? `${editingProduct.images.length} saved image${editingProduct.images.length === 1 ? "" : "s"}`
-                              : "Choose product images"}
+                              ? t.savedImages(editingProduct.images.length)
+                              : t.chooseProductImages}
                         </strong>
                       </div>
                       <ProductPhotoUploader
                         inputRef={productImageInputRef}
                         selectedFiles={files}
                         onFilesChange={handleProductImageFilesChange}
+                        labels={t}
                       />
                     </div>
 
@@ -2451,7 +2719,7 @@ export function VendorWorkspace({
                             );
                           }}
                         />
-                        Replace existing images
+                        {t.replaceImages}
                       </label>
                     ) : null}
 
@@ -2459,7 +2727,7 @@ export function VendorWorkspace({
                     !replaceImages &&
                     existingImageOrderUrls.some((image) => !removedExistingImageUrls.includes(image)) ? (
                       <div className="vendor-preview-group">
-                        <div className="vendor-preview-heading">Current images</div>
+                        <div className="vendor-preview-heading">{t.currentImages}</div>
                         <div className="preview-grid">
                           {existingImageOrderUrls.filter((image) => !removedExistingImageUrls.includes(image)).map((image, index) => (
                             <div
@@ -2485,23 +2753,23 @@ export function VendorWorkspace({
                               <ProductMedia
                                 image={assetUrl(image)}
                                 title={editingProduct.title}
-                                subtitle={`Slot ${index + 1}${index === 0 ? " - thumbnail" : ""}`}
+                                subtitle={t.slotThumbnail(index + 1)}
                                 className="card-image"
                               />
                               <button
                                 className="preview-remove-button"
                                 type="button"
-                                aria-label="Remove saved image"
+                                aria-label={t.removeSavedImage}
                                 onClick={() => removeExistingProductImage(image)}
                               >
-                                Remove
+                                {t.remove}
                               </button>
                               <button
                                 className={`thumbnail-select-button${primaryImageKey === `existing:${image}` ? " selected" : ""}`}
                                 type="button"
                                 onClick={() => selectExistingThumbnail(image)}
                               >
-                                {primaryImageKey === `existing:${image}` ? "Thumbnail selected" : "Set thumbnail"}
+                                {primaryImageKey === `existing:${image}` ? t.thumbnailSelected : t.setThumbnail}
                               </button>
                             </div>
                           ))}
@@ -2511,7 +2779,7 @@ export function VendorWorkspace({
 
                     {selectedFilePreviews.length > 0 ? (
                       <div className="vendor-preview-group">
-                        <div className="vendor-preview-heading">New uploads</div>
+                        <div className="vendor-preview-heading">{t.newUploads}</div>
                         <div className="preview-grid">
                           {selectedFilePreviews.map((preview, index) => (
                             <div
@@ -2538,22 +2806,22 @@ export function VendorWorkspace({
                                 <ProductMedia
                                   image={preview.url}
                                   title={form.title || preview.name}
-                                  subtitle={`Upload slot ${index + 1}${primaryImageKey === preview.key ? " - thumbnail" : ""}`}
+                                  subtitle={t.uploadSlotThumbnail(index + 1, primaryImageKey === preview.key)}
                                   className="card-image"
                                 />
                               ) : (
                                 <div className="vendor-selected-file-card">
-                                  <strong>Photo selected</strong>
+                                  <strong>{t.photoSelected}</strong>
                                   <span>{preview.name}</span>
                                 </div>
                               )}
                               <button
                                 className="preview-remove-button"
                                 type="button"
-                                aria-label={`Remove ${preview.name}`}
+                                aria-label={t.removeNamed(preview.name)}
                                 onClick={() => removeSelectedProductImage(index)}
                               >
-                                Remove
+                                {t.remove}
                               </button>
                               <button
                                 className={`thumbnail-select-button${primaryImageKey === preview.key ? " selected" : ""}`}
@@ -2561,8 +2829,8 @@ export function VendorWorkspace({
                                 onClick={() => selectUploadedThumbnail(index)}
                               >
                                 {primaryImageKey === preview.key
-                                  ? "Thumbnail selected"
-                                  : "Set thumbnail"}
+                                  ? t.thumbnailSelected
+                                  : t.setThumbnail}
                               </button>
                             </div>
                           ))}
@@ -2574,11 +2842,11 @@ export function VendorWorkspace({
                       <button className="button" type="submit" disabled={!vendorCanManageCatalog}>
                         {activeAction === (editingProductId ? `save-${editingProductId}` : "create-product")
                           ? editingProductId
-                            ? "Updating..."
-                            : "Creating..."
+                            ? t.updating
+                            : t.creating
                           : editingProductId
-                            ? "Update product"
-                            : "Create product"}
+                            ? t.updateProduct
+                            : t.createProduct}
                       </button>
                       {editingProductId ? (
                         <button
@@ -2587,12 +2855,12 @@ export function VendorWorkspace({
                           disabled={activeAction !== null}
                           onClick={resetProductForm}
                         >
-                          Cancel edit
+                          {t.cancelEdit}
                         </button>
                       ) : (
                         productComposerMode === "page" ? (
                           <Link className="button-ghost" href="/vendor/products">
-                            Back to products
+                            {t.backToProducts}
                           </Link>
                         ) : (
                           <button
@@ -2601,7 +2869,7 @@ export function VendorWorkspace({
                             disabled={activeAction !== null}
                             onClick={resetProductForm}
                           >
-                            Close
+                            {t.close}
                           </button>
                         )
                       )}
