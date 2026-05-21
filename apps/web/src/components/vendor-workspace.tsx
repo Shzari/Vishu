@@ -335,6 +335,10 @@ function formatVendorCatalogLabel(value: string, language: "en" | "sq") {
     coats: "Pallto",
     underwear: "Te brendshme",
     beach: "Plazh",
+    eu: "Te rritur",
+    "shoe eu": "Kepuce",
+    adults: "Te rritur",
+    adult: "Te rritur",
     black: "E zeze",
     white: "E bardhe",
     red: "E kuqe",
@@ -628,6 +632,15 @@ function getSizeTypeDisplayLabel(name?: string | null) {
 function isVisibleVendorSizeType(name?: string | null) {
   const normalized = name?.trim().toLowerCase() ?? "";
   return normalized !== "clothing" && normalized !== "apparel";
+}
+
+function getEnglishSizeTypeDisplayLabel(name?: string | null) {
+  const normalized = name?.trim().toLowerCase() ?? "";
+  if (normalized === "babies" || normalized === "baby") return "Babies";
+  if (normalized === "kids") return "Kids";
+  if (normalized === "eu" || normalized === "adult" || normalized === "adults") return "Adults";
+  if (normalized === "shoe eu") return "Shoes";
+  return name ?? "";
 }
 
 function getNextVendorActions(status: string) {
@@ -2540,7 +2553,7 @@ export function VendorWorkspace({
                                     }))
                                   }
                                 >
-                                  {language === "sq" ? formatVendorCatalogLabel(entry.name, language) : getSizeTypeDisplayLabel(entry.name)}
+                                  {language === "sq" ? formatVendorCatalogLabel(entry.name, language) : getEnglishSizeTypeDisplayLabel(entry.name)}
                                 </button>
                               );
                             })}
@@ -2556,7 +2569,7 @@ export function VendorWorkspace({
                         <div className="field">
                           <label>
                             {selectedFormSizeType
-                              ? `${language === "sq" ? formatVendorCatalogLabel(selectedFormSizeType.name, language) : getSizeTypeDisplayLabel(selectedFormSizeType.name)} ${t.sizes.toLowerCase()}`
+                              ? `${language === "sq" ? formatVendorCatalogLabel(selectedFormSizeType.name, language) : getEnglishSizeTypeDisplayLabel(selectedFormSizeType.name)} ${t.sizes.toLowerCase()}`
                               : t.sizes}
                           </label>
                           <div className="vendor-size-grid" role="group" aria-label={t.productSizes}>
@@ -2671,7 +2684,7 @@ export function VendorWorkspace({
                                 (selectedFormSizeType?.name
                                   ? language === "sq"
                                     ? formatVendorCatalogLabel(selectedFormSizeType.name, language)
-                                    : getSizeTypeDisplayLabel(selectedFormSizeType.name)
+                                    : getEnglishSizeTypeDisplayLabel(selectedFormSizeType.name)
                                   : "")) ||
                               t.chooseSizeDetails}
                         </strong>
