@@ -1905,6 +1905,69 @@ BEGIN
     );
 END;
 
+DECLARE @kidsSizeTypeIdForYearCleanup UNIQUEIDENTIFIER;
+
+SELECT @kidsSizeTypeIdForYearCleanup = id
+FROM dbo.size_types
+WHERE name = 'Kids';
+
+IF @euSizeTypeId IS NOT NULL AND @kidsSizeTypeIdForYearCleanup IS NOT NULL
+BEGIN
+  DECLARE @euYearSizeMap TABLE (
+    old_size_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    new_size_id UNIQUEIDENTIFIER NOT NULL
+  );
+
+  INSERT INTO @euYearSizeMap (old_size_id, new_size_id)
+  SELECT s.id, target.id
+  FROM dbo.sizes s
+  INNER JOIN dbo.sizes target
+    ON target.size_type_id = @kidsSizeTypeIdForYearCleanup
+   AND LOWER(LTRIM(RTRIM(target.label))) = LOWER(LTRIM(RTRIM(s.label)))
+  WHERE s.size_type_id = @euSizeTypeId
+    AND LEN(LTRIM(RTRIM(s.label))) > 1
+    AND RIGHT(LOWER(LTRIM(RTRIM(s.label))), 1) = 'y'
+    AND TRY_CONVERT(INT, LEFT(LTRIM(RTRIM(s.label)), LEN(LTRIM(RTRIM(s.label))) - 1)) IS NOT NULL;
+
+  DELETE ps
+  FROM dbo.product_sizes ps
+  INNER JOIN @euYearSizeMap mapped
+    ON mapped.old_size_id = ps.size_id
+  WHERE EXISTS (
+    SELECT 1
+    FROM dbo.product_sizes existing
+    WHERE existing.product_id = ps.product_id
+      AND existing.size_id = mapped.new_size_id
+  );
+
+  UPDATE ps
+  SET size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.product_sizes ps
+  INNER JOIN @euYearSizeMap mapped
+    ON mapped.old_size_id = ps.size_id;
+
+  UPDATE ci
+  SET selected_size_id = mapped.new_size_id,
+      updated_at = SYSDATETIME()
+  FROM dbo.cart_items ci
+  INNER JOIN @euYearSizeMap mapped
+    ON mapped.old_size_id = ci.selected_size_id;
+
+  UPDATE oi
+  SET selected_size_id = mapped.new_size_id
+  FROM dbo.order_items oi
+  INNER JOIN @euYearSizeMap mapped
+    ON mapped.old_size_id = oi.selected_size_id;
+
+  UPDATE s
+  SET is_active = 0,
+      updated_at = SYSDATETIME()
+  FROM dbo.sizes s
+  INNER JOIN @euYearSizeMap mapped
+    ON mapped.old_size_id = s.id;
+END;
+
 UPDATE dbo.categories
 SET is_active = 0,
     updated_at = SYSDATETIME()
