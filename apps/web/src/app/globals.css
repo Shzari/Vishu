@@ -3709,6 +3709,12 @@ form.form-card.vendor-product-composer {
   color: #171717;
 }
 
+.vendor-product-composer textarea {
+  min-height: 104px;
+  overflow: hidden;
+  resize: none;
+}
+
 .vendor-product-composer input:disabled,
 .vendor-product-composer select:disabled,
 .vendor-product-composer textarea:disabled {

@@ -296,6 +296,7 @@ export function VendorProductCreatePage() {
   const photoInputId = useId();
   const photosRef = useRef<SelectedProductPhoto[]>([]);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const descriptionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const photoPickerOpenRef = useRef(false);
   const lastPhotoSelectionKeyRef = useRef("");
 
@@ -308,6 +309,10 @@ export function VendorProductCreatePage() {
       setPhotoPickerMessage(t.noPhotoSelected);
     }
   }, [photos.length, t.noPhotoSelected]);
+
+  useEffect(() => {
+    resizeTextareaToContent(descriptionTextareaRef.current);
+  }, [description]);
 
   useEffect(() => {
     return () => {
@@ -790,8 +795,13 @@ export function VendorProductCreatePage() {
                 <label className="field">
                   <span>{t.descriptionLabel}</span>
                   <textarea
+                    ref={descriptionTextareaRef}
                     value={description}
-                    onChange={(event) => setDescription(event.target.value)}
+                    rows={3}
+                    onChange={(event) => {
+                      resizeTextareaToContent(event.currentTarget);
+                      setDescription(event.target.value);
+                    }}
                     placeholder={t.descriptionPlaceholder}
                   />
                 </label>
@@ -1096,6 +1106,15 @@ function formatFileSize(size: number) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function resizeTextareaToContent(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) {
+    return;
+  }
+
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
 function getColorSwatch(colorName: string) {

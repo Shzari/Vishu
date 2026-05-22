@@ -31,6 +31,15 @@ function getProductImageFileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function resizeTextareaToContent(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) {
+    return;
+  }
+
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 interface VendorOrdersResponse {
   id: string;
   orderNumber: string;
@@ -879,6 +888,7 @@ export function VendorWorkspace({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const productImageInputRef = useRef<HTMLInputElement | null>(null);
+  const productDescriptionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedProductImageFilesRef = useRef<File[]>([]);
   const productComposerActive =
     productComposerMode === "page" || productModalOpen;
@@ -928,6 +938,10 @@ export function VendorWorkspace({
     }
     setReplaceImages(false);
   }, [productComposerMode, section]);
+
+  useEffect(() => {
+    resizeTextareaToContent(productDescriptionTextareaRef.current);
+  }, [form.description, productComposerActive]);
 
   async function submitProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2302,10 +2316,13 @@ export function VendorWorkspace({
                     <div className="field">
                       <label>{t.description}</label>
                       <textarea
+                        ref={productDescriptionTextareaRef}
                         value={form.description}
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, description: event.target.value }))
-                        }
+                        rows={3}
+                        onChange={(event) => {
+                          resizeTextareaToContent(event.currentTarget);
+                          setForm((current) => ({ ...current, description: event.target.value }));
+                        }}
                       />
                     </div>
                     <div className="form-grid two">
