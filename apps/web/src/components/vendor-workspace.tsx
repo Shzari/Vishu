@@ -352,7 +352,10 @@ function formatVendorCatalogLabel(value: string, language: "en" | "sq") {
     white: "E bardhe",
     red: "E kuqe",
     blue: "Blu",
-    navy: "Navy",
+    "light blue": "Blu e hapur",
+    "sky blue": "Blu qielli",
+    navy: "Blu e erret",
+    "dark blue": "Blu e erret",
     green: "E gjelber",
     pink: "Roze",
     beige: "Bezhe",
@@ -544,6 +547,8 @@ const COLOR_SWATCHES: Record<string, string> = {
   "black-white":
     "linear-gradient(135deg, #111111 0 49%, #ffffff 50% 100%)",
   blue: "#2563eb",
+  "dark-blue": "#1e3a8a",
+  "light-blue": "#93c5fd",
   brown: "#7c4a24",
   burgundy: "#7f1d1d",
   cream: "#fff4cf",
@@ -560,6 +565,7 @@ const COLOR_SWATCHES: Record<string, string> = {
   purple: "#7e22ce",
   red: "#dc2626",
   silver: "#c0c0c0",
+  "sky-blue": "#38bdf8",
   white: "#ffffff",
   yellow: "#facc15",
 };
