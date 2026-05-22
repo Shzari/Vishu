@@ -863,6 +863,7 @@ const textTranslations = new Map<string, string>([
   ["Green", "E gjelbër"],
   ["Olive", "Ulliri"],
   ["Pink", "Rozë"],
+  ["Blush Pink", "Roze e hapur"],
   ["Purple", "Vjollcë"],
   ["Burgundy", "Bordo"],
   ["Gold", "Ari"],
