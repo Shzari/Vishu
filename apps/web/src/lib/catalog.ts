@@ -98,6 +98,7 @@ export const PRODUCT_COLOR_OPTIONS = [
   "yellow",
   "green",
   "pink",
+  "purple",
   "mixed-colors",
 ] as const;
 

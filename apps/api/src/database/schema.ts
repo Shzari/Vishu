@@ -1275,7 +1275,8 @@ FROM (
     ('Brown', 110),
     ('Beige', 120),
     ('Gold', 130),
-    ('Mixed Colors', 140)
+    ('Purple', 140),
+    ('Mixed Colors', 150)
   ) AS default_colors(name, sort_order)
 ) AS source
 WHERE NOT EXISTS (
@@ -1299,7 +1300,8 @@ GROUP BY source.name;
     ('Brown', 110),
     ('Beige', 120),
     ('Gold', 130),
-    ('Mixed Colors', 140)
+    ('Purple', 140),
+    ('Mixed Colors', 150)
   ) AS default_colors(name, sort_order)
 )
 UPDATE c
@@ -1325,6 +1327,7 @@ INNER JOIN color_sort_order
     ('Brown', 'Brown'),
     ('Beige', 'Beige'),
     ('Gold', 'Gold'),
+    ('Purple', 'Purple'),
     ('Mixed Colors', 'Mixed Colors')
   ) AS default_colors(name, display_name)
 )
@@ -1355,6 +1358,7 @@ INNER JOIN color_display_names
     ('Brown'),
     ('Beige'),
     ('Gold'),
+    ('Purple'),
     ('Mixed Colors')
   ) AS default_colors(name)
 )
