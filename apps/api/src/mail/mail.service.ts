@@ -255,7 +255,10 @@ export class MailService {
     }
 
     const transporter = await this.getTransporter(settings);
-    const baseUrl = settings.appBaseUrl;
+    const vendorBaseUrl =
+      this.configService.get<string>('MERCHANT_BASE_URL')?.trim() ||
+      settings.appBaseUrl;
+    const baseUrl = accountType === 'vendor' ? vendorBaseUrl : settings.appBaseUrl;
     const verifyUrl =
       accountType === 'vendor'
         ? `${baseUrl}/vendor/verify?token=${encodeURIComponent(token)}`

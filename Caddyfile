@@ -73,6 +73,25 @@ vishu.shop {
   }
 }
 
+merchants.vishu.shop {
+  encode gzip zstd
+  import admin_security_headers
+
+  redir /api /api/ 308
+
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle /uploads* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:3001
+  }
+}
+
 vishu.shop:8443 {
   encode gzip zstd
   import admin_security_headers

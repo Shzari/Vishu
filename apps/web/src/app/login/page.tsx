@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { PasswordField } from "@/components/password-field";
 import { useAuth, useLanguage } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
+import { getMerchantUrl, isMerchantHostname } from "@/lib/merchant-domain";
 import type { SessionUser } from "@/lib/types";
 
 type LoginResponse =
@@ -24,11 +25,17 @@ type LoginResponse =
 const loginCopy = {
   en: {
     title: "Sign in to Vishu.shop",
+    merchantTitle: "Merchant login",
     intro: "Customers can place orders and vendors can manage products, photos, stock, and shop activity.",
+    merchantIntro: "Sign in to manage products, photos, stock, orders, and shop activity.",
     email: "Email",
     password: "Password",
     login: "Login",
     createAccount: "Create account",
+    createVendorAccount: "Create vendor account",
+    vendorPortal: "Vendor portal",
+    customerPortalOnly: "This login is for customers. Vendors should use the merchant portal.",
+    merchantPortalOnly: "This portal is for vendors. Customers should use Vishu.shop login.",
     resetPassword: "Reset password",
     loggedIn: "Logged in successfully.",
     loginFailed: "Login failed.",
@@ -50,11 +57,17 @@ const loginCopy = {
   },
   sq: {
     title: "Hyr ne Vishu.shop",
+    merchantTitle: "Hyrje per shites",
     intro: "Klientet mund te bejne porosi dhe shitesit mund te menaxhojne produktet, fotot, stokun dhe aktivitetin e dyqanit.",
+    merchantIntro: "Hyni per te menaxhuar produktet, fotot, stokun, porosite dhe aktivitetin e dyqanit.",
     email: "Email",
     password: "Fjalekalimi",
     login: "Hyr",
     createAccount: "Krijo llogari",
+    createVendorAccount: "Krijo llogari shitesi",
+    vendorPortal: "Portali i shitesve",
+    customerPortalOnly: "Kjo hyrje eshte per klientet. Shitesit duhet te perdorin portalin e shitesve.",
+    merchantPortalOnly: "Ky portal eshte per shitesit. Klientet duhet te perdorin hyrjen ne Vishu.shop.",
     resetPassword: "Rivendos fjalekalimin",
     loggedIn: "Hyrja u krye me sukses.",
     loginFailed: "Hyrja deshtoi.",
@@ -92,7 +105,16 @@ export default function LoginPage() {
   const [lastSubmittedVendorOtp, setLastSubmittedVendorOtp] = useState("");
   const [verifyingVendorOtp, setVerifyingVendorOtp] = useState(false);
   const [resendingVendorOtp, setResendingVendorOtp] = useState(false);
+  const [isMerchantPortal, setIsMerchantPortal] = useState(false);
   const requestedNextPath = searchParams.get("next");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setIsMerchantPortal(isMerchantHostname(window.location.hostname));
+  }, []);
 
   useEffect(() => {
     if (loading || !isAuthenticated || !currentRole) {
@@ -144,6 +166,11 @@ export default function LoginPage() {
         return;
       }
 
+      if (isMerchantPortal && response.user.role !== "vendor") {
+        setError(t.merchantPortalOnly);
+        return;
+      }
+
       await setSession(response.user);
       setMessage(t.loggedIn);
 
@@ -182,6 +209,11 @@ export default function LoginPage() {
           }),
         },
       );
+
+      if (isMerchantPortal && response.user.role !== "vendor") {
+        setError(t.merchantPortalOnly);
+        return;
+      }
 
       await setSession(response.user);
       setMessage(t.loggedIn);
@@ -312,9 +344,9 @@ export default function LoginPage() {
       {!vendorOtpChallengeId && (
         <>
           <section className="auth-intro">
-            <h1 className="hero-title">{t.title}</h1>
+            <h1 className="hero-title">{isMerchantPortal ? t.merchantTitle : t.title}</h1>
             <p className="hero-copy">
-              {t.intro}
+              {isMerchantPortal ? t.merchantIntro : t.intro}
             </p>
           </section>
 
@@ -349,9 +381,17 @@ export default function LoginPage() {
               </div>
             )}
             <div className="inline-actions">
-              <Link href="/register" className="button-ghost">
-                {t.createAccount}
+              <Link
+                href={isMerchantPortal ? "/register?role=vendor" : "/register"}
+                className="button-ghost"
+              >
+                {isMerchantPortal ? t.createVendorAccount : t.createAccount}
               </Link>
+              {!isMerchantPortal && (
+                <Link href={getMerchantUrl("/login?portal=vendor")} className="button-ghost">
+                  {t.vendorPortal}
+                </Link>
+              )}
               <Link href="/reset-password" className="button-ghost">
                 {t.resetPassword}
               </Link>

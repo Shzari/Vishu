@@ -2,6 +2,24 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const AUTH_COOKIE_NAME = "vishu_access_token";
 const ADMIN_PORT = "8443";
+const MERCHANT_HOSTNAME = "merchants.vishu.shop";
+const STOREFRONT_HOSTNAMES = new Set(["vishu.shop", "www.vishu.shop"]);
+
+function getRequestHostname(request: NextRequest) {
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const host = forwardedHost || request.headers.get("host") || "";
+  return host.trim().toLowerCase().split(":")[0];
+}
+
+function buildProductionHostUrl(request: NextRequest, hostname: string, pathname: string, search = "") {
+  const url = request.nextUrl.clone();
+  url.protocol = "https:";
+  url.hostname = hostname;
+  url.port = "";
+  url.pathname = pathname;
+  url.search = search;
+  return url;
+}
 
 function isAdminPortRequest(request: NextRequest) {
   const forwardedHost = request.headers.get("x-forwarded-host");
@@ -22,6 +40,37 @@ function isAdminPortRequest(request: NextRequest) {
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const hostname = getRequestHostname(request);
+
+  if (hostname === MERCHANT_HOSTNAME && pathname === "/") {
+    return NextResponse.redirect(new URL("/login?portal=vendor", request.url));
+  }
+
+  if (STOREFRONT_HOSTNAMES.has(hostname) && pathname.startsWith("/vendor")) {
+    return NextResponse.redirect(
+      buildProductionHostUrl(request, MERCHANT_HOSTNAME, pathname, search),
+    );
+  }
+
+  if (
+    STOREFRONT_HOSTNAMES.has(hostname) &&
+    pathname === "/register" &&
+    request.nextUrl.searchParams.get("role") === "vendor"
+  ) {
+    return NextResponse.redirect(
+      buildProductionHostUrl(request, MERCHANT_HOSTNAME, "/register", "?role=vendor"),
+    );
+  }
+
+  if (
+    STOREFRONT_HOSTNAMES.has(hostname) &&
+    pathname === "/login" &&
+    request.nextUrl.searchParams.get("portal") === "vendor"
+  ) {
+    return NextResponse.redirect(
+      buildProductionHostUrl(request, MERCHANT_HOSTNAME, "/login", "?portal=vendor"),
+    );
+  }
 
   if (pathname.startsWith("/admin") && !isAdminPortRequest(request)) {
     return new NextResponse(null, { status: 404 });
@@ -42,5 +91,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  matcher: ["/", "/admin/:path*", "/vendor/:path*", "/login", "/register"],
 };

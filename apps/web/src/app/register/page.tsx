@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/providers";
 import { apiRequest } from "@/lib/api";
+import { getMerchantUrl, isMerchantHostname, isStorefrontHostname } from "@/lib/merchant-domain";
 import { getPasswordPolicyError } from "@/lib/password-policy";
 import type { SessionUser } from "@/lib/types";
 type RegisterRole = "customer" | "vendor";
@@ -21,6 +22,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [acceptedVendorTerms, setAcceptedVendorTerms] = useState(false);
+  const [isMerchantPortal, setIsMerchantPortal] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -30,8 +32,21 @@ export default function RegisterPage() {
       return;
     }
 
+    const hostname = window.location.hostname;
+    const onMerchantPortal = isMerchantHostname(hostname);
+    const onStorefront = isStorefrontHostname(hostname);
+    const requestedVendor =
+      new URLSearchParams(window.location.search).get("role") === "vendor";
+
+    setIsMerchantPortal(onMerchantPortal);
+
+    if (onStorefront && requestedVendor) {
+      window.location.href = getMerchantUrl("/register?role=vendor");
+      return;
+    }
+
     const nextRole =
-      new URLSearchParams(window.location.search).get("role") === "vendor"
+      onMerchantPortal || requestedVendor
         ? "vendor"
         : "customer";
     setRole(nextRole);
@@ -90,7 +105,7 @@ export default function RegisterPage() {
         setPassword("");
         setConfirmPassword("");
         setAcceptedVendorTerms(false);
-        window.setTimeout(() => router.push("/login"), 1400);
+        window.setTimeout(() => router.push("/login?portal=vendor"), 1400);
         return;
       }
 
@@ -146,27 +161,28 @@ export default function RegisterPage() {
       </section>
 
       <form className="form-card form-grid register-form-card" onSubmit={handleSubmit}>
-        <div className="field">
-          <label>Join as</label>
-          <div className="register-role-grid">
-            <button
-              type="button"
-              className={role === "customer" ? "register-role-card active" : "register-role-card"}
-              onClick={() => setRole("customer")}
-            >
-              <strong>Customer</strong>
-              <span>Shop and place orders</span>
-            </button>
-            <button
-              type="button"
-              className={role === "vendor" ? "register-role-card active" : "register-role-card"}
-              onClick={() => setRole("vendor")}
-            >
-              <strong>Vendor</strong>
-              <span>Open a shop and sell</span>
-            </button>
+        {!isMerchantPortal && (
+          <div className="field">
+            <label>Join as</label>
+            <div className="register-role-grid">
+              <button
+                type="button"
+                className={role === "customer" ? "register-role-card active" : "register-role-card"}
+                onClick={() => setRole("customer")}
+              >
+                <strong>Customer</strong>
+                <span>Shop and place orders</span>
+              </button>
+              <a
+                className="register-role-card"
+                href={getMerchantUrl("/register?role=vendor")}
+              >
+                <strong>Vendor</strong>
+                <span>Open a shop and sell</span>
+              </a>
+            </div>
           </div>
-        </div>
+        )}
 
         {role === "vendor" && (
           <div className="field">

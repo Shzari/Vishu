@@ -6,6 +6,7 @@ import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import { FrontendLanguageTranslator } from "@/components/frontend-language-translator";
 import { getCartItemKey, useAuth, useBranding, useCart, useFavorites, useLanguage } from "@/components/providers";
 import { apiRequest, assetUrl, formatCurrency } from "@/lib/api";
+import { getStorefrontUrl, isMerchantHostname } from "@/lib/merchant-domain";
 
 interface VendorHeaderOrder {
   id: string;
@@ -154,6 +155,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [vendorNotificationsOpen, setVendorNotificationsOpen] = useState(false);
   const [mobileHeaderCondensed, setMobileHeaderCondensed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isMerchantPortal, setIsMerchantPortal] = useState(false);
   const {
     items,
     isCartOpen,
@@ -187,23 +189,27 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const shouldRunFrontendTranslator = !isAdminRoute && !isVendorRoute;
   const activeLanguage = canShowLanguageToggle ? language : "en";
   const t = shellCopy[activeLanguage];
-  const canUseShoppingCart = !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute;
+  const canUseShoppingCart =
+    !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute && !isMerchantPortal;
   const showGuestActions = !loading && !isAuthenticated;
   const brandHref = isAdminRoute
     ? "/admin/dashboard"
     : isVendorWorkspace
       ? "/vendor/dashboard"
+      : isMerchantPortal
+        ? "/login?portal=vendor"
       : "/";
   const showMarketplaceSearch =
     !isAdminRoute &&
     !isVendorRoute &&
+    !isMerchantPortal &&
     !pathname.startsWith("/login") &&
     !pathname.startsWith("/register") &&
     !pathname.startsWith("/reset-password") &&
     !pathname.startsWith("/verify") &&
     !pathname.startsWith("/vendor");
   const showPublicFooter =
-    !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute;
+    !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute && !isMerchantPortal;
   const vendorHeaderName =
     profile?.vendor?.shop_name?.trim() || profile?.fullName?.trim() || "Vendor Panel";
   const vendorHeaderInitial =
@@ -247,6 +253,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   );
   const vendorNotificationCount =
     vendorNotificationOrders.length + unreadVendorSystemNotifications.length;
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMerchantPortal(isMerchantHostname(window.location.hostname));
+    }
+  }, []);
 
   useEffect(() => {
     closeCart();
@@ -561,7 +573,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 </Link>
                 <span aria-hidden="true">/</span>
                 <Link
-                  href="/"
+                  href={isMerchantPortal ? getStorefrontUrl("/") : "/"}
                   className={!isVendorRoute ? "active" : ""}
                   aria-current={!isVendorRoute ? "page" : undefined}
                 >
@@ -718,7 +730,11 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               </>
             ) : (
               <>
-                {!isPasswordResetTokenRoute && <Link href="/">{t.shop}</Link>}
+                {!isPasswordResetTokenRoute && (
+                  <Link href={isMerchantPortal ? getStorefrontUrl("/") : "/"}>
+                    {t.shop}
+                  </Link>
+                )}
                 {canUseShoppingCart && (
                   <button
                     type="button"

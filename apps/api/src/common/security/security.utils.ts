@@ -253,6 +253,10 @@ export function resolveAllowedBrowserOrigins(
     configService?.get<string>('ADMIN_BASE_URL') ??
     process.env.ADMIN_BASE_URL ??
     '';
+  const merchantBaseUrl =
+    configService?.get<string>('MERCHANT_BASE_URL') ??
+    process.env.MERCHANT_BASE_URL ??
+    'https://merchants.vishu.shop';
   const nodeEnv =
     configService?.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '';
   const defaults =
@@ -279,6 +283,11 @@ export function resolveAllowedBrowserOrigins(
   const normalizedAdminBaseUrl = normalizeOrigin(adminBaseUrl);
   if (normalizedAdminBaseUrl) {
     origins.add(normalizedAdminBaseUrl);
+  }
+
+  const normalizedMerchantBaseUrl = normalizeOrigin(merchantBaseUrl);
+  if (normalizedMerchantBaseUrl) {
+    origins.add(normalizedMerchantBaseUrl);
   }
 
   for (const entry of defaults) {

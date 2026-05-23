@@ -25,7 +25,7 @@ export function getApiBaseUrl() {
   if (typeof window !== "undefined") {
     const host = window.location.hostname.toLowerCase();
 
-    if (host === "vishu.shop" || host === "www.vishu.shop") {
+    if (host === "vishu.shop" || host === "www.vishu.shop" || host === "merchants.vishu.shop") {
       return "/api";
     }
 

@@ -37,7 +37,7 @@ function VendorVerifyPageContent() {
 
         setMessage(response.message);
         window.setTimeout(() => {
-          router.replace("/login");
+          router.replace("/login?portal=vendor");
         }, 1800);
       } catch (verifyError) {
         if (!active) {
@@ -82,7 +82,7 @@ function VendorVerifyPageContent() {
         )}
 
         <div className="inline-actions">
-          <Link href="/login" className="button">
+          <Link href="/login?portal=vendor" className="button">
             Go to login
           </Link>
         </div>
