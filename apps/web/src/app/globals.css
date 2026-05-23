@@ -4274,8 +4274,18 @@ form.form-card.vendor-product-composer {
     min-height: 0;
   }
 
+  .coming-soon-copy {
+    grid-template-columns: 1fr;
+  }
+
   .coming-soon-copy h1 {
-    max-width: 10ch;
+    max-width: none;
+  }
+
+  .coming-soon-actions {
+    grid-row: auto;
+    grid-column: auto;
+    justify-content: flex-start;
   }
 
   .coming-soon-promotion {
@@ -6447,21 +6457,21 @@ form.form-card.vendor-product-composer {
 .coming-soon-page {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: clamp(1.6rem, 4vw, 4rem) 0 4rem;
+  padding: 1.2rem 0 3rem;
 }
 
 .coming-soon-hero {
   display: grid;
-  grid-template-columns: minmax(0, 0.82fr) minmax(320px, 1.18fr);
-  gap: clamp(1.5rem, 4vw, 3.5rem);
-  align-items: center;
-  min-height: calc(100vh - 210px);
+  gap: 1.15rem;
+  align-items: start;
 }
 
 .coming-soon-copy {
   display: grid;
-  gap: 1.1rem;
-  align-content: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem 1.2rem;
+  align-items: end;
+  padding: 0.2rem 0 0.35rem;
 }
 
 .coming-soon-eyebrow,
@@ -6474,19 +6484,19 @@ form.form-card.vendor-product-composer {
 }
 
 .coming-soon-copy h1 {
-  max-width: 9ch;
+  max-width: none;
   color: #111827;
-  font-size: clamp(3.1rem, 8vw, 7.2rem);
-  line-height: 0.9;
+  font-size: clamp(2.15rem, 5vw, 4.75rem);
+  line-height: 0.94;
   letter-spacing: 0;
   margin: 0;
 }
 
 .coming-soon-copy p {
-  max-width: 44rem;
+  max-width: 52rem;
   color: #4b5563;
-  font-size: clamp(1rem, 1.7vw, 1.18rem);
-  line-height: 1.7;
+  font-size: clamp(0.98rem, 1.35vw, 1.12rem);
+  line-height: 1.62;
   margin: 0;
 }
 
@@ -6495,14 +6505,17 @@ form.form-card.vendor-product-composer {
   flex-wrap: wrap;
   gap: 0.8rem;
   align-items: center;
-  padding-top: 0.4rem;
+  justify-content: flex-end;
+  grid-row: 1 / span 3;
+  grid-column: 2;
+  padding: 0 0 0.15rem;
 }
 
 .coming-soon-promotion {
   position: relative;
   overflow: hidden;
-  min-height: 360px;
-  aspect-ratio: 1 / 1.05;
+  min-height: 0;
+  aspect-ratio: 16 / 7.4;
   background: #f6f1eb;
   border: 1px solid rgba(17, 24, 39, 0.08);
 }
@@ -6581,9 +6594,9 @@ form.form-card.vendor-product-composer {
 
 .coming-soon-info {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
-  margin-top: 1rem;
+  margin-top: 0.9rem;
   background: rgba(17, 24, 39, 0.08);
   border: 1px solid rgba(17, 24, 39, 0.08);
 }

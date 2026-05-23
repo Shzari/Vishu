@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLanguage } from "@/components/providers";
 import { apiRequest, assetUrl } from "@/lib/api";
 import { getMerchantUrl } from "@/lib/merchant-domain";
 import type { HomepageHeroConfig, HomepageHeroSlide } from "@/lib/types";
@@ -12,7 +13,38 @@ const FALLBACK_HERO: HomepageHeroConfig = {
   slides: [],
 };
 
+const launchCopy = {
+  en: {
+    eyebrow: "Vishu.shop",
+    title: "Coming soon",
+    body: "We are preparing Vishu for launch. Product browsing, shops, cart, and checkout will open when the marketplace is ready.",
+    merchantPortal: "Merchant portal",
+    contact: "Contact Vishu",
+    customersLabel: "Customers",
+    customersTitle: "Shopping opens soon",
+    customersBody: "The public marketplace is hidden until launch.",
+    shopsLabel: "Businesses",
+    shopsTitle: "Business tools stay open",
+    shopsBody: "Approved businesses can keep preparing products and shop details.",
+  },
+  sq: {
+    eyebrow: "Vishu.shop",
+    title: "Së shpejti",
+    body: "Po e përgatisim Vishu për lansim. Produktet, dyqanet, shporta dhe pagesa do të hapen kur marketplace të jetë gati.",
+    merchantPortal: "Portali i bizneseve",
+    contact: "Kontakto Vishu",
+    customersLabel: "Klientët",
+    customersTitle: "Blerja hapet së shpejti",
+    customersBody: "Marketplace publik është i fshehur deri në lansim.",
+    shopsLabel: "Bizneset",
+    shopsTitle: "Paneli i bizneseve mbetet hapur",
+    shopsBody: "Bizneset e aprovuara mund të vazhdojnë përgatitjen e produkteve dhe dyqanit.",
+  },
+} as const;
+
 export default function HomePage() {
+  const { language } = useLanguage();
+  const t = launchCopy[language];
   const [homepageHero, setHomepageHero] =
     useState<HomepageHeroConfig>(FALLBACK_HERO);
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
@@ -57,24 +89,6 @@ export default function HomePage() {
   return (
     <main className="coming-soon-page" data-no-translate="true">
       <section className="coming-soon-hero">
-        <div className="coming-soon-copy">
-          <span className="coming-soon-eyebrow">Vishu.shop</span>
-          <h1>Marketplace coming soon.</h1>
-          <p>
-            Vishu is preparing a curated fashion marketplace for customers and
-            local shops. Product browsing will open when the public launch is
-            ready.
-          </p>
-          <div className="coming-soon-actions">
-            <Link className="button" href={getMerchantUrl("/")}>
-              Merchant portal
-            </Link>
-            <Link className="button-secondary" href="/contact">
-              Contact Vishu
-            </Link>
-          </div>
-        </div>
-
         <div className="coming-soon-promotion" aria-label="Vishu promotion">
           {activeSlide ? (
             <PromotionSlide slide={activeSlide} />
@@ -100,23 +114,32 @@ export default function HomePage() {
             </div>
           ) : null}
         </div>
+
+        <div className="coming-soon-copy">
+          <span className="coming-soon-eyebrow">{t.eyebrow}</span>
+          <h1>{t.title}</h1>
+          <p>{t.body}</p>
+          <div className="coming-soon-actions">
+            <Link className="button" href={getMerchantUrl("/")}>
+              {t.merchantPortal}
+            </Link>
+            <Link className="button-secondary" href="/contact">
+              {t.contact}
+            </Link>
+          </div>
+        </div>
       </section>
 
       <section className="coming-soon-info">
         <div>
-          <span>For customers</span>
-          <strong>Shopping opens soon</strong>
-          <p>Products, shops, cart, and checkout are hidden until launch.</p>
+          <span>{t.customersLabel}</span>
+          <strong>{t.customersTitle}</strong>
+          <p>{t.customersBody}</p>
         </div>
         <div>
-          <span>For shops</span>
-          <strong>Vendor tools stay open</strong>
-          <p>Approved merchants can keep preparing products and store details.</p>
-        </div>
-        <div>
-          <span>For launch</span>
-          <strong>Promotion first</strong>
-          <p>The public site now focuses only on launch messaging.</p>
+          <span>{t.shopsLabel}</span>
+          <strong>{t.shopsTitle}</strong>
+          <p>{t.shopsBody}</p>
         </div>
       </section>
     </main>
