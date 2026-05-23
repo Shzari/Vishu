@@ -182,6 +182,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const isVendorRoute = pathname.startsWith("/vendor");
   const isPasswordResetTokenRoute =
     pathname === "/reset-password" && Boolean(searchParams.get("token"));
+  const isPublicComingSoonPage = pathname === "/" && !isMerchantPortal;
   const isVendor = !loading && currentRole === "vendor";
   const isVendorWorkspace = isVendor && isVendorRoute;
   const isCustomer = !loading && currentRole === "customer";
@@ -190,8 +191,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const activeLanguage = canShowLanguageToggle ? language : "en";
   const t = shellCopy[activeLanguage];
   const canUseShoppingCart =
-    !isAdminRoute && !isVendorRoute && !isPasswordResetTokenRoute && !isMerchantPortal;
-  const showGuestActions = !loading && !isAuthenticated;
+    !isAdminRoute &&
+    !isVendorRoute &&
+    !isPasswordResetTokenRoute &&
+    !isMerchantPortal &&
+    !isPublicComingSoonPage;
+  const showGuestActions = !loading && !isAuthenticated && !isPublicComingSoonPage;
   const brandHref = isAdminRoute
     ? "/admin/dashboard"
     : isVendorWorkspace
@@ -203,6 +208,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     !isAdminRoute &&
     !isVendorRoute &&
     !isMerchantPortal &&
+    !isPublicComingSoonPage &&
     !pathname.startsWith("/login") &&
     !pathname.startsWith("/register") &&
     !pathname.startsWith("/reset-password") &&

@@ -4,6 +4,14 @@ const AUTH_COOKIE_NAME = "vishu_access_token";
 const ADMIN_PORT = "8443";
 const MERCHANT_HOSTNAME = "merchants.vishu.shop";
 const STOREFRONT_HOSTNAMES = new Set(["vishu.shop", "www.vishu.shop"]);
+const HIDDEN_STOREFRONT_PREFIXES = [
+  "/browse",
+  "/cart",
+  "/checkout",
+  "/new",
+  "/products",
+  "/shops",
+];
 
 function getRequestHostname(request: NextRequest) {
   const forwardedHost = request.headers.get("x-forwarded-host");
@@ -54,6 +62,15 @@ export function proxy(request: NextRequest) {
 
   if (
     STOREFRONT_HOSTNAMES.has(hostname) &&
+    HIDDEN_STOREFRONT_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    )
+  ) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  if (
+    STOREFRONT_HOSTNAMES.has(hostname) &&
     pathname === "/register" &&
     request.nextUrl.searchParams.get("role") === "vendor"
   ) {
@@ -91,5 +108,17 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/admin/:path*", "/vendor/:path*", "/login", "/register"],
+  matcher: [
+    "/",
+    "/admin/:path*",
+    "/browse/:path*",
+    "/cart/:path*",
+    "/checkout/:path*",
+    "/new",
+    "/products/:path*",
+    "/shops/:path*",
+    "/vendor/:path*",
+    "/login",
+    "/register",
+  ],
 };
