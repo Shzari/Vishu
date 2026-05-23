@@ -10,5 +10,5 @@ export default function VendorRegisterPage() {
     router.replace("/register?role=vendor");
   }, [router]);
 
-  return <div className="message">Redirecting to registration...</div>;
+  return <div className="message">Duke hapur regjistrimin e biznesit...</div>;
 }

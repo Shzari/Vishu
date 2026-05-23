@@ -58,7 +58,11 @@ export default function RegisterPage() {
     setMessage(null);
 
     if (!firstName.trim() || !lastName.trim()) {
-      setError("First name and last name are required.");
+      setError(
+        role === "vendor"
+          ? "Emri dhe mbiemri janë të detyrueshëm."
+          : "First name and last name are required.",
+      );
       return;
     }
 
@@ -69,12 +73,12 @@ export default function RegisterPage() {
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(role === "vendor" ? "Fjalëkalimet nuk përputhen." : "Passwords do not match.");
       return;
     }
 
     if (role === "vendor" && !acceptedVendorTerms) {
-      setError("Vendors must accept Vishu terms, marketplace policy, and refund policy.");
+      setError("Bizneset duhet të pranojnë rregullat, kushtet dhe vendimet e aprovimit/refundimit të Vishu.");
       return;
     }
 
@@ -140,7 +144,13 @@ export default function RegisterPage() {
         router.push("/");
       }, 500);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Registration failed.");
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : role === "vendor"
+            ? "Regjistrimi dështoi."
+            : "Registration failed.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -149,13 +159,13 @@ export default function RegisterPage() {
   return (
     <div className={role === "vendor" ? "register-page register-page-vendor" : "register-page"}>
       <section className="register-intro">
-        <span className="chip">{role === "vendor" ? "Business registration" : "Customer registration"}</span>
+        <span className="chip">{role === "vendor" ? "Regjistrim biznesi" : "Customer registration"}</span>
         <h1 className="hero-title">
-          {role === "vendor" ? "Open your shop in minutes." : "Join the storefront in minutes."}
+          {role === "vendor" ? "Hap dyqanin tënd në pak minuta." : "Join the storefront in minutes."}
         </h1>
         <p className="hero-copy">
           {role === "vendor"
-            ? "Create a business account, verify your email, then sign in to add products and manage your shop."
+            ? "Krijo llogarinë e biznesit, verifiko emailin dhe pastaj shto produkte e menaxho dyqanin."
             : "Create a customer account and start shopping right away."}
         </p>
       </section>
@@ -163,26 +173,26 @@ export default function RegisterPage() {
       {role === "vendor" && (
         <section className="business-register-info" aria-label="About Vishu for businesses">
           <div className="business-register-main">
-            <span>About Vishu</span>
-            <h2>One marketplace workspace for local fashion businesses.</h2>
+            <span>Rreth Vishu</span>
+            <h2>Një panel marketplace për bizneset lokale të modës.</h2>
             <p>
-              Vishu helps shops prepare a professional online catalog, manage
-              photos, stock, orders, and customer requests from one focused
-              business panel.
+              Vishu ndihmon bizneset të përgatisin katalog profesional online,
+              të menaxhojnë fotot, stokun, porositë dhe kërkesat e klientëve
+              nga një panel i qartë biznesi.
             </p>
           </div>
           <div className="business-register-points">
             <div>
-              <strong>Professional catalog</strong>
-              <p>Add products with clean photos, sizes, colors, stock, and prices.</p>
+              <strong>Katalog profesional</strong>
+              <p>Shto produkte me foto të qarta, madhësi, ngjyra, stok dhe çmime.</p>
             </div>
             <div>
-              <strong>Review before launch</strong>
-              <p>Products stay hidden until they are checked and approved.</p>
+              <strong>Kontroll para publikimit</strong>
+              <p>Produktet qëndrojnë të fshehura derisa të kontrollohen dhe aprovohen.</p>
             </div>
             <div>
-              <strong>Clear order tools</strong>
-              <p>Manage orders, delivery status, and business activity in one place.</p>
+              <strong>Mjete të qarta për porosi</strong>
+              <p>Menaxho porositë, statusin e dorëzimit dhe aktivitetin e biznesit në një vend.</p>
             </div>
           </div>
         </section>
@@ -214,18 +224,18 @@ export default function RegisterPage() {
 
         {role === "vendor" && (
           <div className="field">
-            <label>Shop name</label>
+            <label>Emri i dyqanit</label>
             <input value={shopName} onChange={(event) => setShopName(event.target.value)} />
           </div>
         )}
 
         <div className="form-grid two">
           <div className="field">
-            <label>First name</label>
+            <label>Emri</label>
             <input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
           </div>
           <div className="field">
-            <label>Last name</label>
+            <label>Mbiemri</label>
             <input value={lastName} onChange={(event) => setLastName(event.target.value)} />
           </div>
         </div>
@@ -234,15 +244,15 @@ export default function RegisterPage() {
           <input value={email} onChange={(event) => setEmail(event.target.value)} />
         </div>
         <div className="field">
-          <label>Phone number</label>
+          <label>{role === "vendor" ? "Numri i telefonit" : "Phone number"}</label>
           <input
             value={phoneNumber}
-            placeholder="Optional"
+            placeholder={role === "vendor" ? "Opsionale" : "Optional"}
             onChange={(event) => setPhoneNumber(event.target.value)}
           />
         </div>
         <div className="field">
-          <label>Password</label>
+          <label>{role === "vendor" ? "Fjalëkalimi" : "Password"}</label>
           <input
             type="password"
             value={password}
@@ -250,7 +260,7 @@ export default function RegisterPage() {
           />
         </div>
         <div className="field">
-          <label>Confirm password</label>
+          <label>{role === "vendor" ? "Konfirmo fjalëkalimin" : "Confirm password"}</label>
           <input
             type="password"
             value={confirmPassword}
@@ -265,21 +275,23 @@ export default function RegisterPage() {
               onChange={(event) => setAcceptedVendorTerms(event.target.checked)}
             />
             <span>
-              <strong>I accept Vishu vendor terms and refund rules.</strong>
+              <strong>Pranoj kushtet dhe rregullat e Vishu për biznese.</strong>
               <small>
-                I understand that my shop must follow Vishu&apos;s{" "}
-                <Link href="/policy">Marketplace Policy</Link>,{" "}
-                <Link href="/terms">Terms of Service</Link>, and approved customer
-                refund decisions.
+                E kuptoj që dyqani im duhet të ndjekë{" "}
+                <Link href="/policy">Politikën e marketplace</Link>,{" "}
+                <Link href="/terms">Kushtet e shërbimit</Link> dhe vendimet e aprovuara
+                për klientët.
               </small>
             </span>
           </label>
         )}
         <button className="button" type="submit" disabled={submitting}>
           {submitting
-            ? "Creating..."
+            ? role === "vendor"
+              ? "Duke krijuar..."
+              : "Creating..."
             : role === "vendor"
-              ? "Create vendor account"
+              ? "Krijo llogari biznesi"
               : "Create account"}
         </button>
         {message && <div className="message success">{message}</div>}
