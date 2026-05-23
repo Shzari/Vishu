@@ -20,12 +20,6 @@ const launchCopy = {
     body: "",
     merchantPortal: "Merchant portal",
     contact: "Contact Vishu",
-    customersLabel: "Customers",
-    customersTitle: "Shopping opens soon",
-    customersBody: "The public marketplace is hidden until launch.",
-    shopsLabel: "Businesses",
-    shopsTitle: "Business tools stay open",
-    shopsBody: "Approved businesses can keep preparing products and shop details.",
   },
   sq: {
     eyebrow: "Vishu.shop",
@@ -33,12 +27,6 @@ const launchCopy = {
     body: "",
     merchantPortal: "Portali i bizneseve",
     contact: "Kontakto Vishu",
-    customersLabel: "Klientët",
-    customersTitle: "Blerja hapet së shpejti",
-    customersBody: "Marketplace publik është i fshehur deri në lansim.",
-    shopsLabel: "Bizneset",
-    shopsTitle: "Paneli i bizneseve mbetet hapur",
-    shopsBody: "Bizneset e aprovuara mund të vazhdojnë përgatitjen e produkteve dhe dyqanit.",
   },
 } as const;
 
@@ -127,19 +115,6 @@ export default function HomePage() {
               {t.contact}
             </Link>
           </div>
-        </div>
-      </section>
-
-      <section className="coming-soon-info">
-        <div>
-          <span>{t.customersLabel}</span>
-          <strong>{t.customersTitle}</strong>
-          <p>{t.customersBody}</p>
-        </div>
-        <div>
-          <span>{t.shopsLabel}</span>
-          <strong>{t.shopsTitle}</strong>
-          <p>{t.shopsBody}</p>
         </div>
       </section>
     </main>
