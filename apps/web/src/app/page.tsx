@@ -1,10 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers";
 import { apiRequest, assetUrl } from "@/lib/api";
-import { getMerchantUrl } from "@/lib/merchant-domain";
 import type { HomepageHeroConfig, HomepageHeroSlide } from "@/lib/types";
 
 const FALLBACK_HERO: HomepageHeroConfig = {
@@ -18,15 +16,11 @@ const launchCopy = {
     eyebrow: "Vishu.shop",
     title: "Coming soon",
     body: "",
-    merchantPortal: "Merchant portal",
-    contact: "Contact Vishu",
   },
   sq: {
     eyebrow: "Vishu.shop",
     title: "Së shpejti",
     body: "",
-    merchantPortal: "Portali i bizneseve",
-    contact: "Kontakto Vishu",
   },
 } as const;
 
@@ -107,14 +101,6 @@ export default function HomePage() {
           <span className="coming-soon-eyebrow">{t.eyebrow}</span>
           <h1>{t.title}</h1>
           {t.body ? <p>{t.body}</p> : null}
-          <div className="coming-soon-actions">
-            <Link className="button" href={getMerchantUrl("/")}>
-              {t.merchantPortal}
-            </Link>
-            <Link className="button-secondary" href="/contact">
-              {t.contact}
-            </Link>
-          </div>
         </div>
       </section>
     </main>
