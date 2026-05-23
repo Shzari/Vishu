@@ -57,7 +57,7 @@ const loginCopy = {
   },
   sq: {
     title: "Hyr ne Vishu.shop",
-    merchantTitle: "Hyrje per biznes",
+    merchantTitle: "Hyrje për Biznese",
     intro: "Klientet mund te bejne porosi dhe bizneset mund te menaxhojne produktet, fotot, stokun dhe aktivitetin e dyqanit.",
     merchantIntro: "Hyni per te menaxhuar produktet, fotot, stokun, porosite dhe aktivitetin e dyqanit.",
     email: "Email",

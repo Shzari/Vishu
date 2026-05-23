@@ -147,18 +147,46 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="register-page">
+    <div className={role === "vendor" ? "register-page register-page-vendor" : "register-page"}>
       <section className="register-intro">
-        <span className="chip">{role === "vendor" ? "Vendor registration" : "Customer registration"}</span>
+        <span className="chip">{role === "vendor" ? "Business registration" : "Customer registration"}</span>
         <h1 className="hero-title">
           {role === "vendor" ? "Open your shop in minutes." : "Join the storefront in minutes."}
         </h1>
         <p className="hero-copy">
           {role === "vendor"
-            ? "Create a vendor account, verify your email, then sign in to add products and manage your shop."
+            ? "Create a business account, verify your email, then sign in to add products and manage your shop."
             : "Create a customer account and start shopping right away."}
         </p>
       </section>
+
+      {role === "vendor" && (
+        <section className="business-register-info" aria-label="About Vishu for businesses">
+          <div className="business-register-main">
+            <span>About Vishu</span>
+            <h2>One marketplace workspace for local fashion businesses.</h2>
+            <p>
+              Vishu helps shops prepare a professional online catalog, manage
+              photos, stock, orders, and customer requests from one focused
+              business panel.
+            </p>
+          </div>
+          <div className="business-register-points">
+            <div>
+              <strong>Professional catalog</strong>
+              <p>Add products with clean photos, sizes, colors, stock, and prices.</p>
+            </div>
+            <div>
+              <strong>Review before launch</strong>
+              <p>Products stay hidden until they are checked and approved.</p>
+            </div>
+            <div>
+              <strong>Clear order tools</strong>
+              <p>Manage orders, delivery status, and business activity in one place.</p>
+            </div>
+          </div>
+        </section>
+      )}
 
       <form className="form-card form-grid register-form-card" onSubmit={handleSubmit}>
         {!isMerchantPortal && (
