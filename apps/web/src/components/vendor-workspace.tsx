@@ -224,7 +224,7 @@ const productComposerCopy = {
     selected: (count: number) => `${count} te zgjedhura`,
     saved: (count: number) => `${count} te ruajtura`,
     noImagesYet: "Ende nuk ka imazhe",
-    verifyVendorEmail: "Verifikoni emailin e shitesit para se te ruani produkte.",
+    verifyVendorEmail: "Verifikoni emailin e biznesit para se te ruani produkte.",
     vendorPending:
       "Mund te pergatisni produktet tani. Ato mbeten te fshehura per klientet derisa admini ta aktivizoje dyqanin.",
     coreDetails: "Detajet kryesore",

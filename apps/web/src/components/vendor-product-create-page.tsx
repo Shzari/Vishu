@@ -169,7 +169,7 @@ const productCreateCopy = {
     cancel: "Anulo",
     sentForReview: "Produkti u dergua per shqyrtim nga admini.",
     uploadFailed: "Ngarkimi i produktit deshtoi.",
-    signInVendor: "Hyni si shites para se te krijoni produkt.",
+    signInVendor: "Hyni si biznes para se te krijoni produkt.",
     addTitleDescription: "Shtoni titullin dhe pershkrimin.",
     priceRequired: "Shkruani nje cmim produkti me te madh se 0.",
     stockRequired: "Stoku nuk mund te jete 0. Shkruani sa cope keni ne stok.",

@@ -527,8 +527,8 @@ export default function VendorSettingsPage() {
                 <p className="muted">
                   {language === "sq"
                     ? twoFactorEnabled
-                      ? "Hyrja si shitës kërkon kod sigurie të dërguar me email."
-                      : "Hyrja si shitës nuk kërkon kod sigurie me email."
+                      ? "Hyrja si biznes kërkon kod sigurie të dërguar me email."
+                      : "Hyrja si biznes nuk kërkon kod sigurie me email."
                     : twoFactorEnabled
                       ? "Vendor login requires an email OTP code."
                       : "Vendor login does not ask for an email OTP code."}
