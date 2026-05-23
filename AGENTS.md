@@ -66,7 +66,7 @@ Do not make project changes in:
   - `https://vishu.shop/api/admin*` returns `404`
 - `ADMIN_BASE_URL` must remain `https://vishu.shop:8443` and `ADMIN_PORT` must remain `8443`.
 - Admin vendor finance now includes a monthly economic panel for card totals, COD totals, card fees, COD fees, and per-vendor monthly history.
-- Vendor order fee is a fixed `1.00` euro platform fee per order; do not reintroduce percentage commission.
+- Vendor order fee is percentage-based per order; do not describe it as a fixed `1.00` euro fee.
 - Vendor accounts can be marked as testing via `vendors.is_test`; this is for backend/DB cleanup only and should not change public visibility by itself.
 - Logged-in checkout uses saved account contact details automatically.
 - Checkout address flow uses one selected address card plus a change modal.
