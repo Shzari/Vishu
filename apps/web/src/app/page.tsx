@@ -17,7 +17,7 @@ const launchCopy = {
   en: {
     eyebrow: "Vishu.shop",
     title: "Coming soon",
-    body: "We are preparing Vishu for launch. Product browsing, shops, cart, and checkout will open when the marketplace is ready.",
+    body: "",
     merchantPortal: "Merchant portal",
     contact: "Contact Vishu",
     customersLabel: "Customers",
@@ -30,7 +30,7 @@ const launchCopy = {
   sq: {
     eyebrow: "Vishu.shop",
     title: "Së shpejti",
-    body: "Po e përgatisim Vishu për lansim. Produktet, dyqanet, shporta dhe pagesa do të hapen kur marketplace të jetë gati.",
+    body: "",
     merchantPortal: "Portali i bizneseve",
     contact: "Kontakto Vishu",
     customersLabel: "Klientët",
@@ -118,7 +118,7 @@ export default function HomePage() {
         <div className="coming-soon-copy">
           <span className="coming-soon-eyebrow">{t.eyebrow}</span>
           <h1>{t.title}</h1>
-          <p>{t.body}</p>
+          {t.body ? <p>{t.body}</p> : null}
           <div className="coming-soon-actions">
             <Link className="button" href={getMerchantUrl("/")}>
               {t.merchantPortal}
