@@ -28,6 +28,17 @@ const loginCopy = {
     merchantTitle: "Merchant login",
     intro: "Customers can place orders and vendors can manage products, photos, stock, and shop activity.",
     merchantIntro: "Sign in to manage products, photos, stock, orders, and shop activity.",
+    merchantInfoEyebrow: "Sell on Vishu",
+    merchantInfoTitle: "Prepare your shop before the public launch.",
+    merchantInfoBody: "Vishu gives local fashion businesses a focused workspace for products, photos, sizes, stock, orders, and shop details.",
+    merchantPriceLabel: "Pricing",
+    merchantPriceValue: "No percentage commission",
+    merchantPriceBody: "Vishu uses a clear fixed platform fee of 1.00 euro per order.",
+    merchantRulesLabel: "Rules",
+    merchantRulesTitle: "Professional listings only",
+    merchantRulesBody: "Product photos must be clear, without text overlays, and products stay hidden until admin approval.",
+    merchantStepsLabel: "How it works",
+    merchantSteps: ["Create a business account", "Verify your email", "Add products and photos", "Wait for approval", "Start selling when Vishu launches"],
     email: "Email",
     password: "Password",
     login: "Login",
@@ -60,6 +71,17 @@ const loginCopy = {
     merchantTitle: "Hyrje për Biznese",
     intro: "Klientet mund te bejne porosi dhe bizneset mund te menaxhojne produktet, fotot, stokun dhe aktivitetin e dyqanit.",
     merchantIntro: "Hyni per te menaxhuar produktet, fotot, stokun, porosite dhe aktivitetin e dyqanit.",
+    merchantInfoEyebrow: "Shit në Vishu",
+    merchantInfoTitle: "Përgatite dyqanin para lansimit publik.",
+    merchantInfoBody: "Vishu u jep bizneseve lokale të modës një panel të qartë për produkte, foto, madhësi, stok, porosi dhe detaje të dyqanit.",
+    merchantPriceLabel: "Çmimi",
+    merchantPriceValue: "Pa komision përqindjeje",
+    merchantPriceBody: "Vishu përdor vetëm tarifë fikse të platformës: 1.00 euro për porosi.",
+    merchantRulesLabel: "Rregullat",
+    merchantRulesTitle: "Vetëm listime profesionale",
+    merchantRulesBody: "Fotot e produkteve duhet të jenë të qarta, pa tekst mbi foto, dhe produktet qëndrojnë të fshehura derisa admini t'i aprovojë.",
+    merchantStepsLabel: "Si funksionon",
+    merchantSteps: ["Krijo llogari biznesi", "Verifiko emailin", "Shto produkte dhe foto", "Prit aprovimin", "Fillo shitjen kur Vishu lansohet"],
     email: "Email",
     password: "Fjalekalimi",
     login: "Hyr",
@@ -287,7 +309,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-page auth-page-compact" data-no-translate="true">
+    <div
+      className={
+        isMerchantPortal
+          ? "auth-page merchant-login-page"
+          : "auth-page auth-page-compact"
+      }
+      data-no-translate="true"
+    >
       {vendorOtpChallengeId && (
         <div className="account-modal-backdrop" role="presentation">
           <form className="form-card form-grid auth-form-card vendor-otp-modal" onSubmit={verifyVendorOtp}>
@@ -343,60 +372,94 @@ export default function LoginPage() {
 
       {!vendorOtpChallengeId && (
         <>
-          <section className="auth-intro">
-            <h1 className="hero-title">{isMerchantPortal ? t.merchantTitle : t.title}</h1>
-            <p className="hero-copy">
-              {isMerchantPortal ? t.merchantIntro : t.intro}
-            </p>
-          </section>
+          <div className={isMerchantPortal ? "merchant-login-layout" : undefined}>
+            {isMerchantPortal && (
+              <section className="merchant-login-info" aria-label="Merchant information">
+                <span>{t.merchantInfoEyebrow}</span>
+                <h1>{t.merchantInfoTitle}</h1>
+                <p>{t.merchantInfoBody}</p>
 
-          <form className="form-card form-grid auth-form-card" onSubmit={handleSubmit}>
-            <div className="field">
-              <label>{t.email}</label>
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
-            </div>
-            <div className="field">
-              <label>{t.password}</label>
-              <PasswordField
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
-            <button className="button" type="submit">
-              {t.login}
-            </button>
-            {message && <div className="message success">{message}</div>}
-            {error && <div className="message error">{error}</div>}
-            {error?.includes("Verify your email") && (
-              <div className="inline-actions">
-                <button
-                  type="button"
-                  className="button-secondary"
-                  disabled={resendingVerification}
-                  onClick={() => void resendVerification()}
-                >
-                  {resendingVerification ? t.sending : t.resendVerification}
-                </button>
-              </div>
+                <div className="merchant-login-card-grid">
+                  <div>
+                    <span>{t.merchantPriceLabel}</span>
+                    <strong>{t.merchantPriceValue}</strong>
+                    <p>{t.merchantPriceBody}</p>
+                  </div>
+                  <div>
+                    <span>{t.merchantRulesLabel}</span>
+                    <strong>{t.merchantRulesTitle}</strong>
+                    <p>{t.merchantRulesBody}</p>
+                  </div>
+                </div>
+
+                <div className="merchant-login-steps">
+                  <strong>{t.merchantStepsLabel}</strong>
+                  <ol>
+                    {t.merchantSteps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+                </div>
+              </section>
             )}
-            <div className="inline-actions">
-              <Link
-                href={isMerchantPortal ? "/register?role=vendor" : "/register"}
-                className="button-ghost"
-              >
-                {isMerchantPortal ? t.createVendorAccount : t.createAccount}
-              </Link>
-              {!isMerchantPortal && (
-                <Link href={getMerchantUrl("/login?portal=vendor")} className="button-ghost">
-                  {t.vendorPortal}
-                </Link>
-              )}
-              <Link href="/reset-password" className="button-ghost">
-                {t.resetPassword}
-              </Link>
-            </div>
-          </form>
+
+            <section className="merchant-login-form-column">
+              <section className="auth-intro">
+                <h1 className="hero-title">{isMerchantPortal ? t.merchantTitle : t.title}</h1>
+                <p className="hero-copy">
+                  {isMerchantPortal ? t.merchantIntro : t.intro}
+                </p>
+              </section>
+
+              <form className="form-card form-grid auth-form-card" onSubmit={handleSubmit}>
+                <div className="field">
+                  <label>{t.email}</label>
+                  <input value={email} onChange={(event) => setEmail(event.target.value)} />
+                </div>
+                <div className="field">
+                  <label>{t.password}</label>
+                  <PasswordField
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
+                <button className="button" type="submit">
+                  {t.login}
+                </button>
+                {message && <div className="message success">{message}</div>}
+                {error && <div className="message error">{error}</div>}
+                {error?.includes("Verify your email") && (
+                  <div className="inline-actions">
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={resendingVerification}
+                      onClick={() => void resendVerification()}
+                    >
+                      {resendingVerification ? t.sending : t.resendVerification}
+                    </button>
+                  </div>
+                )}
+                <div className="inline-actions">
+                  <Link
+                    href={isMerchantPortal ? "/register?role=vendor" : "/register"}
+                    className="button-ghost"
+                  >
+                    {isMerchantPortal ? t.createVendorAccount : t.createAccount}
+                  </Link>
+                  {!isMerchantPortal && (
+                    <Link href={getMerchantUrl("/login?portal=vendor")} className="button-ghost">
+                      {t.vendorPortal}
+                    </Link>
+                  )}
+                  <Link href="/reset-password" className="button-ghost">
+                    {t.resetPassword}
+                  </Link>
+                </div>
+              </form>
+            </section>
+          </div>
         </>
       )}
     </div>
