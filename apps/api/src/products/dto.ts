@@ -93,6 +93,20 @@ export class ProductMutationDto {
   sizeVariants?: Array<{ sizeId: string; stock: number }>;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  salesPointStocks?: Array<{ salesPointId: string; stock: number }>;
+
+  @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   replaceImages?: boolean;
 
@@ -197,6 +211,23 @@ export class ProductUpdateDto {
   sizeVariants?: Array<{ sizeId: string; stock: number }>;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  salesPointStocks?: Array<{ salesPointId: string; stock: number }>;
+
+  @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   replaceImages?: boolean;
 
@@ -270,6 +301,66 @@ export class ProductBulkStockDto {
   @IsInt()
   @Min(1)
   stock!: number;
+}
+
+export class VendorSalesPointDto {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  phoneNumber?: string;
+}
+
+export class VendorSalesPointUpdateDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  name?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+  )
+  @IsString()
+  phoneNumber?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class VendorCatalogRequestDto {

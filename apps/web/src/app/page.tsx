@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers";
 import { apiRequest, assetUrl } from "@/lib/api";
-import { getMerchantUrl } from "@/lib/merchant-domain";
+import { getMerchantUrl, isMerchantHostname } from "@/lib/merchant-domain";
 import type { HomepageHeroConfig, HomepageHeroSlide } from "@/lib/types";
 
 const FALLBACK_HERO: HomepageHeroConfig = {
@@ -34,6 +34,13 @@ export default function HomePage() {
   const [homepageHero, setHomepageHero] =
     useState<HomepageHeroConfig>(FALLBACK_HERO);
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
+  const [isMerchantPortal, setIsMerchantPortal] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMerchantPortal(isMerchantHostname(window.location.hostname));
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -71,6 +78,57 @@ export default function HomePage() {
   }, [homepageHero.autoRotate, homepageHero.intervalSeconds, homepageHero.slides.length]);
 
   const activeSlide = homepageHero.slides[activeHeroIndex] ?? null;
+
+  if (isMerchantPortal) {
+    return (
+      <main className="coming-soon-page merchant-home-page" data-no-translate="true">
+        <section className="coming-soon-hero">
+          <div className="coming-soon-copy merchant-home-copy">
+            <span className="coming-soon-eyebrow">Vishu për biznese</span>
+            <h1>Hapni dyqanin tuaj brenda pak minutash.</h1>
+            <p>
+              Krijoni llogarinë e biznesit, përgatitni katalogun dhe menaxhoni
+              produktet, stokun dhe porositë nga një panel i qartë.
+            </p>
+            <div className="coming-soon-actions">
+              <Link className="button" href="/vendor/register">
+                Krijo llogari biznesi
+              </Link>
+              <Link className="button-secondary" href="/login?portal=vendor">
+                Hyr në panel
+              </Link>
+            </div>
+          </div>
+
+          <section className="business-register-info" aria-label="Rreth Vishu për biznese">
+            <div className="business-register-main">
+              <span>Rreth Vishu</span>
+              <h2>Një hapësirë marketplace për bizneset lokale të modës.</h2>
+              <p>
+                Vishu u ndihmon dyqaneve të përgatisin katalog profesional
+                online, të menaxhojnë foto, stok, porosi dhe kërkesa të
+                klientëve nga një panel biznesi.
+              </p>
+            </div>
+            <div className="business-register-points">
+              <div>
+                <strong>Katalog profesional</strong>
+                <p>Shtoni produkte me foto të qarta, madhësi, ngjyra, stok dhe çmime.</p>
+              </div>
+              <div>
+                <strong>Kontroll para publikimit</strong>
+                <p>Produktet qëndrojnë të fshehura derisa të kontrollohen dhe aprovohen.</p>
+              </div>
+              <div>
+                <strong>Mjete të qarta për porosi</strong>
+                <p>Menaxhoni porositë, statusin e dorëzimit dhe aktivitetin e biznesit në një vend.</p>
+              </div>
+            </div>
+          </section>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="coming-soon-page" data-no-translate="true">

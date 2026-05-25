@@ -136,6 +136,24 @@ export interface Product {
   images: string[];
   createdAt: string;
   recentReviews?: MarketplaceReview[];
+  salesPointStocks?: {
+    salesPointId: string;
+    salesPointName: string;
+    stock: number;
+    isActive: boolean;
+  }[];
+}
+
+export interface VendorSalesPoint {
+  id: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  phoneNumber: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ProductSearchSection {

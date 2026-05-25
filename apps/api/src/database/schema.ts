@@ -876,6 +876,64 @@ BEGIN
   );
 END;
 
+IF OBJECT_ID('dbo.vendor_sales_points', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.vendor_sales_points (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    vendor_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendors(id) ON DELETE CASCADE,
+    name NVARCHAR(160) NOT NULL,
+    address NVARCHAR(500) NULL,
+    city NVARCHAR(120) NULL,
+    phone_number NVARCHAR(40) NULL,
+    is_active BIT NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF OBJECT_ID('dbo.product_sales_point_stock', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.product_sales_point_stock (
+    id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    product_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.products(id) ON DELETE CASCADE,
+    sales_point_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.vendor_sales_points(id),
+    stock INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+  );
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_vendor_sales_points_vendor_name'
+    AND object_id = OBJECT_ID('dbo.vendor_sales_points')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_vendor_sales_points_vendor_name
+    ON dbo.vendor_sales_points(vendor_id, name);
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = 'ux_product_sales_point_stock_product_point'
+    AND object_id = OBJECT_ID('dbo.product_sales_point_stock')
+)
+BEGIN
+  CREATE UNIQUE INDEX ux_product_sales_point_stock_product_point
+    ON dbo.product_sales_point_stock(product_id, sales_point_id);
+END;
+
+INSERT INTO dbo.vendor_sales_points (vendor_id, name, sort_order)
+SELECT v.id, 'Dyqani kryesor', 0
+FROM dbo.vendors v
+WHERE v.is_test = 1
+  AND NOT EXISTS (
+    SELECT 1
+    FROM dbo.vendor_sales_points vsp
+    WHERE vsp.vendor_id = v.id
+  );
+
 IF NOT EXISTS (
   SELECT 1 FROM sys.indexes
   WHERE name = 'ux_product_colors_product_color'

@@ -22,6 +22,7 @@ import type {
   Product,
   VendorCatalogOptions,
   VendorCatalogRequest,
+  VendorSalesPoint,
 } from "@/lib/types";
 
 const PRODUCT_IMAGE_LIMIT = 6;
@@ -97,8 +98,10 @@ interface VendorProductsResponse {
     low_stock_threshold: number;
     last_login_at: string | null;
     last_activity_at: string | null;
+    is_test?: boolean;
   };
   products: Product[];
+  salesPoints?: VendorSalesPoint[];
 }
 
 const emptyCatalogRequestForm = {
@@ -145,6 +148,12 @@ const productComposerCopy = {
     price: "Price",
     stock: "Stock",
     totalStock: "Total stock",
+    salesPoints: "Sales points",
+    salesPointsHint: "Private stock locations for this sandbox shop. Customers do not see these names.",
+    salesPointName: "Sales point name",
+    addSalesPoint: "Add sales point",
+    salesPointStockMismatch: "Sales point stock must match the product total stock.",
+    salesPointStockRequired: "Add stock to at least one sales point.",
     catalogSetup: "Catalog setup",
     brand: "Brand",
     selectBrand: "Select brand",
@@ -234,6 +243,12 @@ const productComposerCopy = {
     price: "Cmimi",
     stock: "Stoku",
     totalStock: "Stoku total",
+    salesPoints: "Pikat e shitjes",
+    salesPointsHint: "Lokacione private stoku per kete dyqan testues. Klientet nuk i shohin keto emra.",
+    salesPointName: "Emri i pikes se shitjes",
+    addSalesPoint: "Shto pike shitjeje",
+    salesPointStockMismatch: "Stoku i pikave te shitjes duhet te jete i njejte me stokun total.",
+    salesPointStockRequired: "Shto stok ne te pakten nje pike shitjeje.",
     catalogSetup: "Konfigurimi i katalogut",
     brand: "Marka",
     selectBrand: "Zgjidh marken",
@@ -539,6 +554,7 @@ const emptyForm = {
   sizeTypeId: "",
   sizeIds: [] as string[],
   sizeStocks: {} as Record<string, string>,
+  salesPointStocks: {} as Record<string, string>,
 };
 
 const COLOR_SWATCHES: Record<string, string> = {
@@ -869,6 +885,8 @@ export function VendorWorkspace({
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<VendorOrdersResponse[]>([]);
   const [vendorWorkspace, setVendorWorkspace] = useState<VendorProductsResponse["vendor"] | null>(null);
+  const [salesPoints, setSalesPoints] = useState<VendorSalesPoint[]>([]);
+  const [salesPointName, setSalesPointName] = useState("");
   const [catalogOptions, setCatalogOptions] = useState<VendorCatalogOptions | null>(null);
   const [catalogRequests, setCatalogRequests] = useState<VendorCatalogRequest[]>([]);
   const [catalogRequestForm, setCatalogRequestForm] = useState(emptyCatalogRequestForm);
@@ -913,6 +931,7 @@ export function VendorWorkspace({
       ]);
       setVendorWorkspace(vendorProducts.vendor);
       setProducts(vendorProducts.products);
+      setSalesPoints(vendorProducts.salesPoints ?? []);
       setOrders(vendorOrders);
       setCatalogOptions(vendorCatalogOptions);
       setCatalogRequests(vendorCatalogRequests);
@@ -962,6 +981,17 @@ export function VendorWorkspace({
             sizeId,
             stock: Number(form.sizeStocks[sizeId] || 0),
           }));
+      const selectedSalesPointStocks =
+        salesPointSandboxEnabled && activeSalesPoints.length
+          ? activeSalesPoints.map((point) => ({
+              salesPointId: point.id,
+              stock: Number(form.salesPointStocks[point.id] || 0),
+            }))
+          : [];
+      const selectedSalesPointStockTotal = selectedSalesPointStocks.reduce(
+        (sum, point) => sum + Math.max(0, Number(point.stock || 0)),
+        0,
+      );
       const resolvedStock = selectedSizeVariants.length
         ? String(
             selectedSizeVariants.reduce(
@@ -969,6 +999,8 @@ export function VendorWorkspace({
               0,
             ),
           )
+        : selectedSalesPointStocks.length
+          ? String(selectedSalesPointStockTotal)
         : form.stock;
       const resolvedStockNumber = Number(resolvedStock);
       const priceNumber = Number(form.price);
@@ -1000,6 +1032,20 @@ export function VendorWorkspace({
         return;
       }
 
+      if (selectedSalesPointStocks.length && selectedSalesPointStockTotal < 1) {
+        setError(t.salesPointStockRequired);
+        return;
+      }
+
+      if (
+        selectedSalesPointStocks.length &&
+        selectedSizeVariants.length &&
+        selectedSalesPointStockTotal !== resolvedStockNumber
+      ) {
+        setError(t.salesPointStockMismatch);
+        return;
+      }
+
       if (!selectedFormIsAccessories && form.sizeTypeId && selectedSizeVariants.length === 0) {
         setError(stockRequiredMessage);
         return;
@@ -1026,6 +1072,9 @@ export function VendorWorkspace({
           "sizeVariants",
           JSON.stringify(selectedSizeVariants),
         );
+        if (selectedSalesPointStocks.length) {
+          body.append("salesPointStocks", JSON.stringify(selectedSalesPointStocks));
+        }
         if (editingProductId) {
           body.append("replaceImages", String(replaceImages));
           if (!replaceImages && removedExistingImageUrls.length) {
@@ -1261,6 +1310,34 @@ export function VendorWorkspace({
     }
   }
 
+  async function addSalesPoint() {
+    if (!token || !salesPointName.trim()) return;
+
+    try {
+      setActiveAction("sales-point");
+      setMessage(null);
+      setError(null);
+      const response = await apiRequest<{
+        message: string;
+        salesPoints: VendorSalesPoint[];
+      }>(
+        "/products/vendor/sales-points",
+        {
+          method: "POST",
+          body: JSON.stringify({ name: salesPointName }),
+        },
+        token,
+      );
+      setSalesPoints(response.salesPoints);
+      setSalesPointName("");
+      setMessage(response.message);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to add sales point.");
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   async function cancelVendorOrder(orderId: string) {
     if (!token) return;
 
@@ -1419,6 +1496,11 @@ export function VendorWorkspace({
   const vendorVerified = vendorWorkspace?.is_verified ?? profile?.vendor?.is_verified ?? false;
   const vendorActive = vendorWorkspace?.is_active ?? profile?.vendor?.is_active ?? false;
   const vendorCanManageCatalog = vendorVerified;
+  const salesPointSandboxEnabled = Boolean(vendorWorkspace?.is_test);
+  const activeSalesPoints = useMemo(
+    () => salesPoints.filter((entry) => entry.isActive),
+    [salesPoints],
+  );
   const lowStockThreshold = vendorWorkspace?.low_stock_threshold ?? 5;
   const vendorLastActivity = vendorWorkspace?.last_activity_at
     ? new Date(vendorWorkspace.last_activity_at).toLocaleString()
@@ -1690,6 +1772,20 @@ export function VendorWorkspace({
       ),
     [form.sizeIds, form.sizeStocks],
   );
+  const selectedSalesPointTotalStock = useMemo(
+    () =>
+      activeSalesPoints.reduce(
+        (sum, point) => sum + Math.max(0, Number(form.salesPointStocks[point.id] || 0)),
+        0,
+      ),
+    [activeSalesPoints, form.salesPointStocks],
+  );
+  const displayedProductStock =
+    form.sizeIds.length > 0
+      ? selectedSizeTotalStock
+      : salesPointSandboxEnabled && activeSalesPoints.length > 0
+        ? selectedSalesPointTotalStock
+        : Number(form.stock || 0);
   const selectedFilePreviews = useMemo(() => {
     return files.map((file, index) => ({
       key: `upload:${index}`,
@@ -1822,6 +1918,21 @@ export function VendorWorkspace({
   }, [availableFormSizes, form.sizeIds, form.sizeStocks]);
 
   useEffect(() => {
+    const availableIds = new Set(activeSalesPoints.map((entry) => entry.id));
+    const stockIds = Object.keys(form.salesPointStocks);
+    if (stockIds.some((id) => !availableIds.has(id))) {
+      setForm((current) => ({
+        ...current,
+        salesPointStocks: Object.fromEntries(
+          Object.entries(current.salesPointStocks).filter(([id]) =>
+            availableIds.has(id),
+          ),
+        ),
+      }));
+    }
+  }, [activeSalesPoints, form.salesPointStocks]);
+
+  useEffect(() => {
     if (categoryFilter !== "all" && !vendorCategories.includes(categoryFilter)) {
       setCategoryFilter("all");
     }
@@ -1889,6 +2000,12 @@ export function VendorWorkspace({
       sizeIds: product.sizeVariants.map((entry) => entry.id),
       sizeStocks: Object.fromEntries(
         product.sizeVariants.map((entry) => [entry.id, String(entry.stock)]),
+      ),
+      salesPointStocks: Object.fromEntries(
+        (product.salesPointStocks ?? []).map((entry) => [
+          entry.salesPointId,
+          String(entry.stock),
+        ]),
       ),
     });
   }
@@ -2231,6 +2348,47 @@ export function VendorWorkspace({
 
         {section === "products" ? (
           <>
+            {salesPointSandboxEnabled ? (
+              <section className="form-card stack">
+                <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <h2 className="section-title">{t.salesPoints}</h2>
+                    <p className="muted">{t.salesPointsHint}</p>
+                  </div>
+                  <span className="chip">{salesPoints.length}</span>
+                </div>
+                <div className="form-grid two">
+                  <div className="field">
+                    <label>{t.salesPointName}</label>
+                    <input
+                      value={salesPointName}
+                      onChange={(event) => setSalesPointName(event.target.value)}
+                      placeholder="Dyqani kryesor"
+                    />
+                  </div>
+                  <div className="inline-actions" style={{ alignItems: "end" }}>
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      disabled={activeAction !== null || !salesPointName.trim()}
+                      onClick={() => void addSalesPoint()}
+                    >
+                      {activeAction === "sales-point" ? t.submitting : t.addSalesPoint}
+                    </button>
+                  </div>
+                </div>
+                {salesPoints.length ? (
+                  <div className="vendor-product-metrics">
+                    {salesPoints.map((point) => (
+                      <span key={point.id}>
+                        {point.name}{point.isActive ? "" : " (inactive)"}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             {productComposerMode !== "page" ? (
             <section className="form-card vendor-products-head">
               <div>
@@ -2356,15 +2514,50 @@ export function VendorWorkspace({
                           value={
                             form.sizeIds.length
                               ? String(selectedSizeTotalStock)
+                              : salesPointSandboxEnabled && activeSalesPoints.length > 0
+                                ? String(selectedSalesPointTotalStock)
                               : form.stock
                           }
-                          disabled={form.sizeIds.length > 0}
+                          disabled={
+                            form.sizeIds.length > 0 ||
+                            (salesPointSandboxEnabled && activeSalesPoints.length > 0)
+                          }
                           onChange={(event) =>
                             setForm((current) => ({ ...current, stock: event.target.value }))
                           }
                         />
                       </div>
                     </div>
+                    {salesPointSandboxEnabled && activeSalesPoints.length ? (
+                      <div className="field">
+                        <label>{t.salesPoints}</label>
+                        <div className="form-grid two">
+                          {activeSalesPoints.map((point) => (
+                            <div key={point.id} className="field">
+                              <label>{point.name}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={form.salesPointStocks[point.id] ?? ""}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    salesPointStocks: {
+                                      ...current.salesPointStocks,
+                                      [point.id]: event.target.value,
+                                    },
+                                  }))
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <span className="muted">
+                          {t.totalStock}: {displayedProductStock}
+                        </span>
+                      </div>
+                    ) : null}
                   </section>
 
                   <section className="vendor-product-composer-section">
@@ -2921,7 +3114,7 @@ export function VendorWorkspace({
             <section className="form-card stack">
               <div className="inline-actions" style={{ justifyContent: "space-between", alignItems: "center" }}><div><h2 className="section-title">Product list</h2><p className="muted">Search and filter your catalog, then edit or manage each product from its own row.</p></div><span className="chip">{filteredProducts.length} shown</span></div>
               <div className="vendor-product-toolbar"><div className="field"><label>Search products</label><input placeholder="Title, code, gender, category, color, size" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} /></div><div className="field"><label>Sort by</label><select value={productSort} onChange={(event) => setProductSort(event.target.value)}><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="price-low">Price ↑</option><option value="price-high">Price ↓</option><option value="title">A-Z</option><option value="most-ordered">Orders ↓</option></select></div><div className="field"><label>Listing filter</label><select value={listingFilter} onChange={(event) => setListingFilter(event.target.value)}><option value="all">Listed and hidden</option><option value="listed">Listed only</option><option value="hidden">Hidden only</option></select></div><div className="field"><label>{getCatalogGenderLabel()}</label><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="all">All {getCatalogGenderLabel(true).toLowerCase()}</option>{vendorDepartments.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div><div className="field"><label>Category</label><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{vendorCategories.map((entry) => <option key={entry} value={entry}>{formatCatalogLabel(entry)}</option>)}</select></div></div>
-              {filteredProducts.length === 0 ? <div className="empty">{products.length === 0 ? "No products yet. Add your first product to start building the shop." : "No matching products yet."}</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">{getVendorProductVisibilityLabel(product)}</span>{product.adminBlockReason ? <span className="muted">{product.adminBlockReason}</span> : null}<span className="muted">Stock {product.stock}</span><span className="muted">{formatCurrency(product.price)}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div><div className="vendor-product-expanded"><div className="vendor-product-preview"><ProductMedia image={assetUrl(product.images[0])} title={product.title} subtitle={`${formatCatalogLabel(product.department)} ${formatCatalogLabel(product.category)}`} className="card-image" /></div><div className="vendor-product-content"><div className="stack" style={{ gap: "0.2rem" }}><strong>{product.title}</strong><p className="muted">{formatCatalogLabel(product.department)} | {formatCatalogLabel(product.category)}{product.color ? ` | ${formatProductAttributeLabel(product.color)}` : ""}{product.size ? ` | ${formatProductAttributeLabel(product.size)}` : ""}</p></div><div className="vendor-product-metrics"><span>{product.adminStatus === "approved" && product.isListed ? "Public listing active" : "Hidden from customers"}</span><span>Price {formatCurrency(product.price)}</span><span>Stock {product.stock}</span><span>Sold {product.soldUnits}</span><span>Orders {product.orderCount}</span>{vendorCanViewFinance ? <span>Earnings {formatCurrency(product.revenue)}</span> : null}</div></div><div className="vendor-product-actions"><button className="button-secondary" type="button" disabled={activeAction !== null} onClick={() => startEditProduct(product)}>Edit</button><button className="button-ghost" type="button" disabled={activeAction !== null} onClick={() => duplicateProduct(product.id)}>{activeAction === `duplicate-${product.id}` ? "Duplicating..." : "Duplicate"}</button><button className="button-ghost" type="button" disabled={activeAction !== null || product.adminStatus === "under_review"} onClick={() => toggleProductListing(product, !product.isListed)}>{getVendorProductListingActionLabel(product)}</button><button className="danger-button" type="button" disabled={activeAction !== null} onClick={() => deleteProduct(product.id)}>{activeAction === `delete-${product.id}` ? "Deleting..." : "Delete"}</button></div></div></div>)}
+              {filteredProducts.length === 0 ? <div className="empty">{products.length === 0 ? "No products yet. Add your first product to start building the shop." : "No matching products yet."}</div> : filteredProducts.map((product) => <div key={product.id} className="card vendor-product-collapsible"><div className="vendor-product-summary-row"><div className="vendor-product-summary-main"><strong>{product.productCode || "Code pending"}</strong><span className="muted">{product.title}</span><span className="muted">{getVendorProductVisibilityLabel(product)}</span>{product.adminBlockReason ? <span className="muted">{product.adminBlockReason}</span> : null}<span className="muted">Stock {product.stock}</span><span className="muted">{formatCurrency(product.price)}</span></div><div className="vendor-product-summary-end"><span className={product.isOutOfStock ? "badge danger" : product.isLowStock ? "badge warn" : "badge"}>{product.isOutOfStock ? "Out of stock" : product.isLowStock ? "Low stock" : "Healthy stock"}</span></div></div><div className="vendor-product-expanded"><div className="vendor-product-preview"><ProductMedia image={assetUrl(product.images[0])} title={product.title} subtitle={`${formatCatalogLabel(product.department)} ${formatCatalogLabel(product.category)}`} className="card-image" /></div><div className="vendor-product-content"><div className="stack" style={{ gap: "0.2rem" }}><strong>{product.title}</strong><p className="muted">{formatCatalogLabel(product.department)} | {formatCatalogLabel(product.category)}{product.color ? ` | ${formatProductAttributeLabel(product.color)}` : ""}{product.size ? ` | ${formatProductAttributeLabel(product.size)}` : ""}</p></div><div className="vendor-product-metrics"><span>{product.adminStatus === "approved" && product.isListed ? "Public listing active" : "Hidden from customers"}</span><span>Price {formatCurrency(product.price)}</span><span>Stock {product.stock}</span>{salesPointSandboxEnabled && product.salesPointStocks?.length ? product.salesPointStocks.map((point) => <span key={point.salesPointId}>{point.salesPointName}: {point.stock}</span>) : null}<span>Sold {product.soldUnits}</span><span>Orders {product.orderCount}</span>{vendorCanViewFinance ? <span>Earnings {formatCurrency(product.revenue)}</span> : null}</div></div><div className="vendor-product-actions"><button className="button-secondary" type="button" disabled={activeAction !== null} onClick={() => startEditProduct(product)}>Edit</button><button className="button-ghost" type="button" disabled={activeAction !== null} onClick={() => duplicateProduct(product.id)}>{activeAction === `duplicate-${product.id}` ? "Duplicating..." : "Duplicate"}</button><button className="button-ghost" type="button" disabled={activeAction !== null || product.adminStatus === "under_review"} onClick={() => toggleProductListing(product, !product.isListed)}>{getVendorProductListingActionLabel(product)}</button><button className="danger-button" type="button" disabled={activeAction !== null} onClick={() => deleteProduct(product.id)}>{activeAction === `delete-${product.id}` ? "Deleting..." : "Delete"}</button></div></div></div>)}
             </section>
             ) : null}
           </>

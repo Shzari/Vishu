@@ -35,6 +35,8 @@ import {
   ReviewSubmissionDto,
   ProductUpdateDto,
   VendorCatalogRequestDto,
+  VendorSalesPointDto,
+  VendorSalesPointUpdateDto,
 } from './dto';
 import { ProductsService } from './products.service';
 
@@ -147,6 +149,31 @@ export class ProductsController {
   @Get('vendor/catalog-requests')
   getVendorCatalogRequests(@Req() req: { user: AuthenticatedUser }) {
     return this.productsService.getVendorCatalogRequests(req.user);
+  }
+
+  @Roles('vendor')
+  @Get('vendor/sales-points')
+  getVendorSalesPoints(@Req() req: { user: AuthenticatedUser }) {
+    return this.productsService.getVendorSalesPoints(req.user);
+  }
+
+  @Roles('vendor')
+  @Post('vendor/sales-points')
+  createVendorSalesPoint(
+    @Req() req: { user: AuthenticatedUser },
+    @Body() dto: VendorSalesPointDto,
+  ) {
+    return this.productsService.createVendorSalesPoint(req.user, dto);
+  }
+
+  @Roles('vendor')
+  @Patch('vendor/sales-points/:id')
+  updateVendorSalesPoint(
+    @Req() req: { user: AuthenticatedUser },
+    @Param('id') id: string,
+    @Body() dto: VendorSalesPointUpdateDto,
+  ) {
+    return this.productsService.updateVendorSalesPoint(req.user, id, dto);
   }
 
   @Roles('vendor')

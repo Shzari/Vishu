@@ -34,6 +34,8 @@ import {
   ProductUpdateDto,
   ReviewSubmissionDto,
   VendorCatalogRequestDto,
+  VendorSalesPointDto,
+  VendorSalesPointUpdateDto,
 } from './dto';
 
 type UploadedFile = Express.Multer.File;
@@ -202,6 +204,27 @@ interface ProductSizeOptionRow {
   size_label: string;
   size_type_id: string;
   size_type_name: string;
+}
+
+interface VendorSalesPointRow {
+  id: string;
+  vendor_id: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  phone_number: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface ProductSalesPointStockRow {
+  product_id: string;
+  sales_point_id: string;
+  sales_point_name: string;
+  stock: number;
+  is_active: boolean;
 }
 
 interface HomepageHeroSlideRow {
@@ -862,6 +885,9 @@ export class ProductsService {
 
   async getVendorProducts(user: AuthenticatedUser) {
     const vendor = await this.getVendorForUser(user.sub);
+    const salesPoints = vendor.is_test
+      ? await this.ensureDefaultVendorSalesPoint(vendor.id)
+      : [];
 
     const result = await this.databaseService.query<ProductRow>(
       `SELECT p.id, p.title, p.description, p.price, p.stock, p.is_listed, p.admin_status, p.admin_block_reason, p.department, p.category, p.color, p.size, p.product_code, p.created_at
@@ -875,7 +901,106 @@ export class ProductsService {
       vendor: {
         ...vendor,
       },
-      products: await this.attachImages(result.rows),
+      salesPoints,
+      products: await this.attachVendorSalesPointStocks(
+        await this.attachImages(result.rows),
+        vendor.id,
+      ),
+    };
+  }
+
+  async getVendorSalesPoints(user: AuthenticatedUser) {
+    const vendor = await this.getVendorForUser(user.sub);
+    this.assertSandboxSalesPointVendor(vendor);
+    return this.ensureDefaultVendorSalesPoint(vendor.id);
+  }
+
+  async createVendorSalesPoint(
+    user: AuthenticatedUser,
+    dto: VendorSalesPointDto,
+  ) {
+    const vendor = await this.getVendorForUser(user.sub);
+    this.assertSandboxSalesPointVendor(vendor);
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('Sales point name is required');
+    }
+
+    try {
+      await this.databaseService.query(
+        `INSERT INTO vendor_sales_points (vendor_id, name, address, city, phone_number, sort_order)
+         VALUES (
+           $1,
+           $2,
+           $3,
+           $4,
+           $5,
+           (SELECT ISNULL(MAX(sort_order), 0) + 1 FROM vendor_sales_points WHERE vendor_id = $1)
+         )`,
+        [
+          vendor.id,
+          name,
+          dto.address?.trim() || null,
+          dto.city?.trim() || null,
+          dto.phoneNumber?.trim() || null,
+        ],
+      );
+    } catch {
+      throw new BadRequestException('A sales point with this name already exists');
+    }
+
+    return {
+      message: 'Sales point added.',
+      salesPoints: await this.ensureDefaultVendorSalesPoint(vendor.id),
+    };
+  }
+
+  async updateVendorSalesPoint(
+    user: AuthenticatedUser,
+    salesPointId: string,
+    dto: VendorSalesPointUpdateDto,
+  ) {
+    const vendor = await this.getVendorForUser(user.sub);
+    this.assertSandboxSalesPointVendor(vendor);
+    await this.ensureVendorOwnsSalesPoint(salesPointId, vendor.id);
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    const pushUpdate = (column: string, value: unknown) => {
+      values.push(value);
+      updates.push(`${column} = $${values.length}`);
+    };
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) {
+        throw new BadRequestException('Sales point name is required');
+      }
+      pushUpdate('name', name);
+    }
+    if (dto.address !== undefined) pushUpdate('address', dto.address?.trim() || null);
+    if (dto.city !== undefined) pushUpdate('city', dto.city?.trim() || null);
+    if (dto.phoneNumber !== undefined) pushUpdate('phone_number', dto.phoneNumber?.trim() || null);
+    if (dto.isActive !== undefined) pushUpdate('is_active', dto.isActive);
+
+    if (updates.length) {
+      values.push(salesPointId, vendor.id);
+      try {
+        await this.databaseService.query(
+          `UPDATE vendor_sales_points
+           SET ${updates.join(', ')}, updated_at = SYSDATETIME()
+           WHERE id = $${values.length - 1}
+             AND vendor_id = $${values.length}`,
+          values,
+        );
+      } catch {
+        throw new BadRequestException('A sales point with this name already exists');
+      }
+    }
+
+    return {
+      message: 'Sales point updated.',
+      salesPoints: await this.ensureDefaultVendorSalesPoint(vendor.id),
     };
   }
 
@@ -1157,6 +1282,13 @@ export class ProductsService {
     const normalizedDto = this.normalizeProductMutationDto(dto);
     const selection =
       await this.resolveStructuredProductSelection(normalizedDto);
+    const salesPointStocks = vendor.is_test
+      ? await this.resolveSalesPointStocks(
+          vendor.id,
+          normalizedDto.salesPointStocks,
+          selection.totalStock,
+        )
+      : [];
     this.assertPositiveProductStock(selection.totalStock);
     let lowStockAlert: VendorLowStockAlertPayload | null = null;
 
@@ -1256,6 +1388,12 @@ export class ProductsService {
               [created.rows[0].id, variant.id, variant.stock, null],
             );
           }
+
+          await this.replaceProductSalesPointStocks(
+            client,
+            created.rows[0].id,
+            salesPointStocks,
+          );
 
           const orderedFiles = this.orderUploadedImages(
             files,
@@ -1383,13 +1521,26 @@ export class ProductsService {
                 })),
             })
           : null;
+        const salesPointStocks =
+          vendor.is_test && normalizedDto.salesPointStocks !== undefined
+            ? await this.resolveSalesPointStocks(
+                vendor.id,
+                normalizedDto.salesPointStocks,
+                selection?.totalStock ?? normalizedDto.stock,
+              )
+            : null;
+        const salesPointTotal =
+          salesPointStocks === null
+            ? null
+            : salesPointStocks.reduce((sum, entry) => sum + entry.stock, 0);
         if (selection) {
           this.assertPositiveProductStock(selection.totalStock);
         } else if (
           normalizedDto.stock !== undefined ||
-          normalizedDto.sizeVariants !== undefined
+          normalizedDto.sizeVariants !== undefined ||
+          salesPointTotal !== null
         ) {
-          this.assertPositiveProductStock(normalizedDto.stock ?? 0);
+          this.assertPositiveProductStock(salesPointTotal ?? normalizedDto.stock ?? 0);
         }
 
         const updates: string[] = [];
@@ -1440,6 +1591,8 @@ export class ProductsService {
           pushUpdate('gender_group_id', selection.genderGroup?.id ?? null);
           pushUpdate('color', selection.primaryColor);
           pushUpdate('size', selection.primarySize);
+        } else if (salesPointTotal !== null) {
+          pushUpdate('stock', salesPointTotal);
         } else if (normalizedDto.stock !== undefined) {
           pushUpdate('stock', normalizedDto.stock);
         }
@@ -1462,10 +1615,12 @@ export class ProductsService {
 
         if (
           normalizedDto.stock !== undefined ||
-          normalizedDto.sizeVariants !== undefined
+          normalizedDto.sizeVariants !== undefined ||
+          normalizedDto.salesPointStocks !== undefined
         ) {
           const threshold = vendor.low_stock_threshold;
-          const nextStock = selection?.totalStock ?? normalizedDto.stock ?? 0;
+          const nextStock =
+            selection?.totalStock ?? salesPointTotal ?? normalizedDto.stock ?? 0;
 
           if (threshold <= 0 || nextStock > threshold) {
             if (currentRow.low_stock_alert_sent_at) {
@@ -1536,6 +1691,14 @@ export class ProductsService {
               [productId, variant.id, variant.stock, null],
             );
           }
+        }
+
+        if (salesPointStocks !== null) {
+          await this.replaceProductSalesPointStocks(
+            client,
+            productId,
+            salesPointStocks,
+          );
         }
 
         let primaryUploadedImageUrl: string | null = null;
@@ -2035,6 +2198,28 @@ export class ProductsService {
           );
         }
 
+        const sourceSalesPointRows =
+          await client.query<ProductSalesPointStockRow>(
+            `SELECT
+               psps.product_id,
+               psps.sales_point_id,
+               vsp.name AS sales_point_name,
+               psps.stock,
+               vsp.is_active
+             FROM product_sales_point_stock psps
+             INNER JOIN vendor_sales_points vsp ON vsp.id = psps.sales_point_id
+             WHERE psps.product_id = $1
+               AND vsp.vendor_id = $2`,
+            [productId, vendor.id],
+          );
+        for (const row of sourceSalesPointRows.rows) {
+          await client.query(
+            `INSERT INTO product_sales_point_stock (product_id, sales_point_id, stock, updated_at)
+             VALUES ($1, $2, $3, SYSDATETIME())`,
+            [created.rows[0].id, row.sales_point_id, row.stock],
+          );
+        }
+
         for (const [index, row] of imageRows.rows.entries()) {
           await client.query(
             `INSERT INTO product_images (product_id, image_url, sort_order)
@@ -2271,6 +2456,186 @@ export class ProductsService {
         createdAt: row.created_at,
       };
     });
+  }
+
+  private async attachVendorSalesPointStocks<T extends { id: string }>(
+    products: T[],
+    vendorId: string,
+  ) {
+    if (!products.length) {
+      return products;
+    }
+
+    const productIds = products.map((product) => product.id);
+    const rows = await this.databaseService.query<ProductSalesPointStockRow>(
+      `SELECT
+         psps.product_id,
+         psps.sales_point_id,
+         vsp.name AS sales_point_name,
+         psps.stock,
+         vsp.is_active
+       FROM product_sales_point_stock psps
+       INNER JOIN vendor_sales_points vsp ON vsp.id = psps.sales_point_id
+       WHERE vsp.vendor_id = $1
+         AND psps.product_id IN (${this.buildGuidLiteralClause(productIds)})
+       ORDER BY vsp.sort_order ASC, vsp.name ASC`,
+      [vendorId],
+    );
+
+    const byProduct = new Map<
+      string,
+      Array<{
+        salesPointId: string;
+        salesPointName: string;
+        stock: number;
+        isActive: boolean;
+      }>
+    >();
+    for (const row of rows.rows) {
+      const current = byProduct.get(row.product_id) ?? [];
+      current.push({
+        salesPointId: row.sales_point_id,
+        salesPointName: row.sales_point_name,
+        stock: Number(row.stock),
+        isActive: Boolean(row.is_active),
+      });
+      byProduct.set(row.product_id, current);
+    }
+
+    return products.map((product) => ({
+      ...product,
+      salesPointStocks: byProduct.get(product.id) ?? [],
+    }));
+  }
+
+  private mapVendorSalesPoint(row: VendorSalesPointRow) {
+    return {
+      id: row.id,
+      name: row.name,
+      address: row.address,
+      city: row.city,
+      phoneNumber: row.phone_number,
+      isActive: Boolean(row.is_active),
+      sortOrder: Number(row.sort_order),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private async ensureDefaultVendorSalesPoint(vendorId: string) {
+    const existing = await this.databaseService.query<VendorSalesPointRow>(
+      `SELECT id, vendor_id, name, address, city, phone_number, is_active, sort_order, created_at, updated_at
+       FROM vendor_sales_points
+       WHERE vendor_id = $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [vendorId],
+    );
+
+    if (!existing.rows.length) {
+      await this.databaseService.query(
+        `INSERT INTO vendor_sales_points (vendor_id, name, sort_order)
+         VALUES ($1, 'Dyqani kryesor', 0)`,
+        [vendorId],
+      );
+      return this.ensureDefaultVendorSalesPoint(vendorId);
+    }
+
+    return existing.rows.map((row) => this.mapVendorSalesPoint(row));
+  }
+
+  private assertSandboxSalesPointVendor(vendor: { is_test?: boolean }) {
+    if (!vendor.is_test) {
+      throw new ForbiddenException(
+        'Sales points are available only for sandbox vendors during testing',
+      );
+    }
+  }
+
+  private async ensureVendorOwnsSalesPoint(
+    salesPointId: string,
+    vendorId: string,
+  ) {
+    const result = await this.databaseService.query<{ id: string }>(
+      `SELECT TOP 1 id
+       FROM vendor_sales_points
+       WHERE id = $1
+         AND vendor_id = $2`,
+      [salesPointId, vendorId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Sales point not found');
+    }
+  }
+
+  private async resolveSalesPointStocks(
+    vendorId: string,
+    input: Array<{ salesPointId: string; stock: number }> | undefined,
+    expectedTotal?: number,
+  ) {
+    const salesPoints = await this.ensureDefaultVendorSalesPoint(vendorId);
+    const activeSalesPoints = salesPoints.filter((entry) => entry.isActive);
+    if (!activeSalesPoints.length) {
+      throw new BadRequestException('Add an active sales point first');
+    }
+
+    const activeIds = new Set(activeSalesPoints.map((entry) => entry.id));
+    const normalizedInput = (input ?? [])
+      .map((entry) => ({
+        salesPointId: entry.salesPointId,
+        stock: Number(entry.stock ?? 0),
+      }))
+      .filter((entry) => entry.salesPointId && activeIds.has(entry.salesPointId));
+
+    const stocksByPoint = new Map<string, number>();
+    for (const entry of normalizedInput) {
+      if (!Number.isInteger(entry.stock) || entry.stock < 0) {
+        throw new BadRequestException('Sales point stock must be 0 or more');
+      }
+      stocksByPoint.set(
+        entry.salesPointId,
+        (stocksByPoint.get(entry.salesPointId) ?? 0) + entry.stock,
+      );
+    }
+
+    if (!stocksByPoint.size && expectedTotal !== undefined) {
+      stocksByPoint.set(activeSalesPoints[0].id, expectedTotal);
+    }
+
+    const total = [...stocksByPoint.values()].reduce(
+      (sum, stock) => sum + stock,
+      0,
+    );
+    this.assertPositiveProductStock(total);
+    if (expectedTotal !== undefined && total !== expectedTotal) {
+      throw new BadRequestException(
+        'Sales point stock must match the product total stock',
+      );
+    }
+
+    return [...stocksByPoint.entries()].map(([salesPointId, stock]) => ({
+      salesPointId,
+      stock,
+    }));
+  }
+
+  private async replaceProductSalesPointStocks(
+    client: QueryRunner,
+    productId: string,
+    salesPointStocks: Array<{ salesPointId: string; stock: number }>,
+  ) {
+    await client.query(
+      'DELETE FROM product_sales_point_stock WHERE product_id = $1',
+      [productId],
+    );
+
+    for (const entry of salesPointStocks.filter((row) => row.stock > 0)) {
+      await client.query(
+        `INSERT INTO product_sales_point_stock (product_id, sales_point_id, stock, updated_at)
+         VALUES ($1, $2, $3, SYSDATETIME())`,
+        [productId, entry.salesPointId, entry.stock],
+      );
+    }
   }
 
   private async getProductRatingSummaries(productIds: string[]) {
@@ -3321,6 +3686,7 @@ export class ProductsService {
       shop_name: string;
       is_active: boolean;
       is_verified: boolean;
+      is_test: boolean;
       low_stock_threshold: number;
       last_login_at: Date | null;
       last_activity_at: Date | null;
@@ -3331,6 +3697,7 @@ export class ProductsService {
          v.shop_name,
          v.is_active,
          v.is_verified,
+         v.is_test,
          v.low_stock_threshold,
          v.last_login_at,
          v.last_activity_at
@@ -3482,6 +3849,15 @@ export class ProductsService {
           stock: Number(entry?.stock ?? 0),
         }))
         .filter((entry) => entry.sizeId.length > 0),
+      salesPointStocks: (dto.salesPointStocks ?? [])
+        .map((entry) => ({
+          salesPointId:
+            typeof entry?.salesPointId === 'string'
+              ? entry.salesPointId.trim()
+              : '',
+          stock: Number(entry?.stock ?? 0),
+        }))
+        .filter((entry) => entry.salesPointId.length > 0),
       primaryUploadIndex: dto.primaryUploadIndex,
     };
   }
@@ -3521,6 +3897,18 @@ export class ProductsService {
                 stock: Number(entry?.stock ?? 0),
               }))
               .filter((entry) => entry.sizeId.length > 0),
+      salesPointStocks:
+        dto.salesPointStocks === undefined
+          ? undefined
+          : dto.salesPointStocks
+              .map((entry) => ({
+                salesPointId:
+                  typeof entry?.salesPointId === 'string'
+                    ? entry.salesPointId.trim()
+                    : '',
+                stock: Number(entry?.stock ?? 0),
+              }))
+              .filter((entry) => entry.salesPointId.length > 0),
       replaceImages: dto.replaceImages,
       primaryUploadIndex: dto.primaryUploadIndex,
       primaryExistingImageUrl: dto.primaryExistingImageUrl?.trim(),

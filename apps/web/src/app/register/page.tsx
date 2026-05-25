@@ -170,34 +170,6 @@ export default function RegisterPage() {
         </p>
       </section>
 
-      {role === "vendor" && (
-        <section className="business-register-info" aria-label="About Vishu for businesses">
-          <div className="business-register-main">
-            <span>Rreth Vishu</span>
-            <h2>Një panel marketplace për bizneset lokale të modës.</h2>
-            <p>
-              Vishu ndihmon bizneset të përgatisin katalog profesional online,
-              të menaxhojnë fotot, stokun, porositë dhe kërkesat e klientëve
-              nga një panel i qartë biznesi.
-            </p>
-          </div>
-          <div className="business-register-points">
-            <div>
-              <strong>Katalog profesional</strong>
-              <p>Shto produkte me foto të qarta, madhësi, ngjyra, stok dhe çmime.</p>
-            </div>
-            <div>
-              <strong>Kontroll para publikimit</strong>
-              <p>Produktet qëndrojnë të fshehura derisa të kontrollohen dhe aprovohen.</p>
-            </div>
-            <div>
-              <strong>Mjete të qarta për porosi</strong>
-              <p>Menaxho porositë, statusin e dorëzimit dhe aktivitetin e biznesit në një vend.</p>
-            </div>
-          </div>
-        </section>
-      )}
-
       <form className="form-card form-grid register-form-card" onSubmit={handleSubmit}>
         {!isMerchantPortal && (
           <div className="field">
